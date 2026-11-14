@@ -8,7 +8,7 @@ import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
 import { quoteProgress, ratersSaid, stopScreen } from '../../src/carriers.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
-import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../../src/usage.js';
+import { fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, CARRIER_RULE_FILES, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
 import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
@@ -142,10 +142,18 @@ function givenEarlier(tabId) {
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
 // extension or until it's read; then the run just carries none.
+// Each carrier's own fingerprint (CARRIER_RULE_FILES: its module, imports and page adapter), as
+// `carrierRules` beside it, read the same way.
 let rulesVersion = null;
+/** @type {Record<string, string>} */
+const carrierRulesVersion = {};
 if (inExtension) {
-  Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
+  const text = (f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text());
+  Promise.all(RULE_FILES.map(text)).then(rulesHash)
     .then((hash) => { rulesVersion = hash; }).catch(() => {});
+  for (const [id, files] of Object.entries(CARRIER_RULE_FILES)) {
+    Promise.all(files.map(text)).then(rulesHash).then((hash) => { carrierRulesVersion[id] = hash; }).catch(() => {});
+  }
 }
 // The same fingerprint, for a developer recording's manifest (null until read).
 const rulesFingerprint = () => rulesVersion;
@@ -330,7 +338,7 @@ function logFill(ctx, frames, results, started) {
   usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
-    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
+    run: ctx.run, rules: rulesVersion ?? undefined, carrierRules: carrierRulesVersion[ctx.carrier.id], settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
     keptLogged: state.keptLogged.seen,
   }));
 }
@@ -338,7 +346,7 @@ function logFill(ctx, frames, results, started) {
 function logFillError(ctx, error) {
   if (ctx.carrier.practice) return;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
-    rules: rulesVersion ?? undefined, settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error), ...ctx.ids });
+    rules: rulesVersion ?? undefined, ...(carrierRulesVersion[ctx.carrier.id] ? { carrierRules: carrierRulesVersion[ctx.carrier.id] } : {}), settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
 // Whether a fill has answered the page whose report this is: one made only to say a fill was dropped

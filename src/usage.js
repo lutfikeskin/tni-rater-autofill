@@ -393,6 +393,18 @@ export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 's
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }
+// One carrier's own mapping (a fill run's `carrierRules`, the same fingerprint over these files): its
+// module, every module it imports, and its page adapter (src/content/carriers/, whose keys decide
+// how fields are matched and corrections saved), so a GEICO-only change leaves Progressive's and
+// AmWINS's as they were and a review can group a carrier's quotes by the mapping in force (audit
+// 2026-11-07, CARR-14). test/usage.test.mjs checks each list against the import graph. The plan's
+// and the kit's own changes are in `rules` and the extension's version.
+const ANSWERS = ['src/normalize.js', 'src/quote-state.js', 'src/states.js', 'src/util.js', 'src/standards.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/classes.js'];
+export const CARRIER_RULE_FILES = {
+  progressive: ['src/carriers/progressive.js', ...ANSWERS, 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/content/carriers/progressive.js'],
+  amwins: ['src/carriers/amwins.js', ...ANSWERS, 'src/content/carriers/amwins.js'],
+  geico: ['src/carriers/geico.js', ...ANSWERS, 'src/answers/state.js', 'src/content/carriers/geico.js'],
+};
 
 // A fill_field event's why fields, set only when true or given, from the item's resolution (one
 // rebuilt from its fields for a report from before resolutions): `source` its method, `standard` a
@@ -408,7 +420,7 @@ function fieldWhy(x, list) {
 
 // Fill results, minus typed values (text boxes) and client names.
 //   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
-//   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
+//   rules: the rule files' fingerprint (rulesHash); carrierRules: the carrier's own files' (CARRIER_RULE_FILES); settings: the panel's filling switches in force
 //   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep);
 //   keptLogged: the kept answers already logged in this quote (the panel's, per usage session).
 // A kept answer (the page already held the rule's answer) is logged once per quote, tab and unit
@@ -417,10 +429,10 @@ function fieldWhy(x, list) {
 // still counts them all (`kept`). Without `keptLogged`, every one is logged.
 /**
  * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
- * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string> }} ctx
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, carrierRules?: string, settings?: object, step?: string, defaultsHash?: string, background?: boolean, retried?: boolean, keptLogged?: Set<string> }} ctx
  * @returns {UsageEvent[]}
  */
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step, defaultsHash, background = false, retried = false, keptLogged }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, carrierRules, settings, step, defaultsHash, background = false, retried = false, keptLogged }) {
   // Typed for the report list it reads (the body takes any key).
   /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
   const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
@@ -431,7 +443,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   /** @type {UsageEvent[]} */
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
-    ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...(defaultsHash ? { defaultsHash } : {}), ...stepField,
+    ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(carrierRules ? { carrierRules } : {}), ...(settings ? { settings } : {}), ...(defaultsHash ? { defaultsHash } : {}), ...stepField,
     // A fill of the quote tab while the agent was on another (`background`), and how long its page
     // was hidden meanwhile (`hiddenMs`): Chrome slows a hidden tab's timers, so the weekly review can
     // tell those fills from slow carriers (audit 2026-11-07, FLOW-12).

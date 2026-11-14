@@ -890,6 +890,7 @@
  * @property {number} ms
  * @property {string} [run]
  * @property {string} [rules]
+ * @property {string} [carrierRules]  the carrier's own files' fingerprint (src/usage.js CARRIER_RULE_FILES)
  * @property {object} [settings]
  * @property {string} [step]
  * @property {boolean} [background]  the panel filled the quote tab while the agent was on another tab

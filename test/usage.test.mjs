@@ -10,7 +10,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, intakeProfile, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent } from '../src/usage.js';
+import { intakeSummary, intakeProfile, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, CARRIER_RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -359,6 +359,43 @@ test('fill events carry their run, the rules fingerprint, the settings in force 
   };
   ['src/plan.js', 'src/normalize.js', 'src/carriers.js'].forEach(visit);
   assert.deepEqual([...reached].sort(), [...RULE_FILES].sort());
+});
+
+// Audit 2026-11-07, CARR-14: one carrier's fingerprint covers its own module, what it imports and its
+// page adapter, so a change to another carrier leaves it as it was and an adapter change moves it.
+test('each carrier\'s own fingerprint covers its module, its imports and its page adapter, and no other carrier\'s', async () => {
+  const graph = (start) => {
+    const reached = new Set();
+    const visit = (file) => {
+      if (reached.has(file)) return;
+      reached.add(file);
+      const text = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+      for (const [, spec] of text.matchAll(/^(?:import|export)\s[^;]*?from\s+'(\.{1,2}\/[^']+)'/gm)) visit(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+    };
+    visit(start);
+    return [...reached];
+  };
+  const { CARRIERS } = await import('../src/carriers.js');
+  assert.deepEqual(Object.keys(CARRIER_RULE_FILES).sort(), CARRIERS.filter((c) => c.rules?.length).map((c) => c.id).sort(), 'every carrier with rules has one');
+  const texts = (files) => files.map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
+  const hashes = {};
+  for (const [id, files] of Object.entries(CARRIER_RULE_FILES)) {
+    const adapter = `src/content/carriers/${id}.js`;
+    assert.deepEqual([...files].sort(), [...new Set([...graph(`src/carriers/${id}.js`), ...(fs.existsSync(new URL(`../${adapter}`, import.meta.url)) ? graph(adapter) : [])])].sort(), `${id}: its module's import graph and its adapter`);
+    assert.equal(new Set(files).size, files.length, `${id}: each file once`);
+    for (const other of Object.keys(CARRIER_RULE_FILES)) if (other !== id) assert.ok(!files.some((f) => f.endsWith(`/${other}.js`)), `${id}: none of ${other}'s files`);
+    hashes[id] = await rulesHash(texts(files));
+    assert.match(hashes[id], /^[0-9a-f]{12}$/);
+  }
+  // GEICO's adapter changed: GEICO's moves, the others' stay.
+  const changed = (id, file) => rulesHash(texts(CARRIER_RULE_FILES[id]).map((t, i) => (CARRIER_RULE_FILES[id][i] === file ? `${t}\n// changed` : t)));
+  assert.notEqual(await changed('geico', 'src/content/carriers/geico.js'), hashes.geico);
+  assert.equal(await changed('progressive', 'src/content/carriers/geico.js'), hashes.progressive);
+  assert.equal(await changed('amwins', 'src/carriers/geico.js'), hashes.amwins);
+  // A fill run carries it next to `rules`.
+  const [run] = fillEvents([{ fields: 1, rounds: 1 }], { carrier: 'geico', page: 'P', view: 'v', overwrite: false, ms: 1, redact: (s) => s, rules: 'abcdef012345', carrierRules: hashes.geico });
+  assert.equal(run.carrierRules, hashes.geico);
+  assert.equal('carrierRules' in fillEvents([{ fields: 1, rounds: 1 }], { carrier: 'geico', page: 'P', view: 'v', overwrite: false, ms: 1, redact: (s) => s })[0], false);
 });
 
 test('a panel crash is logged redacted, with frames from the extension only', () => {

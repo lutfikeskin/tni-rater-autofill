@@ -1200,7 +1200,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, carrierRulesVersion: {}, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
@@ -1239,7 +1239,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
   // for them, the report having none.
   const hosts = [];
   const context = { watchFill: () => () => {},
-    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, carrierRulesVersion: {}, $: () => ({ checked: false, append() {} }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, rowsHost: (entry) => { hosts.push(entry); return {}; },
     fillEvents: () => [], isStandard, knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
@@ -3487,7 +3487,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), layoutReadyTabs: new Set(),
       autoPaused: false, filling: false, assistPage: 'Rates' };
     const context = { watchFill: () => () => {},
-      state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, carrierRulesVersion: {}, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
@@ -4461,7 +4461,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
   const run = async (runKit) => {
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
     const context = { watchFill: () => () => {},
-      state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, carrierRulesVersion: {}, pageOf: (url) => url, tellRecorder: async () => {}, planFor: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: () => {}, pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
@@ -5160,7 +5160,7 @@ test('a fill of the quote tab while the agent is on another tab is logged as in 
   const state = { tab: { id: 7, background: true }, intake: { record: {} }, intakeRevision: 0, active: { vehicles: 0, drivers: 0, trailers: 0 } };
   const context = { state, crypto: { randomUUID: () => 'run-1' }, usage: { currentSession: () => ({ id: 's', intakeId: 'i' }), log: (...e) => logged.push(...e) },
     viewOf: () => 't1', editScope: () => 'p', tabStep: () => null, switchOn: () => true, fillDefaultsHash: () => undefined,
-    redactor: () => (t) => t, redactionTerms: () => [], stepOfResults: () => null, rulesVersion: null, fillEvents };
+    redactor: () => (t) => t, redactionTerms: () => [], stepOfResults: () => null, rulesVersion: null, carrierRulesVersion: {}, fillEvents };
   vm.runInNewContext(['fillContext', 'logFill'].map((name) => extractFunction(name).split('\nfunction ')[0]).join('\n'), context);
   const carrier = { id: 'geico', practice: false };
   const fill = (tabId) => { const ctx = context.fillContext({ tabId, carrier, page: 'Vehicles', tabUrl: 'x' }); context.logFill(ctx, [{ fields: 1, hiddenMs: 800 }], [], Date.now()); };
@@ -5450,7 +5450,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   };
   const seen = { plan: null, logged: [], rendered: 0, reportTabs: [], problems: [], layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [], options: null };
   const context = {
-    state, URL, crypto, Date, rulesVersion: rules, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
+    state, URL, crypto, Date, rulesVersion: rules, carrierRulesVersion: rules ? { [carrier.id]: '0123456789ab' } : {}, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
     clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {}, noteMissingUnit: () => {},
     planFor: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
@@ -5637,6 +5637,7 @@ test('a fill that stays current is remembered for its tab, and its events share 
   assert.equal(fillRun.type, 'fill_run');
   assert.match(fillRun.run, /^[0-9a-f-]{36}$/);
   assert.deepEqual(JSON.parse(JSON.stringify([fillRun.rules, fillRun.settings, fillRun.step, fillRun.view, fillRun.overwrite, fillRun.auto])), ['abcdef012345', { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, 'Vehicles', 't1', false, false]);
+  assert.equal(fillRun.carrierRules, '0123456789ab', 'its carrier\'s own fingerprint beside the rules (audit 2026-11-07, CARR-14)');
   assert.ok(fields.length && fields.every((e) => e.type === 'fill_field' && e.run === fillRun.run && e.step === 'Vehicles'), 'every field event shares the run and step, as the step\'s own name');
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value/);
 });
@@ -9547,7 +9548,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
   assert.deepEqual(await run([{ rows: 1, shown: [true, false] }, null]), [false, null], 'a unit still to add: no word');
   // Logged with the fill's own blockers, nothing else added.
   const logged = [];
-  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => null }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => null }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, carrierRulesVersion: {}, fillEvents, knownStep };
   vm.runInNewContext(extractFunction('logFill'), context);
   context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {}, listNote: 'list: 2 rows for 2 units, 1 shown, 0 saved by a fill' },
     [{ fields: 0, filled: [], blockers: [], advanceDue: 'none' }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
@@ -9562,7 +9563,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
 test('a fill logs its kept answers once per quote, and again for a new quote', () => {
   const logged = [];
   let session = { id: 's1' };
-  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => session }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, carrierRulesVersion: {}, fillEvents, knownStep };
   vm.runInNewContext(extractFunction('logFill'), context);
   const fill = () => context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {} },
     [{ fields: 1, filled: [], blockers: [], kept: [{ label: 'Garaging ZIP', key: 'ref:GiveZip', controlKind: 'text', now: '20001' }] }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
