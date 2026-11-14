@@ -10523,7 +10523,7 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
   assert.equal(d.dock().phase, 'yours', 'not printed: moving on is the agent\'s, as before');
-  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;[\s\S]*!filled \? \(stopped \? 'Stopped' : 'Ready to fill'\)\s*: finished \? 'Quote done'/);
+  assert.match(extractFunction('renderSteps'), /const aiWaiting = filled \? pendingAi\(state\.tab\.id, page\)\.length : 0;\s+const finished = filled && quoteFinished\(carrier, report, page\) && !aiWaiting;[\s\S]*: !filled \? 'Ready to fill'\s*: finished \? 'Quote done'/);
   assert.equal(geico.finishedBy, 'printProposal');
   assert.ok(geico.actions.some((a) => a.id === 'printProposal' && a.steps.includes('Quote & Coverages')));
 });
@@ -10605,7 +10605,7 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
   // action again lifts the mark; the strip asks about pending AI picks as the dock does.
   assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
   assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
-  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+  assert.match(extractFunction('renderSteps'), /const aiWaiting = filled \? pendingAi\(state\.tab\.id, page\)\.length : 0;\s+const finished = filled && quoteFinished\(carrier, report, page\) && !aiWaiting;/);
 });
 
 // The maintainer, 2026-11-07 (answer 1 on PR #367): "No" typed into the USDOT box in the panel is
@@ -10759,7 +10759,13 @@ test('Buttons left to click says Looks right comes after with Let me look on, an
 // page a done bar and "n filled"; a halted fill is never done there.
 test('This page never says a halted fill is done', () => {
   const steps = extractFunction('renderSteps');
-  assert.match(steps, /: !filled \? 'active' : report\.halted \? 'warn' : finished \|\| report\.advanced \|\| !left \? 'done' : 'active',/);
+  assert.match(steps, /: !filled \? 'active' : report\.halted \? 'warn' : aiWaiting \? 'active' : finished \|\| report\.advanced \|\| !left \? 'done' : 'active',/);
+  // The carrier's stop comes before an earlier fill's report at the same step (the third review).
+  assert.match(steps, /tone: !onRater \? '' : error \|\| stopped \? 'bad'/);
+  assert.match(steps, /error \? 'Didn’t finish' : stopped \? 'Stopped'\s+: !filled \? 'Ready to fill'/);
+  // AI picks waiting for approval keep the tab open.
+  assert.match(steps, /const aiWaiting = filled \? pendingAi\(state\.tab\.id, page\)\.length : 0;/);
+  assert.match(steps, /: aiWaiting \? `\$\{aiWaiting\} AI pick\$\{aiWaiting === 1 \? '' : 's'\} to approve`/);
   assert.match(steps, /: report\.halted \? 'Filling stopped' : `\$\{report\.filled\} filled/);
   // Stop pressed during Continue's wait: the report is both advanced and halted (the second review).
   assert.match(steps, /report\.advanced \? \(report\.halted \? 'Continued · filling stopped' : 'Continued'\)/);

@@ -1148,15 +1148,20 @@ function renderSteps() {
   // The page tab: the page in front's fill, then what's left on it for the agent, and Continue;
   // "Quote done" where the quote ends (quoteFinished). Once filled, opening it reads the page again
   // (`review`: the panel's confirm).
-  const finished = filled && quoteFinished(carrier, report, page) && !pendingAi(state.tab.id, page).length;
+  // AI picks waiting for the agent's approval: the page isn't reviewed yet (the dock asks for them).
+  const aiWaiting = filled ? pendingAi(state.tab.id, page).length : 0;
+  const finished = filled && quoteFinished(carrier, report, page) && !aiWaiting;
   step('fill', {
-    // A fill that stopped short (`halted`: "Filling stopped", or the agent's Stop) is never done,
-    // whatever is left (review of #454).
-    tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : !filled ? 'active' : report.halted ? 'warn' : finished || report.advanced || !left ? 'done' : 'active',
-    note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
-      : !filled ? (stopped ? 'Stopped' : 'Ready to fill')
+    // Review of #454: the carrier's stop (GEICO's USDOT or referral screen, at the address and step of
+    // an earlier fill) comes before that fill's report; a fill that stopped short (`halted`: "Filling
+    // stopped", or the agent's Stop) is never done, whatever is left; nor is a page with AI picks to
+    // approve.
+    tone: !onRater ? '' : error || stopped ? 'bad' : !filled ? 'active' : report.halted ? 'warn' : aiWaiting ? 'active' : finished || report.advanced || !left ? 'done' : 'active',
+    note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish' : stopped ? 'Stopped'
+      : !filled ? 'Ready to fill'
         : finished ? 'Quote done' : report.advanced ? (report.halted ? 'Continued · filling stopped' : 'Continued') : left ? `${left} need${left === 1 ? 's' : ''} you`
-          : report.halted ? 'Filling stopped' : `${report.filled} filled${report.auto ? ' automatically' : ''}`,
+          : aiWaiting ? `${aiWaiting} AI pick${aiWaiting === 1 ? '' : 's'} to approve`
+            : report.halted ? 'Filling stopped' : `${report.filled} filled${report.auto ? ' automatically' : ''}`,
     current: state.view === 'page',
     review: filled,
   });
