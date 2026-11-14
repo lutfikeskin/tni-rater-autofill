@@ -18,9 +18,17 @@ function SetupCard({ act }) {
   const items = useStore(panelStore, (s) => s.health?.checklist ?? null);
   if (!items?.length) return null;
   const left = items.filter((x) => !x.done).length;
+  // Initials are required before a quote (the maintainer, 2026-11-08, audit GAP-04): said first.
+  const initials = items.find((x) => x.id === 'initials' && !x.done);
   return (
     <section id="setup-card" className="setup-card" aria-labelledby="setup-card-title">
       <h3 id="setup-card-title">Finish setting up</h3>
+      {initials && (
+        <div className="setup-gate" role="alert">
+          <p><b>Add your initials to start a quote.</b> No intake loads until they are set: they mark your quotes as yours.</p>
+          <button type="button" className="primary" onClick={() => act.open(initials.focus)}>Add your initials</button>
+        </div>
+      )}
       <p className="muted small">{left === 1 ? 'One thing left' : `${left} things left`}, then you’re ready to quote.</p>
       <ul className="setup-list">
         {items.map((x) => (

@@ -68,7 +68,7 @@ function setupItems({ agent, ai, upState }) {
 async function renderHealth({ up }) {
   const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
   $('foot-version').textContent = `v${version}`;
-  const { agent = '' } = await usage.settings();
+  const agent = await agentInitials();
   const ai = await aiSettings();
   const items = setupItems({ agent, ai, upState: up.state });
   const setup = items.filter((x) => !x.done).map((x) => x.todo);
@@ -78,10 +78,23 @@ async function renderHealth({ up }) {
   state.health = { version: `Version ${version}`, setup: setup.length ? `To finish setup, ${joinAnd(setup)}.` : null, agentMissing: !agent,
     checklist: setup.length ? items.map(({ id, label, done, focus }) => ({ id, label, done, focus })) : null };
   $('settings-dot').hidden = !setup.length;
+  // No intake loads without initials (agentInitials): Choose a PDF waits, and the drop looks so.
+  $('choose').disabled = !agent;
+  $('load').classList.toggle('blocked', !agent);
   // Events that can't even be saved here are lost: that is said where the agent works.
   const saved = usage.lastSave();
   state.notes = { ...state.notes, usage: saved.state === 'error' ? issueSaid({ tone: 'warn', role: 'alert', title: "Usage log can't be saved on this computer",
     text: `Nothing is recorded now (${saved.message}). Export the log (Settings, Advanced) and tell TNI.` }) : null };
+}
+
+// The agent's initials, as the usage log stamps them on each event (Settings, You), or ''. Home
+// loads no intake until they are set (the maintainer, 2026-11-08, audit GAP-04: 40% of the store's
+// events carried no agent, so reviews and the agent's own defaults couldn't tell whose quote it
+// was): its setup checklist says so (home-view.jsx), Choose a PDF waits (renderHealth), and a PDF
+// dropped or chosen meanwhile is refused (intake.js loadFile). Initials an organization's policy
+// sets (managed setup) count once that setup can set them: read here through the same merge.
+async function agentInitials() {
+  return (await usage.settings()).agent || '';
 }
 
 // "a", "a and b", "a, b and c".
@@ -227,4 +240,4 @@ function wireUsage() {
   setInterval(renderUsage, 5000);
 }
 
-export { problemSaid, renderUsage, settingsActs, setupItems, uploadNow, wireUsage };
+export { agentInitials, problemSaid, renderUsage, settingsActs, setupItems, uploadNow, wireUsage };

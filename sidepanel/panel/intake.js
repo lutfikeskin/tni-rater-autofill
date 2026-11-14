@@ -16,7 +16,7 @@ import { refreshTab } from './tab.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
 import { ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, reviewIntake } from './assistant.js';
-import { uploadNow } from './usage-panel.js';
+import { agentInitials, uploadNow } from './usage-panel.js';
 import { clientNote, keepPdf, workSaid } from './pdf-view.js';
 import { quoteStarting, refreshDefaults, settingsDefaults } from './agent-defaults/store.js';
 import { settleQuoteEntries } from './quote-owner.js';
@@ -27,6 +27,13 @@ import { settleQuoteEntries } from './quote-owner.js';
 // `reset`: the same intake loaded again for a new quote (newQuote), not a file the agent chose.
 async function loadFile(file, { reset = false } = {}) {
   $('load-error').hidden = true;
+  // No intake without the agent's initials (GAP-04: usage-panel.js agentInitials); a new quote on the
+  // intake already loaded (`reset`) is not a new intake.
+  if (!reset && !(await agentInitials())) {
+    state.loadError = { title: 'Add your initials first', text: 'No intake loads until your initials are set. Use Add your initials above, then add the PDF again.' };
+    $('load-error').hidden = false;
+    return;
+  }
   if (!file || !/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
     return showLoadError('That is not a PDF.');
   }
