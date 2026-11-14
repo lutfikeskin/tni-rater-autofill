@@ -33,6 +33,7 @@
     "mock:amwins": "node scripts/amwins-mock.mjs",
     "mock:geico": "node scripts/geico-mock.mjs",
     "test:intakes": "node scripts/intake-mocks.mjs",
+    "test:coverage": "node scripts/code-coverage.mjs",
     "mock:luna": "node scripts/luna-mock.mjs",
     "ai:eval": "node scripts/ai-eval.mjs",
     "e2e:extension": "node scripts/extension-e2e.mjs",

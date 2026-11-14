@@ -37,6 +37,38 @@ jobs:
       - name: Package
         run: npm run package
 
+  # Which lines of the project's code the node:test files run (npm run test:coverage; audit
+  # 2026-11-07, QA-07). Not a gate: the job passes whatever the numbers or the run say (the unit
+  # tests gate in `checks`). The table goes on the run's summary page and lcov.info and the table
+  # are kept a week as an artifact.
+  coverage:
+    name: Coverage (report only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Coverage
+        continue-on-error: true
+        run: npm run test:coverage > /dev/null
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f coverage/summary.txt ]; then
+            { echo '### Code coverage of the node:test files (report only)'; echo '```'; cat coverage/summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
+
   # The store ZIP and the packaged extension on the AmWINS mock, served by the replay server on
   # port 8792 as `npm run replay` does: the unpacked copy, then the store ZIP itself, as agents
   # install it (audit 2026-11-07, QA-01).

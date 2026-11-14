@@ -4,6 +4,8 @@ server-data
 # Layouts built from agents' usage logs: review before committing any.
 captures/*/generated/
 dist/
+# Code coverage of the tests (npm run test:coverage).
+coverage/
 # Weekly review reports (npm run review): built from usage logs, review before sharing.
 reviews/
 # Design handoff bundles (claude.ai/design exports), kept locally for reference.
