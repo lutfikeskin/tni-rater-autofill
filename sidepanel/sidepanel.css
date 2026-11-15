@@ -107,8 +107,6 @@ body {
   position: relative;
 }
 h1, h2, h3, p { margin: 0; }
-h1 { font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); overflow-wrap: break-word; }
-.lead { font-size: 15px; line-height: 1.55; color: var(--ink-secondary); }
 button, input, select, textarea { font: inherit; }
 button { color: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.5; }
@@ -125,8 +123,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .center { text-align: center; }
 .grow { flex: 1; min-width: 0; }
 .eyebrow { color: var(--ink-muted); font: 600 13px/1.3 var(--font-sans); }
-.eyebrow.amber { color: var(--amber); }
-.eyebrow.serious { color: var(--signal); }
 .fine { font-size: 13px; color: var(--ink-muted); text-wrap: pretty; }
 
 /* Buttons: 52px / radius-12 primary dock action, neutral Stop, quiet hairline secondary buttons,
@@ -179,21 +175,21 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 /* The client, the file tools and the steps strip */
 .client { flex: 0 0 auto; background: var(--surface); border-bottom: 1px solid var(--border-row); }
-.client-head { position: relative; padding: 8px 14px 0; display: flex; align-items: center; gap: 8px; }
+.client-head { position: relative; padding: 8px 12px 0; display: flex; align-items: center; gap: 6px; }
 /* The client's name and what the quote is about: a button to every answer on the intake (the drawer). */
 .client-title { flex: 1; min-width: 0; display: grid; margin: 0 -6px; padding: 2px 6px; border: 0; border-radius: var(--radius-sm); background: none; text-align: left; }
 .client-title:hover, .client-title[aria-expanded="true"] { background: var(--surface-hover); }
 .client-name { display: block; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.client-meta { display: block; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.client-meta { display: block; font-size: 13px; color: var(--ink-muted); white-space: normal; overflow-wrap: anywhere; }
 /* Intake, Change file, New quote and Clear: no background until hovered. */
-.client-tools { flex-shrink: 0; display: flex; align-items: center; gap: 2px; }
+.client-tools { flex-shrink: 0; display: flex; align-items: center; gap: 1px; }
 .client-tools > button { background: none; border-color: transparent; }
 .client-tools > button:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
 .client-tools > .danger:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
-.intake-btn { flex-shrink: 0; display: flex; align-items: center; gap: 5px; min-height: 28px; padding: 0 6px; border-radius: var(--radius-sm); font-size: 13px; }
+.intake-btn { flex-shrink: 0; display: flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 4px; border-radius: var(--radius-sm); font-size: 13px; }
 .pdf-icon { display: inline-grid; place-items: center; width: 14px; height: 17px; border: 1px solid var(--border-strong); border-radius: 2px; color: var(--signal); font: 700 5.5px/1 var(--font-mono); }
 /* Change file, New quote, Clear: small, always in view (a menu took a click to open first). */
-.tool-btn { flex-shrink: 0; width: 28px; min-height: 28px; padding: 0; border-radius: var(--radius-sm); color: var(--ink-secondary); background: none; display: grid; place-items: center; }
+.tool-btn { flex-shrink: 0; width: 26px; min-height: 28px; padding: 0; border-radius: var(--radius-sm); color: var(--ink-secondary); background: none; display: grid; place-items: center; }
 .tool-btn svg { width: 16px; height: 16px; }
 .tool-btn.danger { color: var(--ink-secondary); }
 .tool-btn.danger:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink-strong); }
@@ -284,7 +280,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 
 /* Step 1: the intake's check items as hairline sections */
 .checks { display: grid; gap: 0; }
-.check { background: none; border: 0; border-top: 1px solid var(--border-row); border-radius: 0; padding: 12px 0; display: grid; gap: 8px; }
+.check { background: none; border: 0; border-top: 1px solid var(--warning-line); border-radius: 0; padding: 12px 0; display: grid; gap: 8px; }
 .check .bang { background: none; color: var(--warning-ink); }
 /* An alert check (prior.carrier-is-quoted): red, as the carrier page's card says it */
 .check.alert { border-color: var(--signal-line); }
@@ -717,6 +713,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 @keyframes rise { from { transform: translateY(16px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }
 @media (max-width: 340px) {
   .top, .steps, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
+  .site-step { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
   .client-head { padding-left: 10px; padding-right: 10px; }
   .pane { padding-left: 10px; padding-right: 10px; }
   .row-head { padding-left: 10px; padding-right: 10px; }
