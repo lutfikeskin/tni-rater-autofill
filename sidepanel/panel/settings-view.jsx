@@ -21,6 +21,7 @@ import { HelpLink } from './help-link.jsx';
 import { DefaultsDevSwitch, TniDefaults } from './agent-defaults/view.jsx';
 import { useAskFocus } from './ask-focus.js';
 import { useAnnounce } from './announce.js';
+import { modeSaid } from './settings-summary.js';
 
 // A checkbox the panel reads by id. It shows `checked` whenever that changes, or whenever `said`
 // (what it was said in) is said again, and the agent's click is passed on as the box's own change
@@ -159,6 +160,7 @@ function Settings({ act }) {
         <HelpLink topic="settings" />
         <button type="button" id="settings-done" className="primary small-btn" onClick={() => act.done()}>Done</button>
       </div>
+      <p id="settings-mode" className="settings-mode">{modeSaid(switches)}</p>
       <div id="setup-note" ref={setupLine} className="setup-note" hidden={!health?.setup}><span className="bang" aria-hidden="true">!</span><span id="setup-text">{health?.setup ?? ''}</span></div>
 
       <div className="group">

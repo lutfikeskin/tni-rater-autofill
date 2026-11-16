@@ -193,6 +193,15 @@ export const SCREEN = {
   },
 };
 
+// Settings' one-line "How it runs" (settings-summary.js modeSaid, canvas 21), from the Filling switches.
+export const SETTINGS = {
+  pagesAuto: 'Pages fill when they open',
+  pagesManual: 'You start each page with Fill this page',
+  continueManual: 'you click Continue yourself',
+  continueLook: 'it waits for your Looks right, continue',
+  continueAuto: 'it continues by itself once nothing is left for you',
+};
+
 // Post-fill grouped Review and All answers (review-view.jsx, canvas screens 10 and 11).
 export const REVIEW = {
   fallbackPage: 'This page',

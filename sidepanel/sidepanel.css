@@ -613,6 +613,7 @@ body:has(#settings:not([hidden])) .panel-head,
 /* Settings: hairline sections and rows */
 .settings { gap: 18px; }
 .settings-head { display: flex; align-items: center; gap: 8px; }
+.settings-mode { margin: 0 0 14px; font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; }
 .settings-head h2 { flex: 1; font-size: 22px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
 .setup-note { display: flex; gap: 8px; align-items: flex-start; padding: 10px 0; background: none; border: 0; border-top: 1px solid var(--warning-line); border-bottom: 1px solid var(--warning-line); border-radius: 0; font-size: 13px; color: var(--warning-ink); text-wrap: pretty; }
 .setup-note .bang { width: 16px; height: 18px; font-size: 13px; background: none; color: var(--warning-ink); }
