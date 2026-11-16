@@ -1,8 +1,8 @@
 // @ts-check
 // The canvas screen head (#screen-head) at the top of the panel's middle (#view): the one next
-// thing to do, moved out of the bottom dock so the dock holds only its button, alternative,
-// progress bar and short status note. Also keeps the footer's top hairline on only while #view has
-// content clipped below its scroll fold (.foot.line).
+// thing to do on the 17 screens without their own heading, while the dock keeps #dock-eyebrow and
+// #dock-title hidden from sight and the accessibility tree unless #screen-head is hidden or
+// scrolled out of #view (#dock[data-head-out]).
 // One part of the panel; sidepanel.js mounts it (mountScreen).
 
 /** @import { DockSnapshot, PanelScreen, PanelState } from '../../types.js' */
@@ -13,15 +13,16 @@ import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { screenFor } from './screen.js';
-import { SCREEN } from './messages.js';
+import { FILLING, SCREEN } from './messages.js';
 
-// Screens whose own view already draws its header (Intake checks and Settings).
+// Screens where the view or the dock carries the heading: Intake checks, Settings, post-fill
+// review, and AI review (Phase 4 decision e).
 /** @type {Set<string>} */
-const OWN_HEAD_SCREENS = new Set(['check', 'settings']);
+const OWN_HEAD_SCREENS = new Set(['check', 'settings', 'review', 'ai']);
 
 /**
- * Whether the shared screen head is shown for `s`: on Home and every page-view screen, and hidden
- * on Intake checks, Settings, or while a sheet or drawer covers the panel.
+ * Whether the shared screen head is shown for `s`: on Home and the 16 non-review page screens, and
+ * hidden on `check`, `settings`, `review`, `ai`, or while a sheet or drawer covers the panel.
  * @param {PanelState} s
  * @returns {boolean}
  */
@@ -31,21 +32,17 @@ function headShown(s) {
 }
 
 /**
- * What the screen head says for `screen`, from `state.dock` and `SCREEN` (messages.js).
+ * What the screen head says for `screen`, from `state.dock`, `state.fillingFor` and `SCREEN` (messages.js).
  * @param {PanelScreen} screen
  * @param {DockSnapshot | null | undefined} d
  * @param {{ filled?: number } | null | undefined} fillingFor
  */
 function screenSaid(screen, d, fillingFor) {
   if (screen === 'start') return { ...SCREEN.start, tone: '' };
-  if (screen === 'filling' && d?.tone !== 'warn' && d?.eyebrow !== 'Stopping') {
-    const filled = fillingFor?.filled
-      ?? (typeof d?.eyebrow === 'string' ? Number(d.eyebrow.match(/(\d+)\s+in\b/)?.[1] ?? 0) : 0);
+  if (screen === 'filling' && d?.tone !== 'warn' && d?.eyebrow !== FILLING.stoppingEyebrow) {
+    const filled = typeof fillingFor?.filled === 'number' ? fillingFor.filled : 0;
     const title = filled > 0 ? SCREEN.filling.count(filled) : (d?.title || SCREEN.filling.starting);
-    const sub = filled > 0 && d?.title
-      ? [d.title.replace(/\.$/, ''), d.sub].filter(Boolean).join('. ')
-      : (d?.sub ?? '');
-    return { eyebrow: SCREEN.filling.eyebrow, title, sub, tone: d?.tone || 'blue' };
+    return { eyebrow: SCREEN.filling.eyebrow, title, sub: d?.sub ?? '', tone: d?.tone || 'blue' };
   }
   return {
     eyebrow: d?.eyebrow ?? '',
@@ -55,74 +52,81 @@ function screenSaid(screen, d, fillingFor) {
   };
 }
 
-function Screen() {
+/**
+ * @param {{ scrollBehavior?: () => ScrollBehavior }} [props]
+ */
+function Screen({ scrollBehavior } = {}) {
   const screen = useStore(panelStore, screenFor);
   const shown = useStore(panelStore, headShown);
   const d = useStore(panelStore, (s) => s.dock);
   const fillingFor = useStore(panelStore, (s) => s.fillingFor);
   const { eyebrow, title, sub, tone } = screenSaid(screen, d, fillingFor);
+  /** @type {import('react').RefObject<HTMLDivElement | null>} */
+  const headRef = useRef(null);
   /** @type {import('react').RefObject<HTMLHeadingElement | null>} */
   const titleRef = useRef(null);
   const prevScreen = useRef(screen);
 
-  // Move focus to the new screen's title when the screen itself changes, unless Dock kept focus on
-  // a dock button (UX-08), the agent is in a field or dialog, or Settings just closed (its close
-  // gives focus back to #settings-btn). Live-fill count ticks keep `screen` at 'filling'.
+  // Move focus to the new screen's title when the screen itself changes and keyboard focus is
+  // already inside the panel (never stealing from the rater page or document.body), unless Dock
+  // kept focus on a dock button (UX-08), the agent is in a field or dialog, or Settings just closed
+  // (its close gives focus back to #settings-btn). Live-fill count ticks keep `screen` at 'filling'.
   useEffect(() => {
     const prev = prevScreen.current;
     prevScreen.current = screen;
     if (prev === screen || !shown || prev === 'settings') return;
+    if (!document.hasFocus()) return;
     const active = document.activeElement;
+    if (!active || active === document.body) return;
     if (document.getElementById('dock')?.contains(active)) return;
-    if (active && active !== document.body && active.matches?.('input, select, textarea, [contenteditable="true"]')) return;
-    if (active?.closest?.('[role="dialog"]')) return;
-    titleRef.current?.focus({ preventScroll: true });
-  }, [screen, shown]);
+    if (active.matches?.('input, select, textarea, [contenteditable="true"]')) return;
+    if (active.closest?.('[role="dialog"]')) return;
+    const h = titleRef.current;
+    if (!h) return;
+    h.focus({ preventScroll: true });
+    h.scrollIntoView?.({ block: 'nearest', behavior: scrollBehavior ? scrollBehavior() : 'auto' });
+  }, [screen, shown, scrollBehavior]);
 
-  // Show the footer's top border (.foot.line) only while #view has content clipped below the fold.
+  // When #view scrolls #screen-head out of view, mark #dock[data-head-out] so the dock surfaces
+  // #dock-eyebrow, #dock-title and #dock-sub until #screen-head returns.
   useEffect(() => {
-    const view = document.getElementById('view');
-    const foot = document.querySelector('footer.foot');
-    if (!view || !foot) return undefined;
-    const sync = () => {
-      const clipped = view.scrollHeight > view.clientHeight + 1
-        && view.scrollTop + view.clientHeight < view.scrollHeight - 1;
-      foot.classList.toggle('line', clipped);
-    };
-    sync();
-    view.addEventListener('scroll', sync, { passive: true });
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
-    ro?.observe(view);
-    for (const child of view.children) ro?.observe(child);
-    const mo = typeof MutationObserver === 'function' ? new MutationObserver(sync) : null;
-    mo?.observe(view, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'open'] });
+    const head = headRef.current;
+    if (!shown || !head) {
+      document.getElementById('dock')?.removeAttribute('data-head-out');
+      return undefined;
+    }
+    if (typeof IntersectionObserver !== 'function') return undefined;
+    const root = head.closest('#view') ?? null;
+    const io = new IntersectionObserver(([entry]) => {
+      const targetDock = document.getElementById('dock');
+      if (!targetDock) return;
+      if (entry && !entry.isIntersecting) targetDock.setAttribute('data-head-out', '');
+      else targetDock.removeAttribute('data-head-out');
+    }, { root });
+    io.observe(head);
     return () => {
-      view.removeEventListener('scroll', sync);
-      ro?.disconnect();
-      mo?.disconnect();
-      foot.classList.remove('line');
+      io.disconnect();
+      document.getElementById('dock')?.removeAttribute('data-head-out');
     };
-  }, []);
+  }, [shown]);
 
   return (
-    <>
-      <header id="screen-head" className="screen-head" hidden={!shown} data-screen={screen}>
-        <span id="screen-eyebrow" className="screen-eyebrow" data-tone={tone || undefined} hidden={!eyebrow}>{eyebrow}</span>
-        {shown ? <h1 id="screen-title" ref={titleRef} tabIndex={-1}>{title}</h1> : null}
-        <p id="screen-lead" className="screen-lead" hidden={!sub}>{sub}</p>
-      </header>
-      {!shown ? <h1 className="sr-only">TNI Rater Autofill</h1> : null}
-    </>
+    <div id="screen-head" ref={headRef} className="screen-head" hidden={!shown} data-screen={screen}>
+      <span id="screen-eyebrow" className="screen-eyebrow" data-tone={tone || undefined} hidden={!eyebrow}>{eyebrow}</span>
+      <h2 id="screen-title" ref={titleRef} tabIndex={-1}>{title}</h2>
+      <p id="screen-lead" className="screen-lead" hidden={!sub}>{sub}</p>
+    </div>
   );
 }
 
 /**
  * Draws the screen head into #screen-root before returning, so initial layout and focus find it.
  * @param {HTMLElement} host
+ * @param {{ scrollBehavior?: () => ScrollBehavior }} [opts]
  */
-function mountScreen(host) {
+function mountScreen(host, { scrollBehavior } = {}) {
   const root = createRoot(host);
-  flushSync(() => root.render(<Screen />));
+  flushSync(() => root.render(<Screen scrollBehavior={scrollBehavior} />));
 }
 
 export { Screen, headShown, mountScreen };

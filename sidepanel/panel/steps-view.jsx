@@ -1,10 +1,10 @@
 // The panel's two tabs (Intake, This page) and the dock in React, drawn from what the panel says of
-// them: the tabs' tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's
-// button, alternative, progress bar and short status note (state.dock, renderDock from dockFor; its
-// eyebrow, title and lead moved to screen-view.jsx on the flow screens). What their buttons do is
-// the panel's (`act`, wired in sidepanel.js).
+// them: the tabs' tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's one
+// next thing to do and its button (state.dock, renderDock from dockFor; #dock-eyebrow and
+// #dock-title stay in the DOM and hide behind sr-only + aria-hidden while #screen-head is in view).
+// What their buttons do is the panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -72,24 +72,34 @@ const lostBy = (el) => !!el && (el.disabled || el.hidden);
 // button but Stop waits, and says why (audit 2026-11-07, FLOW-05: they did nothing, silently).
 const BUSY = 'Wait for the answers going in to finish.';
 
-// The dock: the compact action bar at the bottom of the panel (its button, alternative, progress
-// bar and paused/sub note; the eyebrow and title live in #screen-head on flow screens).
+// The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
-// Hidden until the panel first says it, while Settings is open (unless Stop shows), and when a
-// screen has no dock control, progress bar or paused note to show.
+// Hidden until the panel first says it, and while Settings is open (unless Stop shows).
+// While #screen-head is shown and in view, #dock-eyebrow and #dock-title stay in the DOM with
+// sr-only + aria-hidden so the title appears once in the accessibility tree; on check, review, ai,
+// or when #screen-head scrolls out of #view (#dock[data-head-out]), they show in the dock.
 // Keyboard focus stays in the dock as its button changes (audit 2026-11-07, UX-08: Fill this page
 // hid as Stop showed, and focus fell to the page, at the moment Stop mattered most): when the button
 // that had it is hidden, or disabled, the button shown now takes it (its alternative when it has
 // none). Only when focus was in the dock: the dock never takes it from elsewhere.
 function Dock({ act }) {
   const d = useStore(panelStore, (s) => s.dock);
-  const subInHead = useStore(panelStore, (s) => headShown(s));
+  const headOn = useStore(panelStore, headShown);
+  const [headOut, setHeadOut] = useState(false);
   const dock = useRef(null);
   const focused = useRef(false);
   const pausedLine = useRef(null);
   useAnnounce(d?.paused, pausedLine);
-  const hasAction = !!(d?.button || d?.alt || d?.progress || d?.paused);
-  const showSub = !!d?.sub && !subInHead && hasAction;
+  useLayoutEffect(() => {
+    const root = dock.current;
+    if (!root) return undefined;
+    const sync = () => setHeadOut(root.hasAttribute('data-head-out'));
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(root, { attributes: true, attributeFilter: ['data-head-out'] });
+    return () => mo.disconnect();
+  }, []);
+  const inHead = headOn && !headOut;
   // Focus that went anywhere outside the dock (the agent's, after the browser dropped it from Stop
   // once pressed) is no longer the dock's (review of #390).
   useEffect(() => {
@@ -106,14 +116,16 @@ function Dock({ act }) {
     next?.focus();
   });
   return (
-    <div id="dock" ref={dock} className="dock" hidden={!d || d.hidden || !hasAction} data-phase={d?.phase} data-report={d?.report}
+    <div id="dock" ref={dock} className="dock" hidden={!d || d.hidden} data-phase={d?.phase} data-report={d?.report}
       onFocus={() => { focused.current = true; }} onBlur={(e) => { if (!dock.current?.contains(e.relatedTarget) && !lostBy(e.target)) focused.current = false; }}>
       {typeof d?.progress === 'number'
         ? <div id="fill-progress" className="progress measured" role="progressbar" aria-label={d.progressSaid} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(d.progress * 100)} title={d.progressSaid}><span style={{ width: `${Math.round(d.progress * 100)}%` }} /></div>
         : <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>}
       <div className="dock-body">
-        <div className="dock-text" hidden={!showSub && !d?.paused}>
-          <span id="dock-sub" className="dock-sub" hidden={!showSub}>{d?.sub ?? ''}</span>
+        <div className="dock-text">
+          <span id="dock-eyebrow" className={`dock-eyebrow${inHead ? ' sr-only' : ''}`} aria-hidden={inHead ? 'true' : undefined} data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
+          <span id="dock-title" className={`dock-title${inHead ? ' sr-only' : ''}`} aria-hidden={inHead ? 'true' : undefined}>{d?.title}</span>
+          <span id="dock-sub" className="dock-sub" hidden={!d?.sub || inHead}>{d?.sub ?? ''}</span>
           {/* Automatic filling paused on this tab (renderDock's `paused`). */}
           <span id="dock-paused" ref={pausedLine} className="dock-paused" hidden={!d?.paused}>{d?.paused ?? ''}</span>
         </div>

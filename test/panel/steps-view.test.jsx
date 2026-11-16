@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
-import { Screen } from '../../sidepanel/panel/screen-view.jsx';
 import { Dock, Steps, mountDock, mountSteps } from '../../sidepanel/panel/steps-view.jsx';
 
 // The panel's two tabs (Intake, This page) and the dock in React (React PR 5, 2026-11-01): what renderSteps and
@@ -56,19 +55,19 @@ test('the two tabs say what renderSteps says of them, in order, and ask the pane
   // A filled page's tab reads the page again (confirm); before the fill it only shows the page.
   fireEvent.click($(container, 'step-check'));
   fireEvent.click($(container, 'step-fill'));
-  act(() => { state.steps = { check: { tone: 'warn', note: '3 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
+  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
   expect(steps(container).map((s) => s.slice(1, 3))).toEqual([['warn', 'true'], ['active', null]]);
   fireEvent.click($(container, 'step-fill'));
   expect(t.calls).toEqual([['check'], ['confirm'], ['fill']]);
 });
 
-// From renderDock: the dock is hidden until the panel says it and while Settings is open; its
-// eyebrow/title/lead move to #screen-head on canvas screens while the dock shows the one button
-// dockFor names (the others hidden, as the page had them), its progress while a fill runs, and its alternative.
+// From renderDock: the dock is hidden until the panel says it and while Settings is open; it names
+// its phase and the fill it is about, shows the one button dockFor names (the others hidden, as the
+// page had them), its progress while a fill runs, and its alternative.
 test('the dock shows dockFor\'s word, its one button and its alternative, with the phase and report the harnesses read', () => {
   const t = acts();
   act(() => { state.intake = {}; state.view = 'page'; });
-  const { container } = render(<><Screen /><Dock act={t.act} /></>);
+  const { container } = render(<Dock act={t.act} />);
   const dock = $(container, 'dock');
   expect(dock.hidden).toBe(true);
   expect(shown(container)).toEqual([]);
@@ -77,8 +76,8 @@ test('the dock shows dockFor\'s word, its one button and its alternative, with t
       button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again', hidden: false, report: '1700', busy: false };
   });
   expect([dock.hidden, dock.dataset.phase, dock.dataset.report]).toEqual([false, 'needs', '1700']);
-  expect([$(container, 'screen-eyebrow').textContent, $(container, 'screen-eyebrow').dataset.tone, $(container, 'screen-title').textContent, $(container, 'screen-lead').textContent, $(container, 'dock-sub').hidden])
-    .toEqual(['12 filled · 2 need you', 'warn', 'Answer 2 questions', 'Then Fill this page again to continue. Never Bind or Submit.', true]);
+  expect([$(container, 'dock-eyebrow').textContent, $(container, 'dock-eyebrow').dataset.tone, $(container, 'dock-title').textContent, $(container, 'dock-sub').hidden])
+    .toEqual(['12 filled · 2 need you', 'warn', 'Answer 2 questions', false]);
   expect($(container, 'fill-progress').hidden).toBe(true);
   expect(shown(container)).toEqual([['dock-next', 'Show the next one', false], ['dock-alt', 'Fill this page again', false]]);
   expect($(container, 'dock-alt').dataset.go).toBe('fill-again');
@@ -89,30 +88,27 @@ test('the dock shows dockFor\'s word, its one button and its alternative, with t
   });
   expect([dock.dataset.phase, dock.dataset.report, $(container, 'fill-progress').hidden]).toEqual(['filling', '', false]);
   expect(shown(container)).toEqual([['fill-stop', 'Stop', false]]);
-  // No sub: none shown. No button/alt/progress/paused on a message-only phase: the dock hides.
-  act(() => { state.dock = { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', hidden: false, report: '', busy: false }; });
-  expect([dock.hidden, $(container, 'dock-sub').hidden, $(container, 'screen-eyebrow').dataset.tone]).toEqual([true, true, undefined]);
+  // No sub: none shown. Settings open: the dock hides.
+  act(() => { state.dock = { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', hidden: true, report: '', busy: false }; });
+  expect([dock.hidden, $(container, 'dock-sub').hidden, $(container, 'dock-eyebrow').dataset.tone]).toEqual([true, true, '']);
   expect(shown(container)).toEqual([]);
 });
 
 // Audit 2026-11-07, FLOW-13: automatic filling paused on the tab in front (renderDock's `paused`) is
-// said in the dock, and through #announce (announce.js), on whatever page the tab is on.
+// said under the dock's word, and through #announce (announce.js), on whatever page the tab is on.
 test('the dock says when automatic filling is paused on the tab, and stops saying it once lifted', () => {
-  act(() => { state.intake = {}; state.view = 'page'; });
-  const { container } = render(<><Screen /><Dock act={acts().act} /></>);
+  const { container } = render(<Dock act={acts().act} />);
   const word = { phase: 'ready', eyebrow: 'Next', title: 'Fill the Vehicles page', sub: 'Clicks Continue once nothing is left for you.', button: 'fill', label: 'Fill this page', hidden: false, report: '', busy: false };
   act(() => { state.dock = { ...word, paused: 'Automatic filling is paused on this tab. Your next Fill turns it back on.' }; });
   const line = $(container, 'dock-paused');
   expect([line.hidden, line.getAttribute('role'), line.textContent]).toEqual([false, null, 'Automatic filling is paused on this tab. Your next Fill turns it back on.']);
-  expect([$(container, 'screen-lead').textContent, $(container, 'dock-sub').hidden]).toEqual(['Clicks Continue once nothing is left for you.', true]);
-  act(() => { state.view = 'check'; });
-  expect([$(container, 'dock-sub').hidden, $(container, 'dock-sub').textContent]).toEqual([false, 'Clicks Continue once nothing is left for you.']);
+  expect($(container, 'dock-sub').textContent).toBe('Clicks Continue once nothing is left for you.');
   act(() => { state.dock = { ...word, paused: '' }; });
   expect(line.hidden).toBe(true);
-  // Message-only dock on Intake checks (e.g. unreadable/no-rater with no action): dock hides, #dock-sub keeps textContent for harnesses.
-  act(() => { state.dock = { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.', hidden: false, report: '', busy: false }; });
-  expect([$(container, 'dock').hidden, $(container, 'dock-sub').hidden, $(container, 'dock-sub').textContent])
-    .toEqual([true, true, 'Allow it on this site (toolbar icon or site access), then reload.']);
+  // Message-only dock on Intake checks (e.g. unreadable/no-rater with no action): dock stays visible with its eyebrow, title and sub.
+  act(() => { state.intake = {}; state.view = 'check'; state.dock = { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.', hidden: false, report: '', busy: false }; });
+  expect([$(container, 'dock').hidden, $(container, 'dock-title').getAttribute('aria-hidden'), $(container, 'dock-sub').hidden, $(container, 'dock-sub').textContent])
+    .toEqual([false, null, false, 'Allow it on this site (toolbar icon or site access), then reload.']);
 });
 
 // From the safety test 'a page with nothing to fill and nothing left offers Continue, a fill that

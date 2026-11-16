@@ -10,7 +10,7 @@ import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/in
 import { closeSettings, firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
-import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
+import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, scrollBehavior, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
 import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
@@ -186,7 +186,7 @@ function wire() {
       fillPage();
     },
   });
-  mountScreen($('screen-root'));
+  mountScreen($('screen-root'), { scrollBehavior });
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   // During a developer recording it is also a note naming the capture's file (REC-17); Alt+Shift+R
   // starts or stops one (unpacked builds only).

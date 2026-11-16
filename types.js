@@ -1494,7 +1494,7 @@
 
 /**
  * Shape of `state.dock` (`renderDock` in `coordinator.js`, built from `dockFor`, `fillingSaid`
- * and `continueSaid` and read by `steps-view.jsx` and `screen.js`).
+ * and `continueSaid` and read by `steps-view.jsx`, `screen-view.jsx` and `screen.js`).
  * @typedef {object} DockSnapshot
  * @property {string} [phase] dock phase id (`start`, `off`, `ready`, `filling`, `needs`, `done`, …)
  * @property {'bad' | 'warn' | 'good' | 'blue' | 'ai'} [tone] colour tone of the dock and its primary button
@@ -1509,7 +1509,7 @@
  * @property {string} [go] `#fill[data-go]` mode (`continue` when `#fill` continues instead of filling)
  * @property {number | boolean} [progress] fill progress fraction (`0..1`) or `true` when indeterminate
  * @property {string} [progressSaid] accessible announcement string for the progress bar
- * @property {boolean} [hidden] whether `#dock` is hidden (`!intake || settingsOpen`)
+ * @property {boolean} [hidden] whether `#dock` is hidden while Settings is open (`settingsOpen && button !== 'fill-stop'`)
  * @property {string} [report] report status attribute mirrored to `#dock[data-report]`
  * @property {boolean} [busy] mirrored to `#dock[aria-busy]` while a fill runs
  * @property {string} [paused] footer note when automatic filling is paused on the active tab
