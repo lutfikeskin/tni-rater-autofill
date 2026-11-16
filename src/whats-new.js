@@ -8,6 +8,13 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
+  '0.9.41': [
+    "GEICO: the owner's name and birth date fill again.",
+    'An invalid VIN is left for you instead of typed.',
+    "A trailer make not in the carrier's list is left for you, with a note.",
+    "Progressive: the ELD vendor comes from the intake when it's in the list.",
+    'GEICO UM without $100,000 offered is left for you, with a note.',
+  ],
   '0.9.40': [
     'Pages fill faster.',
     'GEICO: the trailer type comes from the intake.',
