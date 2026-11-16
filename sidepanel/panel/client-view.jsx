@@ -1,8 +1,9 @@
-// The client's header in React: their name (a button to every answer on the intake) and what the
-// quote is about, the intake PDF and the file tools always in view (no menu to open first), the file
-// tools' question before the agent's work would go, and the line about the file just loaded. Drawn
-// from what render() says (state.client), clientNote (state.clientNote) and renderSteps
-// (state.newQuoteOff). What its buttons do is the panel's (`act`, wired in sidepanel.js).
+// The client's header in React: their name (a button to every answer on the intake), the intake
+// half of the context line when no rater is in front, the intake PDF and the file tools always in
+// view (no menu to open first), the file tools' question before the agent's work would go, and the
+// line about the file just loaded. Drawn from what render() says (state.client), state.tab,
+// clientNote (state.clientNote) and renderSteps (state.newQuoteOff). What its buttons do is the
+// panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountClient).
 import { useRef } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -17,6 +18,7 @@ import { DefaultsChip } from './agent-defaults/view.jsx';
 // newQuote, clear, and the question's yes and cancel.
 function ClientHead({ act }) {
   const client = useStore(panelStore, (s) => s.client);
+  const onRater = useStore(panelStore, (s) => !!s.tab?.carrier);
   const detailsOpen = useStore(panelStore, (s) => !!s.detailsOpen);
   const newQuoteOff = useStore(panelStore, (s) => !!s.newQuoteOff);
   const note = useStore(panelStore, (s) => s.clientNote);
@@ -29,8 +31,8 @@ function ClientHead({ act }) {
         <button type="button" id="client-card" className="client-title" aria-controls="details-view" aria-expanded={detailsOpen}
           title="Client details: every answer on the intake, to read or correct" onClick={() => act.details()}>
           <span id="client-name" className="client-name" title={client?.title}>{client?.name ?? ''}</span>
-          <span id="client-meta" className="client-meta">{client?.meta ?? ''}</span>
         </button>
+        <p id="client-meta" className="client-meta" hidden={onRater || !client?.meta}>{client?.meta ?? ''}</p>
         <div className="client-tools">
           <DefaultsChip />
           <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>

@@ -150,39 +150,54 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .icon-btn:hover, .icon-btn[aria-expanded="true"] { background: var(--surface-hover); color: var(--ink-strong); }
 .dot { position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; border-radius: 4px; background: var(--warning); border: 2px solid #ffffff; }
 
-/* Header: the rater page (carrier, page, place in the quote), Settings and window controls */
-.top { flex: 0 0 auto; padding: 8px 14px; display: flex; align-items: center; gap: 8px; background: var(--surface); border-bottom: 1px solid var(--border-row); }
-.top-main { flex: 1; min-width: 0; display: grid; gap: 5px; }
-.carrier-line { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 22px; }
+/* Fixed top: top bar (client name or Rater Autofill, with window controls and Settings), context
+   line (rater page and stage, or intake summary), 2px progress rule, then file tools and steps. */
+.panel-head {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: [bar] auto [ctx] auto [rule] auto [tools] auto [confirm] auto [note] auto [steps] auto;
+  align-items: center;
+  background: var(--surface);
+}
+.top { display: contents; }
+.brand { grid-row: bar; grid-column: 1; display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 0 8px 0 14px; min-width: 0; }
+.brand img { display: none; }
+.brand span { font-size: 15px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-head:not(:has(#quote:not([hidden]))) #brand { display: flex !important; }
+.panel-head:has(#quote:not([hidden])) #brand { display: none !important; }
+.top-right { grid-row: bar; grid-column: 2; position: relative; z-index: 1; display: flex; align-items: center; gap: 2px; min-height: 48px; padding: 0 14px 0 4px; flex-shrink: 0; }
+.carrier-line { grid-row: ctx; grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); }
+.carrier-line > :not([hidden]) ~ span:not([hidden])::before { content: "·"; margin-right: 6px; color: var(--ink-muted); }
 /* Its own class: .rater-logo is the Open a rater card's buttons, whose padding squeezed this image to a few pixels. */
 .carrier-logo { display: block; box-sizing: content-box; width: auto; height: 20px; max-width: 120px; object-fit: contain; object-position: left center; flex-shrink: 0; }
-.site { display: inline-flex; align-items: center; padding: 0; border: 0; color: var(--ink-muted); background: none; font: 600 13px/1.3 var(--font-sans); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.site { display: inline-flex; align-items: center; padding: 0; border: 0; color: var(--ink-muted); background: none; font: 600 13px/1.35 var(--font-sans); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
 .site.on { color: var(--brand); }
-.site-step { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.track-row { display: flex; align-items: center; gap: 8px; }
-.track-row:not(:has(> :not([hidden]))) { display: none; }
-.track { flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 2px; }
-.track span { height: 2px; border-radius: 0; background: var(--border-row); }
-.track .done { background: var(--brand); }
-.track .here { background: var(--border-active); }
-.track .here.filled { background: var(--track-filled); }
-.site-count { flex-shrink: 0; font: 400 13px/1.3 var(--font-sans); color: var(--ink-muted); }
-.brand { display: flex; align-items: center; gap: 8px; min-height: 26px; }
-.brand img { width: 24px; height: 24px; object-fit: contain; }
-.brand span { font-size: 15px; font-weight: 600; color: var(--ink-strong); }
-.carrier-caption { min-width: 0; margin-top: -2px; font-size: 13px; color: var(--ink-muted); overflow-wrap: anywhere; }
-.top-right { display: flex; gap: 2px; flex-shrink: 0; }
+.site-step { min-width: 0; max-width: 100%; font-size: 13px; font-weight: 400; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.site-count { flex-shrink: 0; font: 400 13px/1.35 var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
+.carrier-caption { min-width: 0; margin: 0; font-size: 13px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.track { display: none; }
+.rule-root { grid-row: rule; grid-column: 1 / -1; align-self: stretch; }
+.rule { height: 2px; background: var(--border-row); overflow: hidden; }
+.rule > span { display: block; height: 100%; background: var(--brand); transition: width 0.22s ease; }
+.rule > span.done { background: var(--success); }
+body:has(#settings:not([hidden])) #carrier-line,
+body:has(#settings:not([hidden])) #site-rule,
+.panel-head:not(:has(#quote:not([hidden]), #carrier-line:not([hidden]))) #site-rule { display: none !important; }
+body:has(#settings:not([hidden])) .panel-head,
+.panel-head:not(:has(#quote:not([hidden]), #carrier-line:not([hidden]))) { border-bottom: 1px solid var(--border-row); }
 
 /* The client, the file tools and the steps strip */
-.client { flex: 0 0 auto; background: var(--surface); border-bottom: 1px solid var(--border-row); }
-.client-head { position: relative; padding: 8px 12px 0; display: flex; align-items: center; gap: 6px; }
-/* The client's name and what the quote is about: a button to every answer on the intake (the drawer). */
-.client-title { flex: 1; min-width: 0; display: grid; margin: 0 -6px; padding: 2px 6px; border: 0; border-radius: var(--radius-sm); background: none; text-align: left; }
+.client { grid-column: 1 / -1; grid-row: 1 / -1; display: grid; grid-template-columns: subgrid; grid-template-rows: subgrid; align-items: center; pointer-events: none; }
+#client-root, .client-head { display: contents; }
+#client-card, .client-tools, .client-meta, .file-confirm, .client-note, .steps { pointer-events: auto; }
+/* The client's name: top-bar disclosure button to every answer on the intake (the drawer). */
+.client-title { grid-row: bar; grid-column: 1; min-width: 0; display: flex; align-items: center; min-height: 36px; margin: 6px 4px 6px 8px; padding: 4px 6px; border: 0; border-radius: var(--radius-sm); background: none; text-align: left; }
 .client-title:hover, .client-title[aria-expanded="true"] { background: var(--surface-hover); }
-.client-name { display: block; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.client-meta { display: block; font-size: 13px; color: var(--ink-muted); white-space: normal; overflow-wrap: anywhere; }
+.client-name { display: block; min-width: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.client-meta { grid-row: ctx; grid-column: 1 / -1; margin: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Intake, Change file, New quote and Clear: no background until hovered. */
-.client-tools { flex-shrink: 0; display: flex; align-items: center; gap: 1px; }
+.client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; }
 .client-tools > button { background: none; border-color: transparent; }
 .client-tools > button:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
 .client-tools > .danger:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
@@ -193,11 +208,11 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .tool-btn svg { width: 16px; height: 16px; }
 .tool-btn.danger { color: var(--ink-secondary); }
 .tool-btn.danger:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink-strong); }
-.file-confirm { margin: 8px 14px 0; display: grid; gap: 8px; padding: 10px 0; background: none; border-top: 1px solid var(--border-row); border-radius: 0; }
+.file-confirm { grid-row: confirm; grid-column: 1 / -1; margin: 6px 14px 0; display: grid; gap: 8px; padding: 10px 0; background: none; border-top: 1px solid var(--border-row); border-radius: 0; }
 .file-confirm .ghost { min-height: 32px; }
 .file-confirm p { color: var(--ink); font-size: 14px; }
-.client-note { margin: 8px 14px 0; padding: 6px 0; border-top: 1px solid var(--border-row); border-radius: 0; background: none; color: var(--success-ink); font-size: 13px; }
-.steps { padding: 8px 14px 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.client-note { grid-row: note; grid-column: 1 / -1; margin: 6px 14px 0; padding: 6px 0; border-top: 1px solid var(--border-row); border-radius: 0; background: none; color: var(--success-ink); font-size: 13px; }
+.steps { grid-row: steps; grid-column: 1 / -1; padding: 6px 14px 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border-bottom: 1px solid var(--border-row); }
 .step { display: grid; gap: 4px; padding: 0; background: none; border: 0; text-align: left; min-width: 0; }
 .step-bar { height: 2px; border-radius: 0; background: var(--border-row); }
 .step-line { display: flex; align-items: center; gap: 5px; min-width: 0; }
@@ -563,7 +578,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .sub-fold > summary .fold-note { flex: 0 1 auto; }
 .defaults-carriers { border-top: 1px solid var(--border-row); }
 /* The quote's defaults in the client strip: a plain text link ("2 yours" teal, "TNI's" muted), no pill;
-   its popover hangs from the strip (.client-head), at its right edge. */
+   its popover hangs from the tools row (.client-tools), at its right edge. */
 .defaults-chip { display: inline-flex; }
 .defaults-pill { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 4px; border: 0; border-radius: 0; background: none; color: var(--ink-secondary); font-size: 13px; font-weight: 500; line-height: 1.2; text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
 .defaults-pill svg { width: 14px; height: 14px; }
@@ -571,7 +586,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .defaults-pill.own { background: none; color: var(--own-ink); font-weight: 600; }
 .defaults-pill.own svg { color: var(--mark-own); }
 .defaults-pill.own:hover { color: var(--own-ink); }
-.defaults-pop { position: absolute; z-index: 30; top: calc(100% + 4px); right: 14px; width: 300px; max-width: calc(100vw - 28px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(16, 24, 40, 0.14); font-size: 13px; text-align: left; max-height: calc(100dvh - 140px); overflow-y: auto; }
+.defaults-pop { position: absolute; z-index: 30; top: calc(100% + 4px); right: 12px; width: 300px; max-width: calc(100vw - 24px); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md); box-shadow: 0 8px 24px rgba(16, 24, 40, 0.14); font-size: 13px; text-align: left; max-height: calc(100dvh - 140px); overflow-y: auto; }
 .defaults-pop > * + * { border-top: 1px solid var(--border-row); }
 .pop-head { display: grid; padding: 10px 12px 8px; }
 .pop-head b { color: var(--own-ink); }
@@ -700,8 +715,10 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .problem textarea, .problem select { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); padding: 6px 10px; resize: vertical; font-size: 13px; }
 .problem-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .problem-said { margin: 0; padding: 6px 14px 0; font-size: 13px; color: var(--ink-secondary); }
-.foot-row { padding: 6px 14px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 8px; border-top: 1px solid var(--border-row); }
-.dock-root:has(> .dock[hidden]) + .problem + .problem-said + .foot-row { border-top: 0; }
+.foot-row { padding: 0 14px; min-height: 40px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 8px; border-top: 1px solid var(--border-row); }
+.dock-root:has(> .dock[hidden]) + .problem[hidden] + .problem-said[hidden] + .foot-row { border-top: 0; }
+.dock-root:has(> .dock[hidden]) + .problem { border-top: 0; }
+.foot-row #report-problem { min-height: 36px; display: inline-flex; align-items: center; white-space: nowrap; }
 .recording, .foot-version { font: 400 13px/1.2 var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
 /* The host React draws #recording into (settings-view.jsx): no box of its own, so the footer row lays it out as before. */
 .recording-root { display: contents; }
@@ -711,15 +728,21 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .devrec-pill input { min-width: 0; width: 10em; font-size: 13px; padding: 2px 6px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-sm); }
 
 @keyframes rise { from { transform: translateY(16px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }
+@media (max-width: 359px) {
+  #foot-version { display: none; }
+}
 @media (max-width: 340px) {
-  .top, .steps, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
+  .brand { padding-left: 10px; }
+  .top-right { padding-right: 10px; }
+  .client-title { margin-left: 4px; }
+  .carrier-line, .client-meta, .steps, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
+  .file-confirm, .client-note { margin-left: 10px; margin-right: 10px; }
+  .client-tools { padding-left: 8px; padding-right: 8px; gap: 1px; }
   .site-step { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
-  .client-head { padding-left: 10px; padding-right: 10px; }
   .pane { padding-left: 10px; padding-right: 10px; }
   .row-head { padding-left: 10px; padding-right: 10px; }
   .row-body { padding-left: 36px; padding-right: 10px; }
   .intake-btn { padding: 0 4px; }
-  .client-tools { gap: 1px; }
   .defaults-pill { padding: 0 2px; }
   .defaults-pill > span { display: none; }
 }

@@ -10782,7 +10782,7 @@ test('the client strip: the name opens client details, and Change file, New quot
   const view = fs.readFileSync(new URL('../sidepanel/panel/client-view.jsx', import.meta.url), 'utf8');
   assert.match(html, /<section id="quote" class="client" hidden>\s+(<!--[\s\S]*?-->\s+)?<div id="client-root"><\/div>/);
   assert.match(view, /<button type="button" id="client-card" className="client-title" aria-controls="details-view" aria-expanded=\{detailsOpen\}/);
-  assert.match(view, /<span id="client-name" className="client-name"[^>]*>\{client\?\.name \?\? ''\}<\/span>\s+<span id="client-meta" className="client-meta">\{client\?\.meta \?\? ''\}<\/span>\s+<\/button>/, 'phrasing content in the button, not a heading');
+  assert.match(view, /<span id="client-name" className="client-name"[^>]*>\{client\?\.name \?\? ''\}<\/span>\s+<\/button>\s+<p id="client-meta" className="client-meta" hidden=\{onRater \|\| !client\?\.meta\}>\{client\?\.meta \?\? ''\}<\/p>/, 'name in the top-bar button, intake meta on the context line');
   const toolsAt = view.indexOf('<div className="client-tools">');
   const tools = view.slice(toolsAt, view.indexOf('</div>', toolsAt));
   for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);

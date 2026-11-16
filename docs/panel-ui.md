@@ -4,6 +4,15 @@ Read this when a change adds or alters what the side panel draws: a view (`sidep
 
 Several of these rules come from comparing the panel with [vercel-labs/ui](https://github.com/vercel-labs/ui) (UI SDK, a library of keyboard, focus and ARIA behaviors, 2026-11). The panel doesn't ship that library; it keeps its own views and styles and follows the same rules.
 
+## Structure
+
+The panel's document never scrolls (`overflow: clip` on `html` and `body`); only `<main id="view">` in the middle and `<footer class="foot">` in a short window may scroll. Above `<main id="view">`, `.panel-head` holds `header.top` and `section#quote` on one CSS grid so the top bar and context line stay in the same place across every state:
+
+- **Top bar**: the client's name disclosure (`#client-card`, opening `#details-view`) when `#quote` is shown, or `#brand` ("Rater Autofill") when no intake is shown or Settings is open, paired on the right with `#pop-out`, `#dock-back` and `#settings-btn`.
+- **Context line**: `#carrier-line` (`#site-logo` or `#site`, `#site-step`, `#site-count` "Stage n of m", `#site-caption`, written by `renderSite` and separated with middots in CSS) when a rater tab is in front, or `#client-meta` (the intake's state and counts, from `client-view.jsx`) when an intake is loaded without a rater tab in front.
+- **2px progress rule**: `#site-rule` (`rule-view.jsx`), drawn from `state.siteTrack` (completed steps over total steps, turning green when all steps are done). It is `aria-hidden="true"` because the context line above carries the stage in words; `#site-track` (`site-view.jsx`) remains in the DOM, visually hidden, for `renderSite`.
+- **Base line**: `.foot-row` at the bottom of `<footer class="foot">` orders `#recording-root` ("Recording usage"), `#report-problem` and `#foot-version` (visually hidden below 360px, since Settings shows `#version`).
+
 ## Saying what changed
 
 A screen reader reads a live region (`role="status"`, `aria-live`) when its words change, but often not when the region itself is shown, or put on the page, at the moment its words go in. So the panel has one live region, `#announce` in `sidepanel.html` (`role="status"`, `aria-live="polite"`, visually hidden, never `hidden`), and everything it says goes there:
@@ -36,7 +45,7 @@ A list whose items can change while it is on screen is keyed by what each item i
 
 ## Motion
 
-With the system's reduced-motion setting on, nothing in the panel slides, spins or fades: one rule at the end of `sidepanel.css` turns off every animation and transition, on elements and on their `::before` and `::after` content, and the fill's bar and spinner change to a steady full bar and a still "…" so they don't read as stuck. Scrolling the panel does it too: every `scrollIntoView` takes its `behavior` from `scrollBehavior()` (`coordinator.js`), `auto` with reduced motion and `smooth` otherwise, never a fixed `smooth`. `test/panel-contrast.test.mjs` checks the CSS, and the safety tests check Settings' scroll to a box.
+With the system's reduced-motion setting on, nothing in the panel slides, spins or fades: one rule at the end of `sidepanel.css` turns off every animation and transition, on elements and on their `::before` and `::after` content (the 2px `#site-rule` width transition included), and the fill's bar and spinner change to a steady full bar and a still "…" so they don't read as stuck. Scrolling the panel does it too: every `scrollIntoView` takes its `behavior` from `scrollBehavior()` (`coordinator.js`), `auto` with reduced motion and `smooth` otherwise, never a fixed `smooth`. `test/panel-contrast.test.mjs` checks the CSS, and the safety tests check Settings' scroll to a box.
 
 ## Checked against their pattern
 

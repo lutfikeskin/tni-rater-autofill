@@ -3,27 +3,33 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { ClientHead, mountClient } from '../../sidepanel/panel/client-view.jsx';
 
-// The client's header in React (React PR 9, 2026-11-01): what render() drew with $() into the
-// page's header, drawn from what it says now (state.client), with the note under it (clientNote)
-// and New quote off while answers go in (renderSteps). What each button does is the panel's (the
-// safety tests: Clear always asks, Change file asks once the agent has done work…); here, that the
-// header draws them as before and that each button asks the panel for its own thing.
+// The client's header in React: the client's name in the top bar (#client-card, a disclosure button
+// to client details), the intake half of the context line (#client-meta, shown only when no rater
+// tab is in front), the file tools and their confirm prompt, the note under it (clientNote) and New
+// quote off while answers go in (renderSteps).
 
 let state;
-beforeEach(() => { state = storeState({ client: null, clientNote: null, newQuoteOff: false, detailsOpen: false }); });
+beforeEach(() => { state = storeState({ client: null, tab: null, clientNote: null, newQuoteOff: false, detailsOpen: false }); });
 afterEach(cleanup);
 
 const $ = (container, sel) => container.querySelector(sel);
 const acts = (calls) => Object.fromEntries(['details', 'pdf', 'summary', 'replace', 'newQuote', 'clear', 'yes', 'cancel'].map((name) => [name, () => calls.push(name)]));
 
-test('the header: the client\'s name and what the quote is about, a button to client details that says whether they are open', () => {
+test('the header: client name in the top-bar disclosure, context-line meta hidden when a rater is in front, and tools in order', () => {
   const calls = [];
   const { container } = render(<ClientHead act={acts(calls)} />);
   act(() => { state.client = { name: 'Acme Hauling LLC', title: 'acme.pdf · 61 answers', meta: 'Maryland · 2 drivers · 1 vehicle', pdf: true, ask: null }; });
   const card = $(container, '#client-card');
+  const meta = $(container, '#client-meta');
   expect([card.tagName, card.className, card.getAttribute('aria-controls'), card.getAttribute('aria-expanded')]).toEqual(['BUTTON', 'client-title', 'details-view', 'false']);
-  expect([$(container, '#client-name').textContent, $(container, '#client-name').title, $(container, '#client-meta').textContent])
-    .toEqual(['Acme Hauling LLC', 'acme.pdf · 61 answers', 'Maryland · 2 drivers · 1 vehicle']);
+  expect(card.querySelector('#client-meta')).toBeNull();
+  expect([card.textContent, $(container, '#client-name').title, meta.textContent, meta.hidden])
+    .toEqual(['Acme Hauling LLC', 'acme.pdf · 61 answers', 'Maryland · 2 drivers · 1 vehicle', false]);
+  // When a rater tab is in front, #carrier-line takes the context line and #client-meta hides.
+  act(() => { state.tab = { id: 1, carrier: { id: 'amwins', name: 'AmWINS' } }; });
+  expect(meta.hidden).toBe(true);
+  act(() => { state.tab = { id: 2, carrier: null }; });
+  expect(meta.hidden).toBe(false);
   fireEvent.click(card);
   expect(calls).toEqual(['details']);
   act(() => { state.detailsOpen = true; });
@@ -36,10 +42,11 @@ test('the header: the client\'s name and what the quote is about, a button to cl
   expect(calls.slice(1)).toEqual(['pdf', 'summary', 'replace', 'newQuote', 'clear']);
 });
 
-test('the PDF button only with the PDF kept; New quote off while answers go in', () => {
+test('the PDF button only with the PDF kept; New quote off while answers go in; empty meta stays hidden', () => {
   const { container } = render(<ClientHead act={acts([])} />);
   act(() => { state.client = { name: 'Acme', title: '', meta: '', pdf: false, ask: null }; });
   expect($(container, '#open-pdf').hidden).toBe(true);
+  expect($(container, '#client-meta').hidden).toBe(true);
   expect($(container, '#new-quote').disabled).toBe(false);
   act(() => { state.client = { ...state.client, pdf: true }; state.newQuoteOff = true; });
   expect($(container, '#open-pdf').hidden).toBe(false);
@@ -73,7 +80,7 @@ test('mountClient draws before it returns', () => {
   const host = document.body.appendChild(document.createElement('div'));
   act(() => {
     mountClient(host, acts([]));
-    expect(['client-card', 'client-name', 'open-pdf', 'replace', 'new-quote', 'clear-client', 'file-confirm', 'file-confirm-no', 'client-note'].map((id) => !!host.querySelector(`#${id}`))).toEqual(Array(9).fill(true));
+    expect(['client-card', 'client-name', 'client-meta', 'open-pdf', 'replace', 'new-quote', 'clear-client', 'file-confirm', 'file-confirm-no', 'client-note'].map((id) => !!host.querySelector(`#${id}`))).toEqual(Array(10).fill(true));
   });
   host.remove();
 });

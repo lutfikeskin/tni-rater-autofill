@@ -29,6 +29,7 @@ import { mountSummary } from './panel/summary-view.jsx';
 import { closeSummary, openSummary, saveSummary } from './panel/quote-summary.js';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
+import { mountSiteRule } from './panel/rule-view.jsx';
 import { mountSetup } from './panel/home-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
@@ -49,9 +50,10 @@ function wire() {
   $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) closeSettings(); else openSettings(); });
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
-  // The header's strip of the quote's steps; the usage log that can't be saved, a Pop out or Dock
-  // that didn't work, and a PDF that couldn't be read.
+  // The header's strip of the quote's steps and 2px progress rule; the usage log that can't be
+  // saved, a Pop out or Dock that didn't work, and a PDF that couldn't be read.
   mountSiteTrack($('site-track'));
+  mountSiteRule($('site-rule'));
   mountNote($('notices'), 'usage');
   mountNote($('storage-note'), 'storage');
   mountNote($('whats-new'), 'whatsNew');
