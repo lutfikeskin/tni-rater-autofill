@@ -1,7 +1,8 @@
 // The panel's two tabs (Intake, This page) and the dock in React, drawn from what the panel says of
 // them: the tabs' tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's one
 // next thing to do and its button (state.dock, renderDock from dockFor; #dock-eyebrow and
-// #dock-title stay in the DOM and hide behind sr-only + aria-hidden while #screen-head is in view).
+// #dock-title stay in the DOM with aria-hidden while #screen-head is shown, and lift sr-only when
+// #screen-title scrolls out of #view).
 // What their buttons do is the panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -75,9 +76,10 @@ const BUSY = 'Wait for the answers going in to finish.';
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
 // Hidden until the panel first says it, and while Settings is open (unless Stop shows).
-// While #screen-head is shown and in view, #dock-eyebrow and #dock-title stay in the DOM with
-// sr-only + aria-hidden so the title appears once in the accessibility tree; on check, review, ai,
-// or when #screen-head scrolls out of #view (#dock[data-head-out]), they show in the dock.
+// While #screen-head is shown (`headOn`), #dock-eyebrow and #dock-title stay `aria-hidden` so the
+// title appears once in the accessibility tree, and drop `sr-only` (with #dock-sub shown as
+// `aria-hidden`) only when #screen-title scrolls out of #view (#dock[data-head-out]); on check,
+// review and ai (`!headOn`), they show in the dock exposed to assistive tech.
 // Keyboard focus stays in the dock as its button changes (audit 2026-11-07, UX-08: Fill this page
 // hid as Stop showed, and focus fell to the page, at the moment Stop mattered most): when the button
 // that had it is hidden, or disabled, the button shown now takes it (its alternative when it has
@@ -123,9 +125,9 @@ function Dock({ act }) {
         : <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>}
       <div className="dock-body">
         <div className="dock-text">
-          <span id="dock-eyebrow" className={`dock-eyebrow${inHead ? ' sr-only' : ''}`} aria-hidden={inHead ? 'true' : undefined} data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
-          <span id="dock-title" className={`dock-title${inHead ? ' sr-only' : ''}`} aria-hidden={inHead ? 'true' : undefined}>{d?.title}</span>
-          <span id="dock-sub" className="dock-sub" hidden={!d?.sub || inHead}>{d?.sub ?? ''}</span>
+          <span id="dock-eyebrow" className={`dock-eyebrow${inHead ? ' sr-only' : ''}`} aria-hidden={headOn ? 'true' : undefined} data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
+          <span id="dock-title" className={`dock-title${inHead ? ' sr-only' : ''}`} aria-hidden={headOn ? 'true' : undefined}>{d?.title}</span>
+          <span id="dock-sub" className="dock-sub" hidden={!d?.sub || inHead} aria-hidden={headOn && headOut ? 'true' : undefined}>{d?.sub ?? ''}</span>
           {/* Automatic filling paused on this tab (renderDock's `paused`). */}
           <span id="dock-paused" ref={pausedLine} className="dock-paused" hidden={!d?.paused}>{d?.paused ?? ''}</span>
         </div>

@@ -1,8 +1,8 @@
 // @ts-check
 // The canvas screen head (#screen-head) at the top of the panel's middle (#view): the one next
 // thing to do on the 17 screens without their own heading, while the dock keeps #dock-eyebrow and
-// #dock-title hidden from sight and the accessibility tree unless #screen-head is hidden or
-// scrolled out of #view (#dock[data-head-out]).
+// #dock-title aria-hidden whenever #screen-head is shown and reveals them visually when
+// #screen-title scrolls out of #view (#dock[data-head-out]).
 // One part of the panel; sidepanel.js mounts it (mountScreen).
 
 /** @import { DockSnapshot, PanelScreen, PanelState } from '../../types.js' */
@@ -61,8 +61,6 @@ function Screen({ scrollBehavior } = {}) {
   const d = useStore(panelStore, (s) => s.dock);
   const fillingFor = useStore(panelStore, (s) => s.fillingFor);
   const { eyebrow, title, sub, tone } = screenSaid(screen, d, fillingFor);
-  /** @type {import('react').RefObject<HTMLDivElement | null>} */
-  const headRef = useRef(null);
   /** @type {import('react').RefObject<HTMLHeadingElement | null>} */
   const titleRef = useRef(null);
   const prevScreen = useRef(screen);
@@ -87,23 +85,24 @@ function Screen({ scrollBehavior } = {}) {
     h.scrollIntoView?.({ block: 'nearest', behavior: scrollBehavior ? scrollBehavior() : 'auto' });
   }, [screen, shown, scrollBehavior]);
 
-  // When #view scrolls #screen-head out of view, mark #dock[data-head-out] so the dock surfaces
-  // #dock-eyebrow, #dock-title and #dock-sub until #screen-head returns.
+  // When #view clips #screen-title out of full view, mark #dock[data-head-out] so the dock
+  // surfaces #dock-eyebrow, #dock-title and #dock-sub visually until #screen-title returns.
   useEffect(() => {
-    const head = headRef.current;
-    if (!shown || !head) {
+    const heading = titleRef.current;
+    if (!shown || !heading) {
       document.getElementById('dock')?.removeAttribute('data-head-out');
       return undefined;
     }
     if (typeof IntersectionObserver !== 'function') return undefined;
-    const root = head.closest('#view') ?? null;
+    const root = heading.closest('#view') ?? null;
     const io = new IntersectionObserver(([entry]) => {
       const targetDock = document.getElementById('dock');
-      if (!targetDock) return;
-      if (entry && !entry.isIntersecting) targetDock.setAttribute('data-head-out', '');
+      if (!targetDock || !entry) return;
+      const out = !entry.isIntersecting || (typeof entry.intersectionRatio === 'number' && entry.intersectionRatio < 1);
+      if (out) targetDock.setAttribute('data-head-out', '');
       else targetDock.removeAttribute('data-head-out');
-    }, { root });
-    io.observe(head);
+    }, { root, threshold: 1 });
+    io.observe(heading);
     return () => {
       io.disconnect();
       document.getElementById('dock')?.removeAttribute('data-head-out');
@@ -111,7 +110,7 @@ function Screen({ scrollBehavior } = {}) {
   }, [shown]);
 
   return (
-    <div id="screen-head" ref={headRef} className="screen-head" hidden={!shown} data-screen={screen}>
+    <div id="screen-head" className="screen-head" hidden={!shown} data-screen={screen}>
       <span id="screen-eyebrow" className="screen-eyebrow" data-tone={tone || undefined} hidden={!eyebrow}>{eyebrow}</span>
       <h2 id="screen-title" ref={titleRef} tabIndex={-1}>{title}</h2>
       <p id="screen-lead" className="screen-lead" hidden={!sub}>{sub}</p>

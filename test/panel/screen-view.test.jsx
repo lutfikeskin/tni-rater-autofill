@@ -254,14 +254,22 @@ test('Intake check view keeps dock blockers and running Stop visible with their 
   ]);
 });
 
-test('scrolling #screen-head out of #view sets #dock[data-head-out] and reveals #dock-eyebrow, #dock-title and #dock-sub', async () => {
+test('scrolling #screen-title out of #view sets #dock[data-head-out] and reveals #dock-eyebrow, #dock-title and #dock-sub visually while keeping aria-hidden', async () => {
   /** @type {IntersectionObserverCallback | null} */
   let ioCallback = null;
+  /** @type {IntersectionObserverInit | undefined} */
+  let ioOptions;
+  /** @type {Element | null} */
+  let observed = null;
   const disconnect = vi.fn();
   vi.stubGlobal('IntersectionObserver', class {
-    /** @param {IntersectionObserverCallback} cb */
-    constructor(cb) { ioCallback = cb; }
-    observe() {}
+    /**
+     * @param {IntersectionObserverCallback} cb
+     * @param {IntersectionObserverInit} [opts]
+     */
+    constructor(cb, opts) { ioCallback = cb; ioOptions = opts; }
+    /** @param {Element} el */
+    observe(el) { observed = el; }
     disconnect() { disconnect(); }
   });
 
@@ -279,30 +287,43 @@ test('scrolling #screen-head out of #view sets #dock[data-head-out] and reveals 
       <Dock act={quiet} />
     </main>,
   );
+  const view = $(container, 'view');
+  const screenTitle = $(container, 'screen-title');
   const dock = $(container, 'dock');
   const dockEyebrow = $(container, 'dock-eyebrow');
   const dockTitle = $(container, 'dock-title');
   const dockSub = $(container, 'dock-sub');
 
-  // While #screen-head intersects #view: dock text is sr-only + aria-hidden.
-  expect([dock.hasAttribute('data-head-out'), dockTitle.classList.contains('sr-only'), dockTitle.getAttribute('aria-hidden'), dockSub.hidden]).toEqual([
-    false, true, 'true', true,
+  expect(observed).toBe(screenTitle);
+  expect(ioOptions).toEqual({ root: view, threshold: 1 });
+
+  // While #screen-title intersects #view in full: dock text is sr-only + aria-hidden.
+  expect([dock.hasAttribute('data-head-out'), dockTitle.classList.contains('sr-only'), dockTitle.getAttribute('aria-hidden'), dockSub.hidden, dockSub.getAttribute('aria-hidden')]).toEqual([
+    false, true, 'true', true, null,
   ]);
 
-  // #screen-head scrolls above #view: IntersectionObserver sets data-head-out and Dock reveals its text.
+  // #screen-title clips above #view (ratio < 1): data-head-out reveals dock text visually while keeping aria-hidden='true'.
   await act(async () => {
-    ioCallback?.([/** @type {any} */ ({ isIntersecting: false })], /** @type {any} */ ({}));
+    ioCallback?.([/** @type {any} */ ({ isIntersecting: true, intersectionRatio: 0.4 })], /** @type {any} */ ({}));
   });
-  expect([dock.hasAttribute('data-head-out'), dockEyebrow.classList.contains('sr-only'), dockTitle.classList.contains('sr-only'), dockTitle.getAttribute('aria-hidden'), dockSub.hidden]).toEqual([
-    true, false, false, null, false,
+  expect([
+    dock.hasAttribute('data-head-out'),
+    dockEyebrow.classList.contains('sr-only'),
+    dockEyebrow.getAttribute('aria-hidden'),
+    dockTitle.classList.contains('sr-only'),
+    dockTitle.getAttribute('aria-hidden'),
+    dockSub.hidden,
+    dockSub.getAttribute('aria-hidden'),
+  ]).toEqual([
+    true, false, 'true', false, 'true', false, 'true',
   ]);
 
-  // Scrolling back to the top removes data-head-out and hides duplicate dock text again.
+  // Scrolling back to full view (ratio === 1) removes data-head-out and restores sr-only + hidden sub.
   await act(async () => {
-    ioCallback?.([/** @type {any} */ ({ isIntersecting: true })], /** @type {any} */ ({}));
+    ioCallback?.([/** @type {any} */ ({ isIntersecting: true, intersectionRatio: 1 })], /** @type {any} */ ({}));
   });
-  expect([dock.hasAttribute('data-head-out'), dockTitle.classList.contains('sr-only'), dockTitle.getAttribute('aria-hidden'), dockSub.hidden]).toEqual([
-    false, true, 'true', true,
+  expect([dock.hasAttribute('data-head-out'), dockTitle.classList.contains('sr-only'), dockTitle.getAttribute('aria-hidden'), dockSub.hidden, dockSub.getAttribute('aria-hidden')]).toEqual([
+    false, true, 'true', true, null,
   ]);
 });
 
