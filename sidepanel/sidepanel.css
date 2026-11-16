@@ -123,6 +123,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .center { text-align: center; }
 .grow { flex: 1; min-width: 0; }
 .eyebrow { color: var(--ink-muted); font: 600 13px/1.3 var(--font-sans); }
+.eyebrow.amber { color: var(--amber); }
 .fine { font-size: 13px; color: var(--ink-muted); text-wrap: pretty; }
 
 /* Buttons: 52px / radius-12 primary dock action, neutral Stop, quiet hairline secondary buttons,
@@ -403,7 +404,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .key-btn[aria-expanded="true"] { background: var(--surface-hover); color: var(--ink-strong); text-decoration: none; }
 .past-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 14px 0; }
 /* An earlier page's answers are read-only: their sources and See in intake stay. */
-.past .change, .past .mark-done, .past .show-on-page, .past .opts, .past .opt-select, .past .change-slot, .past .row-say,
+.past .change, .past .mark-done, .past .mark-done-note, .past .vin-fix, .past .show-on-page, .past .opts, .past .opt-select, .past .change-slot, .past .row-say,
 .past .ai-slot, .past .ai-holder, .past .ai-orphan, .past .needs-head, .past .need-where, .past .need-note button { display: none; }
 /* Plain text filter tabs without a sliding thumb. */
 .filters { display: flex; gap: 12px; padding: 0; background: none; border-radius: 0; }
@@ -439,6 +440,13 @@ body:has(#settings:not([hidden])) .panel-head,
 #feed[data-grouped="true"] .feed-head:not(:has(#page-menu:not([hidden]))) { border-bottom: 0; min-height: 0; padding-top: 2px; padding-bottom: 2px; justify-content: flex-end; background: transparent; position: static; }
 #feed[data-grouped="true"] .row:not(.need) { display: none; }
 #feed[data-grouped="true"] .rows:not(:has(> .row.need)) { border-top: 0; border-bottom: 0; }
+/* When a need is open in focus mode (Phase 7, canvas screens 12-16), put the focused need row
+   above "See all N answers" and hide Review's grouped lists so only that need and the link show. */
+#page-view:has(#report[data-focus="need"]) { display: flex; flex-direction: column; }
+#page-view:has(#report[data-focus="need"]) > #feed-root { order: 2; }
+#page-view:has(#report[data-focus="need"]) > #review-root { order: 3; }
+#page-view:has(#report[data-focus="need"]) #review { padding-top: 4px; padding-bottom: 12px; }
+#page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }
 /* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
 .report-head { display: contents; }
 .report > .issue, .report > .ai-holder, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 8px 14px 0; }
@@ -533,8 +541,29 @@ body:has(#settings:not([hidden])) .panel-head,
 .need-note.bad { color: var(--signal-dark); }
 .need-where { font-size: 13px; color: var(--warning-ink); }
 .options { font-size: 13px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.need-eyebrow { display: none; }
+.mark-done-note { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-muted); text-wrap: pretty; }
 .row.need.resolved .row-icon { color: var(--success); background: none; border: 0; }
 .row.need.resolved .row-value { color: var(--ink-strong); }
+
+/* Focused NeedRow outside All answers (canvas screens 12-16): Needs you · k of n eyebrow, 22px
+   question title, vertical full-width 44px choices, and quiet violet AI note. */
+#report[data-focus="need"] > .rows { border-top: 0; border-bottom: 0; margin-top: 0; }
+#report[data-focus="need"] .rows > .row:not(.need) { display: none; }
+/* Collapse closed need rows visually while keeping their row-head boxes addressable by keyboard
+   and by the Luna harness's openRow() before it opens one. */
+#report[data-focus="need"] .rows > .row.need:not(.open) { max-height: 1px; min-height: 0; overflow: hidden; padding: 0; margin: 0; border: 0; opacity: 0; }
+#report[data-focus="need"] .rows > .row.need:not(.open) > .row-head { min-height: 1px; padding: 0; }
+#report[data-focus="need"] .row.need.open { background: var(--surface); border-top: 0; padding-top: 12px; padding-bottom: 4px; }
+#report[data-focus="need"] .row.need.open .need-eyebrow { display: block; padding: 0 14px 4px; }
+#report[data-focus="need"] .row.need.open .row-head { padding: 4px 14px 8px; align-items: flex-start; }
+#report[data-focus="need"] .row.need.open .row-icon { display: none; }
+#report[data-focus="need"] .row.need.open .row-label { white-space: normal; overflow: visible; text-overflow: clip; font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: -0.015em; color: var(--ink-strong); }
+#report[data-focus="need"] .row.need.open .row-value { font-size: 13px; font-weight: 500; color: var(--amber); }
+#report[data-focus="need"] .row.need.open .row-body { padding: 2px 14px 14px; gap: 10px; }
+#report[data-focus="need"] .row.need.open .opts { gap: 8px; }
+#report[data-focus="need"] .row.need.open .opt-btn { width: 100%; min-height: 44px; padding: 8px 14px; }
+#report[data-focus="need"] .row.need.open :is(.ai-box, .ai-done) { padding: 10px 12px; background: var(--ai-soft); border-top: 0; border-left: 3px solid var(--ai); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
 /* The assistant, on its row and above the list */
 .ai-slot:empty { display: none; }
@@ -713,7 +742,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .drawer-body { min-height: 0; overflow: auto; padding: 8px 14px 24px; display: grid; gap: 6px; align-content: start; }
 .drawer-body .section { display: grid; gap: 0; }
 .drawer-panel .sheet-head .link { flex-shrink: 0; }
-@keyframes slide-in { from { transform: translateX(32px); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
+@keyframes slide-in { from { transform: translateX(32px); opacity: 0.6; } to { transform: translateY(0); opacity: 1; } }
 .pdf-scroll .issue { max-width: 320px; }
 
 /* The quote summary, read only: a sheet over the panel (summary-view.jsx) */
@@ -794,6 +823,9 @@ body:has(#settings:not([hidden])) .panel-head,
   .pane { padding-left: 10px; padding-right: 10px; }
   .row-head { padding-left: 10px; padding-right: 10px; }
   .row-body { padding-left: 36px; padding-right: 10px; }
+  #report[data-focus="need"] .row.need.open .need-eyebrow,
+  #report[data-focus="need"] .row.need.open .row-head,
+  #report[data-focus="need"] .row.need.open .row-body { padding-left: 10px; padding-right: 10px; }
   .intake-btn { padding: 0 4px; }
   .defaults-pill { padding: 0 2px; }
   .defaults-pill > span { display: none; }

@@ -7,7 +7,7 @@ import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
 import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
-import { closeSettings, firstView, openSettings, pickUnit, render, setAllAnswers, setChecksAll, setFilter, setView, showEmpty } from './panel/record.js';
+import { closeSettings, firstView, jumpTo, openSettings, pickUnit, render, setAllAnswers, setChecksAll, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, scrollBehavior, showPast, stopFill } from './panel/coordinator.js';
@@ -22,6 +22,7 @@ import { mountDock, mountSteps } from './panel/steps-view.jsx';
 import { mountScreen } from './panel/screen-view.jsx';
 import { mountFeed } from './panel/feed-view.jsx';
 import { mountReview } from './panel/review-view.jsx';
+import { setJumpToPath } from './panel/report-view.jsx';
 import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
@@ -133,12 +134,21 @@ function wire() {
   // by itself (quote-owner.js openPortal).
   mountCards($('cards-root'), { portal: (url) => { if (inExtension) openPortal(url); } });
   mountPickers($('pickers'), { pick: (list, i) => pickUnit(list, i) });
+  setJumpToPath((path) => jumpTo(path));
   mountReview($('review-root'), {
     openRow: (rec) => {
+      const openNeed = rec.type === 'need' && (!rec.settled || rec.pending);
       flushSync(() => {
         state.pastKey = null;
         setFilter('all');
-        setAllAnswers(true);
+        if (openNeed) {
+          for (const r of state.reportFor?.list ?? []) {
+            if (r !== rec && r.type === 'need' && r.open) toggleRow(r, false);
+          }
+          setAllAnswers(false);
+        } else {
+          setAllAnswers(true);
+        }
         renderSteps();
         toggleRow(rec, true);
       });
@@ -148,7 +158,12 @@ function wire() {
       (openEl.querySelector('.row-body button:not([hidden]):not(:disabled), .row-head') ?? openEl).focus?.({ preventScroll: true });
     },
     showAll: () => { setFilter('all'); setAllAnswers(true); },
-    showReview: () => setAllAnswers(false),
+    showReview: () => {
+      for (const r of state.reportFor?.list ?? []) {
+        if (r.type === 'need' && r.open) toggleRow(r, false);
+      }
+      setAllAnswers(false);
+    },
   });
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),

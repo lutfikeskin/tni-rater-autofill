@@ -559,4 +559,4 @@ function releaseUnitForms(list, index) {
   if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
-export { agentEdit, checkShown, closeSettings, decideLater, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setAllAnswers, setChecksAll, setFilter, setView, showEmpty, showScreen, toggleDone };
+export { agentEdit, checkShown, closeSettings, decideLater, firstView, jumpTo, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setAllAnswers, setChecksAll, setFilter, setView, showEmpty, showScreen, toggleDone };

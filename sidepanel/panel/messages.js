@@ -218,6 +218,15 @@ export const REVIEW = {
   markedSub: 'Marked done without an answer',
 };
 
+// Focused NeedRow words (report-view.jsx, canvas screens 12-16): the k-of-n eyebrow, the VinHold
+// link to client details, and Mark done's visible explanation (never calling it answered).
+export const NEEDS = {
+  eyebrow: (at, total) => `Needs you \u00b7 ${at} of ${total}`,
+  vinFix: 'Correct it in client details',
+  markDoneNote: 'Mark done leaves this field as the page has it: the panel won\u2019t fill it or wait on it.',
+  markActionNote: 'Mark done stops waiting on this step for this quote.',
+};
+
 // The answers list chrome around #live-root, #report and #past (feed-view.jsx).
 export const FEED = {
   defaultTitle: 'Answers on this page',

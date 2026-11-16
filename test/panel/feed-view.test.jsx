@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -126,4 +127,50 @@ test('grouped Review marks #feed data-grouped without setting #report hidden; Al
   });
   expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual([undefined, 'true', false]);
   expect(container.querySelector('.filters-thumb')).toBeNull();
+});
+
+test('open need outside All answers marks #report data-focus="need" and clears it in All answers or once settled', () => {
+  const { container } = render(<Feed act={acts().act} />);
+  const need = { type: 'need', open: true, settled: '', pending: false, gone: false };
+  const entry = { list: [need] };
+  act(() => {
+    state.reportFor = entry;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+    state.filling = false;
+    state.rowsDrawn = 1;
+    state.feed = feed();
+  });
+  expect($(container, 'report').dataset.focus).toBe('need');
+
+  // Switching to All answers clears focus mode.
+  act(() => {
+    state.allAnswers = true;
+    state.allAnswersFor = entry;
+  });
+  expect($(container, 'report').dataset.focus).toBeUndefined();
+
+  // Back in grouped Review with an AI pending pick still open: focus mode returns.
+  act(() => {
+    need.settled = 'ai';
+    need.pending = true;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+    state.rowsDrawn = 2;
+  });
+  expect($(container, 'report').dataset.focus).toBe('need');
+
+  // Once approved/settled and no longer pending, focus mode ends.
+  act(() => {
+    need.pending = false;
+    state.rowsDrawn = 3;
+  });
+  expect($(container, 'report').dataset.focus).toBeUndefined();
+
+  // Focus-mode CSS hides only non-open rows and Review's grouped lists while keeping .report-head,
+  // .ai-holder, and #see-all-answers visible.
+  const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
+  expect(css).toContain('#page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }');
+  expect(css).toContain('#report[data-focus="need"] .rows > .row.need:not(.open)');
+  expect(css).not.toMatch(/#report\[data-focus="need"\][^{]*\.(report-head|ai-holder)/);
 });

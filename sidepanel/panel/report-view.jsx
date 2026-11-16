@@ -4,14 +4,23 @@
 // that row again; a row that didn't change isn't drawn again, so the button the agent is on keeps its
 // focus. What a row's buttons do is the panel's (`act`, rowActs in fill.js).
 // One part of the panel; renderReport mounts it in a report (rowsHost).
-import { memo, useLayoutEffect, useMemo, useRef } from 'react';
+import { memo, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { NEEDS } from './messages.js';
 import { choiceSaid } from './report-model.js';
 import { needId, needSay, nowSaid, optionsSaid, rowClass, rowHead } from './report-rows.js';
 import { AiCard } from './ai-view.jsx';
+
+const VIN_PATH = /^(vehicles|trailers)\[\d+\]\.vin$/;
+let onJumpPath = null;
+
+// Wired by sidepanel.js to record.js jumpTo(path) so report-view.jsx does not import record.js.
+function setJumpToPath(fn) {
+  onJumpPath = fn;
+}
 
 // A source tag on a row's head.
 function Tag({ tag }) {
@@ -117,16 +126,20 @@ const AnswerRow = memo(function AnswerRow({ rec, ctx, act }) {
 // (rec.pickable; the AI's pick marked), with Show on page and Mark done. The AI's card in its slot
 // is the record's (`aiCard`, renderAi says it; ai-view.jsx), drawn with the row, so a row drawn
 // again keeps it and the agent's focus on its buttons.
-const NeedRow = memo(function NeedRow({ rec, ctx, act }) {
+const NeedRow = memo(function NeedRow({ rec, ctx, act, needPos = 1, needTotal = 1 }) {
   const { x, label } = rec;
   const head = rowHead(rec);
+  const markNoteId = useId();
   // Mark done: an item's field, or a helper's reminder the carrier marks markable (its `action`);
   // gone once the agent settled it (answered, put in, marked done).
   const markable = !!x.key || !!x.action;
   const marked = ['answered', 'picked', 'marked'].includes(rec.settled);
+  const vinFix = typeof x.path === 'string' && VIN_PATH.test(x.path);
+  const jumpPath = act.jumpPath ?? onJumpPath;
   return (
     <div className={rowClass(rec)} hidden={!!rec.gone} tabIndex={-1} ref={(el) => { act.node(rec, el); }}
       data-need={needId(rec)} data-key={rec.key} data-field={rec.field} data-offpage={rec.offPage ? '1' : ''} data-icon={rec.icon} data-wait={rec.wait} data-finish={rec.finish ? '1' : ''}>
+      <p className="eyebrow amber need-eyebrow">{NEEDS.eyebrow(needPos, needTotal)}</p>
       <Head rec={rec} head={head} act={act}>
         <span className="row-text"><span className="row-label">{label}</span><span className="row-value">{head.value}</span></span>
       </Head>
@@ -137,13 +150,16 @@ const NeedRow = memo(function NeedRow({ rec, ctx, act }) {
           : <p className="row-say">{needSay(rec)}</p>}
         {rec.offered ? <div className="options" hidden={!rec.offered.length}>{optionsSaid(rec.offered)}</div> : null}
         <div className="row-actions">
+          {vinFix ? <button type="button" className="ghost vin-fix" onClick={() => jumpPath?.(x.path)}>{NEEDS.vinFix}</button> : null}
           {/* Scrolls the carrier page to its field and flashes its mark: changes nothing. */}
           {x.key ? <button type="button" className="ghost show-on-page" title="Scroll the carrier page to this question and flash its mark"
             aria-label={`Show on page: ${label}`} onClick={() => act.showRow(rec, ctx)}>Show on page</button> : null}
           {markable ? <button type="button" className="ghost mark-done" hidden={marked}
+            aria-describedby={marked ? undefined : markNoteId}
             title={x.key ? 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page' : 'You did it on the page: the panel stops waiting on it for this quote'}
             aria-label={`Mark done: ${label}`} onClick={() => act.markRow(rec, ctx)}>Mark done</button> : null}
         </div>
+        {markable ? <p id={markNoteId} className="mark-done-note" hidden={marked}>{x.key ? NEEDS.markDoneNote : NEEDS.markActionNote}</p> : null}
         {x.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
         <Note note={rec.note} />
       </div>
@@ -156,8 +172,10 @@ const NeedRow = memo(function NeedRow({ rec, ctx, act }) {
 // does (audit 2026-11-07, LIVE-09); only the rows whose record changed (`rec.v`) are.
 function ReportRows({ entry, ctx, act }) {
   useStore(panelStore, (s) => `${entry.drawn ?? 0}|${s.rowsAll ?? 0}`);
-  return (entry.list ?? []).map((rec) => (rec.type === 'need'
-    ? <NeedRow key={rec.id} rec={rec} v={rec.v ?? 0} ctx={ctx} act={act} />
+  const list = entry.list ?? [];
+  const needs = list.filter((r) => r.type === 'need' && !r.gone);
+  return list.map((rec) => (rec.type === 'need'
+    ? <NeedRow key={rec.id} rec={rec} v={rec.v ?? 0} ctx={ctx} act={act} needPos={Math.max(1, needs.indexOf(rec) + 1)} needTotal={Math.max(1, needs.length)} />
     : <AnswerRow key={rec.id} rec={rec} v={rec.v ?? 0} ctx={ctx} act={act} />));
 }
 
@@ -169,4 +187,4 @@ function mountRows(host, entry, ctx, act) {
   return () => root.unmount();
 }
 
-export { ReportRows, mountRows };
+export { ReportRows, mountRows, setJumpToPath };

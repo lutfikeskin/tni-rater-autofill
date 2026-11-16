@@ -86,6 +86,16 @@ function Feed({ act }) {
     panelStore,
     (/** @type {PanelState} */ s) => Boolean(s.allAnswers && (!s.allAnswersFor || s.allAnswersFor === s.reportFor)),
   );
+  const focusNeed = useStore(panelStore, (/** @type {PanelState} */ s) => {
+    void s.rowsDrawn;
+    void s.rowsAll;
+    const entry = s.reportFor;
+    if (!entry || !Array.isArray(entry.list) || s.filling) return false;
+    if (s.allAnswers && (!s.allAnswersFor || s.allAnswersFor === entry)) return false;
+    const list = /** @type {Array<Record<string, any>>} */ (entry.list);
+    if (!list.some((r) => r.type === 'need' && !r.gone && r.open)) return false;
+    return list.some((r) => r.type === 'need' && !r.gone && (!r.settled || r.pending));
+  });
   /** @type {import('react').RefObject<HTMLSelectElement | null>} */
   const menu = useRef(null);
   // The menu shows the page shown as it changes, as the panel set it on each draw.
@@ -96,6 +106,7 @@ function Feed({ act }) {
   const pages = /** @type {Array<{ key: string, title: string }>} */ (f.pages ?? []);
   const grouped = hasReport && !past && !inAll;
   const allOpen = hasReport && !past && inAll;
+  const showFocus = focusNeed && !past && !!f.report;
 
   return (
     <div
@@ -165,7 +176,7 @@ function Feed({ act }) {
       </div>
       <p id="report-age" className="report-age" hidden={!f.age}>{f.age ?? ''}</p>
       <div id="live-root" />
-      <div id="report" className="report" data-filter={f.filter} hidden={!f.report} />
+      <div id="report" className="report" data-filter={f.filter} data-focus={showFocus ? 'need' : undefined} hidden={!f.report} />
       <div id="past" className="report past" hidden={!past} />
       <p id="feed-empty" className="feed-empty" hidden={f.empty == null}>{f.empty ?? ''}</p>
       <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
