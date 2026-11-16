@@ -15,7 +15,7 @@ const row = (over = {}) => ({ quote: 'q1', startedAt: '2026-11-04T15:00:00.000Z'
 /** @param {object[]} rows */
 const body = (rows) => ({ builtAt: '2026-11-16T20:00:00.000Z', pulledAt: '2026-11-16T19:00:00.000Z', since: '2026-11-03T00:00:00.000Z', rows });
 
-/** @param {Parameters<typeof createServer>[0]} opts @param {(base: string) => Promise<void>} fn */
+/** @param {any} opts @param {(base: string) => Promise<void>} fn */
 async function withServer(opts, fn) {
   const server = createServer(opts);
   await new Promise((r) => server.listen(0, '127.0.0.1', () => r(undefined)));
@@ -27,6 +27,7 @@ async function withServer(opts, fn) {
 
 test('salesPushFrom keeps a push only in its exact shapes, and refuses it whole otherwise', () => {
   assert.equal(salesPushFrom(body([row()]), '2026-11-16T21:00:00.000Z').push?.rows.length, 1);
+  /** @type {[object, RegExp][]} */
   const refused = [
     [row({ name: 'Client Trucking LLC' }), /needs exactly/],
     [row({ phone: undefined }), /needs exactly/],

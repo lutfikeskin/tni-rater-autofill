@@ -206,9 +206,9 @@ export function renderSales(s, { now = Date.now() } = {}) {
   const age = Math.round((now - Date.parse(s.pulledAt)) / DAY);
   const tile = (/** @type {string} */ label, /** @type {number|null} */ value, /** @type {string} */ help, cls = '') => `<div class="tile${cls ? ` ${cls}` : ''}"><div class="label">${label}</div><div class="value">${fmt(value)}</div><p class="help">${help}</p></div>`;
   const legend = '<div class="legend"><span><i style="background:var(--good)"></i>sold after the quote</span><span><i style="background:var(--bad)"></i>not sold, 60 days passed</span><span><i style="background:var(--unk)"></i>not known yet</span></div>';
-  /** @param {ReturnType<typeof summarizeSales>['agents']} rows @param {string} first @param {(k: string) => string} name @param {boolean} [unmatched] */
+  /** @param {(ReturnType<typeof summarizeSales>['weeks'][number] & {unmatched?: number})[]} rows @param {string} first @param {(k: string) => string} name @param {boolean} [unmatched] */
   const table = (rows, first, name, unmatched = false) => (rows.length ? `<div class="scroll"><table><thead><tr><th>${first}</th><th class="r">Deals</th><th class="r">Quotes</th><th class="w">Outcome</th><th class="r">Sold</th><th class="r">Not sold</th><th class="r">Not known yet</th><th class="r">Already clients</th><th class="r">Median days to sale</th>${unmatched ? '<th class="r">Quotes with no deal</th>' : ''}</tr></thead><tbody>
-${rows.map((r) => `<tr><td>${name(r.key)}</td><td class="r">${fmt(r.deals)}</td><td class="r">${fmt(r.quotes)}</td><td class="w">${split(r)}</td><td class="r">${fmt(r.sold)}</td><td class="r">${fmt(r.notSold)}</td><td class="r">${fmt(r.unknown)}</td><td class="r">${fmt(r.clientBefore)}</td><td class="r">${fmt(r.medianDays)}</td>${unmatched ? `<td class="r">${fmt(/** @type {any} */ (r).unmatched)}</td>` : ''}</tr>`).join('\n')}
+${rows.map((r) => `<tr><td>${name(r.key)}</td><td class="r">${fmt(r.deals)}</td><td class="r">${fmt(r.quotes)}</td><td class="w">${split(r)}</td><td class="r">${fmt(r.sold)}</td><td class="r">${fmt(r.notSold)}</td><td class="r">${fmt(r.unknown)}</td><td class="r">${fmt(r.clientBefore)}</td><td class="r">${fmt(r.medianDays)}</td>${unmatched ? `<td class="r">${fmt(r.unmatched ?? 0)}</td>` : ''}</tr>`).join('\n')}
 </tbody></table></div>` : '<p class="empty">None.</p>');
 
   return `${head}
