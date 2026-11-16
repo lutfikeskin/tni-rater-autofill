@@ -248,6 +248,14 @@ body:has(#settings:not([hidden])) .panel-head,
 .screen-head[data-screen="start"] h2 { padding-right: 28px; }
 .screen-lead { font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; overflow-wrap: anywhere; }
 .view:has(#screen-head:not([hidden])) #feed-title { display: none; }
+/* Quote done's facts: hairline rows, the number at the end; a zero is muted. */
+.done-facts { margin: 10px 0 0; display: grid; }
+.done-fact { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-row); font-size: 15px; }
+.done-fact:last-child { border-bottom: 1px solid var(--border-row); }
+.done-fact dt { color: var(--ink-secondary); }
+.done-fact dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-strong); }
+.done-fact[data-fact="open"]:not([data-zero]) dd { color: var(--amber); }
+.done-fact[data-zero] dd { color: var(--ink-muted); font-weight: 500; }
 .pane { padding: 14px 14px 16px; display: grid; gap: 12px; align-content: start; }
 .pane-head { display: grid; gap: 6px; position: relative; }
 .pane-head > .help-link { position: absolute; top: 0; right: 0; }

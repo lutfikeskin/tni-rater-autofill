@@ -184,6 +184,13 @@ export const SCREEN = {
     starting: 'Filling this page',
     count: (n) => `${n} ${plural(n, 'answer')} in so far`,
   },
+  // Quote done's four facts (canvas 17), from quoteSummary as the summary sheet counts them.
+  doneFacts: {
+    answers: 'Answers in',
+    open: 'Left for you',
+    marked: 'Marked done without an answer',
+    overrides: 'Changed by you',
+  },
 };
 
 // Post-fill grouped Review and All answers (review-view.jsx, canvas screens 10 and 11).

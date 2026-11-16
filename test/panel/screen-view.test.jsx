@@ -413,3 +413,20 @@ test('mountScreen draws #screen-head synchronously', () => {
   });
   host.remove();
 });
+
+test('Quote done lists the summary sheet\'s four counts, with marked done on its own line, read only on that screen', () => {
+  const summary = vi.fn(() => ({ answers: 41, open: 2, marked: [{}, {}, {}], overrides: [{}] }));
+  state.intake = /** @type {any} */ ({ record: {} });
+  state.view = 'page';
+  state.dock = /** @type {DockSnapshot} */ (/** @type {unknown} */ ({ phase: 'finished', ...DOCK.finished('AmWINS') }));
+  const { container } = render(<Screen summary={summary} />);
+  const head = $(container, 'screen-head');
+  expect(head.dataset.screen).toBe('finished');
+  const rows = [...container.querySelectorAll('#done-facts .done-fact')].map((r) => [r.querySelector('dt')?.textContent, r.querySelector('dd')?.textContent]);
+  expect(rows).toEqual([['Answers in', '41'], ['Left for you', '2'], ['Marked done without an answer', '3'], ['Changed by you', '1']]);
+  expect(container.textContent).not.toMatch(/submitted(?! or bound)|bound(?!\.)/i);
+  expect(summary).toHaveBeenCalledTimes(1);
+
+  act(() => { state.dock = null; state.intake = null; state.view = 'home'; });
+  expect(container.querySelector('#done-facts')).toBeNull();
+});

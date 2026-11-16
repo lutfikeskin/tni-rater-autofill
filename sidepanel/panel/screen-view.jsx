@@ -7,7 +7,7 @@
 
 /** @import { DockSnapshot, PanelScreen, PanelState } from '../../types.js' */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -53,14 +53,29 @@ function screenSaid(screen, d, fillingFor) {
 }
 
 /**
- * @param {{ scrollBehavior?: () => ScrollBehavior }} [props]
+ * Quote done's facts, in the summary sheet's terms: answers in, left for the agent, marked done
+ * without an answer (its own line, never counted as answered) and the agent's changes.
+ * @param {{ answers: number, open: number, marked: unknown[], overrides: unknown[] } | null | undefined} s
+ * @returns {Array<[string, string, number]>}
  */
-function Screen({ scrollBehavior } = {}) {
+function doneFacts(s) {
+  if (!s) return [];
+  const w = SCREEN.doneFacts;
+  return [['answers', w.answers, s.answers], ['open', w.open, s.open], ['marked', w.marked, s.marked.length], ['overrides', w.overrides, s.overrides.length]];
+}
+
+/**
+ * @typedef {{ answers: number, open: number, marked: unknown[], overrides: unknown[] }} DoneCounts
+ * @param {{ scrollBehavior?: () => ScrollBehavior, summary?: () => DoneCounts | null }} [props]
+ */
+function Screen({ scrollBehavior, summary } = {}) {
   const screen = useStore(panelStore, screenFor);
   const shown = useStore(panelStore, headShown);
   const d = useStore(panelStore, (s) => s.dock);
   const fillingFor = useStore(panelStore, (s) => s.fillingFor);
   const { eyebrow, title, sub, tone } = screenSaid(screen, d, fillingFor);
+  // Read once each time the dock is drawn on Quote done, not on every store change.
+  const facts = useMemo(() => (screen === 'finished' && summary ? doneFacts(summary()) : []), [screen, d, summary]);
   /** @type {import('react').RefObject<HTMLHeadingElement | null>} */
   const titleRef = useRef(null);
   const prevScreen = useRef(screen);
@@ -114,18 +129,29 @@ function Screen({ scrollBehavior } = {}) {
       <span id="screen-eyebrow" className="screen-eyebrow" data-tone={tone || undefined} hidden={!eyebrow}>{eyebrow}</span>
       <h2 id="screen-title" ref={titleRef} tabIndex={-1}>{title}</h2>
       <p id="screen-lead" className="screen-lead" hidden={!sub}>{sub}</p>
+      {facts.length ? (
+        <dl id="done-facts" className="done-facts">
+          {facts.map(([key, label, n]) => (
+            <div key={key} className="done-fact" data-fact={key} data-zero={n === 0 ? '' : undefined}>
+              <dt>{label}</dt>
+              <dd>{n}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
     </div>
   );
 }
 
 /**
  * Draws the screen head into #screen-root before returning, so initial layout and focus find it.
+ * `summary` is the quote summary as the panel has it (quote-summary.js summaryNow), for Quote done.
  * @param {HTMLElement} host
- * @param {{ scrollBehavior?: () => ScrollBehavior }} [opts]
+ * @param {{ scrollBehavior?: () => ScrollBehavior, summary?: () => DoneCounts | null }} [opts]
  */
-function mountScreen(host, { scrollBehavior } = {}) {
+function mountScreen(host, { scrollBehavior, summary } = {}) {
   const root = createRoot(host);
-  flushSync(() => root.render(<Screen scrollBehavior={scrollBehavior} />));
+  flushSync(() => root.render(<Screen scrollBehavior={scrollBehavior} summary={summary} />));
 }
 
-export { Screen, headShown, mountScreen };
+export { Screen, doneFacts, headShown, mountScreen };

@@ -29,7 +29,7 @@ import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
 import { mountPdf } from './panel/pdf-sheet-view.jsx';
 import { mountSummary } from './panel/summary-view.jsx';
-import { closeSummary, openSummary, saveSummary } from './panel/quote-summary.js';
+import { closeSummary, openSummary, saveSummary, summaryNow } from './panel/quote-summary.js';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
 import { mountSiteRule } from './panel/rule-view.jsx';
@@ -223,7 +223,7 @@ function wire() {
       fillPage();
     },
   });
-  mountScreen($('screen-root'), { scrollBehavior });
+  mountScreen($('screen-root'), { scrollBehavior, summary: () => (state.intake ? summaryNow() : null) });
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   // During a developer recording it is also a note naming the capture's file (REC-17); Alt+Shift+R
   // starts or stops one (unpacked builds only).
