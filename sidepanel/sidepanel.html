@@ -13,7 +13,7 @@
       <path d="M8 3.5A3 3 0 0 0 9 8m-6 2a4 4 0 0 1 3-.5m-2.2 8.1A4 4 0 0 1 8 14m8-10.5A3 3 0 0 1 15 8m6 2a4 4 0 0 0-3-.5m2.2 8.1A4 4 0 0 0 16 14"/>
     </symbol>
     <symbol id="gear" viewBox="0 0 24 24">
-      <path d="m9.5 3-.5 2a7 7 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A7 7 0 0 0 9 19l.5 2h5l.5-2a7 7 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0 1.8L21 9.7l-2.5-4.4-2 .6A7 7 0 0 0 15 5l-.5-2Z"/>
+      <path d="m9.5 3-.5 2a7 7 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A7 7 0 0 0 9 19l.5 2h5l.5-2a7 7 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A7 7 0 0 0 15 5l-.5-2Z"/>
       <circle cx="12" cy="12" r="3"/>
     </symbol>
     <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
@@ -35,15 +35,9 @@
   <!-- Fixed top: the top bar (client name or Rater Autofill, with window controls and Settings),
        the context line (rater page and stage, or the intake's state and counts), the 2px progress
        rule, and when an intake is loaded, the file tools and steps. -->
-  <div class="panel-head">
-    <header class="top">
+  <header class="panel-head">
+    <div class="top">
       <div id="brand" class="brand" hidden><img src="logo.png" alt=""><span>Rater Autofill</span></div>
-      <span class="top-right">
-        <!-- The panel in a window of its own (popOut), and back to Chrome's side panel (dock). -->
-        <button type="button" id="pop-out" class="icon-btn" aria-label="Open in its own window" title="Open in its own window" hidden><svg aria-hidden="true"><use href="#new-window"/></svg></button>
-        <button type="button" id="dock-back" class="icon-btn" aria-label="Back to the side panel" title="Back to the side panel" hidden><svg aria-hidden="true"><use href="#dock-in"/></svg></button>
-        <button type="button" id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings" aria-expanded="false" aria-controls="settings"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
-      </span>
       <div id="carrier-line" class="carrier-line">
         <img id="site-logo" class="carrier-logo" alt="" hidden>
         <span id="site" class="site">…</span>
@@ -53,7 +47,7 @@
       </div>
       <div id="site-track" class="track" hidden></div>
       <div id="site-rule" class="rule-root"></div>
-    </header>
+    </div>
 
     <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
          always in view (no menu to open first), and the two tabs, Intake and This page -->
@@ -65,7 +59,14 @@
            "Stage n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
       <nav id="steps" class="steps" aria-label="Intake or this page"></nav>
     </section>
-  </div>
+
+    <span class="top-right">
+      <!-- The panel in a window of its own (popOut), and back to Chrome's side panel (dock). -->
+      <button type="button" id="pop-out" class="icon-btn" aria-label="Open in its own window" title="Open in its own window" hidden><svg aria-hidden="true"><use href="#new-window"/></svg></button>
+      <button type="button" id="dock-back" class="icon-btn" aria-label="Back to the side panel" title="Back to the side panel" hidden><svg aria-hidden="true"><use href="#dock-in"/></svg></button>
+      <button type="button" id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings" aria-expanded="false" aria-controls="settings"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
+    </span>
+  </header>
 
   <main id="view" class="view">
     <div id="notices" class="notices"></div>

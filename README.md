@@ -80,7 +80,7 @@ Until a carrier has exact mappings, the extension matches fields by their labels
 
 ## Usage log (pilot)
 
-While an intake is loaded, the extension records how it's used on Progressive, AmWINS and GEICO quote pages, so the mappings can be improved from real quotes. A "Recording usage" label shows in the side panel header, and the **Usage log** section at the bottom of the panel explains it to agents. **Tell agents in writing before rollout** (several states require notice of electronic monitoring of employees).
+While an intake is loaded, the extension records how it's used on Progressive, AmWINS and GEICO quote pages, so the mappings can be improved from real quotes. A "Recording usage" label shows in the side panel's bottom bar, and the **Usage log** section at the bottom of the panel explains it to agents. **Tell agents in writing before rollout** (several states require notice of electronic monitoring of employees).
 
 What's recorded (`src/usage.js`, `src/content/recorder.js`):
 

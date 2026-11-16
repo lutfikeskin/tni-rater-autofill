@@ -6,11 +6,11 @@ Several of these rules come from comparing the panel with [vercel-labs/ui](https
 
 ## Structure
 
-The panel's document never scrolls (`overflow: clip` on `html` and `body`); only `<main id="view">` in the middle and `<footer class="foot">` in a short window may scroll. Above `<main id="view">`, `.panel-head` holds `header.top` and `section#quote` on one CSS grid so the top bar and context line stay in the same place across every state:
+The panel's document never scrolls (`overflow: clip` on `html` and `body`); only `<main id="view">` in the middle and `<footer class="foot">` in a short window may scroll. Above `<main id="view">`, `header.panel-head` holds `.top`, `section#quote` and `.top-right` on one CSS grid so the top bar and context line stay in the same place across every state:
 
 - **Top bar**: the client's name disclosure (`#client-card`, opening `#details-view`) when `#quote` is shown, or `#brand` ("Rater Autofill") when no intake is shown or Settings is open, paired on the right with `#pop-out`, `#dock-back` and `#settings-btn`.
 - **Context line**: `#carrier-line` (`#site-logo` or `#site`, `#site-step`, `#site-count` "Stage n of m", `#site-caption`, written by `renderSite` and separated with middots in CSS) when a rater tab is in front, or `#client-meta` (the intake's state and counts, from `client-view.jsx`) when an intake is loaded without a rater tab in front.
-- **2px progress rule**: `#site-rule` (`rule-view.jsx`), drawn from `state.siteTrack` (completed steps over total steps, turning green when all steps are done). It is `aria-hidden="true"` because the context line above carries the stage in words; `#site-track` (`site-view.jsx`) remains in the DOM, visually hidden, for `renderSite`.
+- **2px progress rule**: `#site-rule` (`rule-view.jsx`), drawn from `state.siteTrack` (completed steps over total steps). It is `aria-hidden="true"` because the context line above carries the stage in words; `#site-track` (`site-view.jsx`) remains in the DOM, visually hidden, for `renderSite`.
 - **Base line**: `.foot-row` at the bottom of `<footer class="foot">` orders `#recording-root` ("Recording usage"), `#report-problem` and `#foot-version` (visually hidden below 360px, since Settings shows `#version`).
 
 ## Saying what changed

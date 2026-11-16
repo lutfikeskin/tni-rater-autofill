@@ -17,7 +17,7 @@ const bar = (container) => {
   return { hidden: rule.getAttribute('aria-hidden'), width: fill.style.width, cls: fill.getAttribute('class') };
 };
 
-test('the 2px rule computes its width from siteTrack, turns green when all steps are done, and is aria-hidden', () => {
+test('the 2px rule computes its width from siteTrack and is aria-hidden', () => {
   const { container } = render(<div id="site-rule"><SiteRule /></div>);
   expect(bar(container)).toEqual({ hidden: 'true', width: '0%', cls: null });
 
@@ -50,7 +50,7 @@ test('the 2px rule computes its width from siteTrack, turns green when all steps
       { name: 'Summary', at: 'here filled' },
     ];
   });
-  expect(bar(container)).toEqual({ hidden: 'true', width: '100%', cls: 'done' });
+  expect(bar(container)).toEqual({ hidden: 'true', width: '100%', cls: null });
 });
 
 test('mountSiteRule draws before it returns', () => {

@@ -168,7 +168,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .panel-head:has(#quote:not([hidden])) #brand { display: none !important; }
 .top-right { grid-row: bar; grid-column: 2; position: relative; z-index: 1; display: flex; align-items: center; gap: 2px; min-height: 48px; padding: 0 14px 0 4px; flex-shrink: 0; }
 .carrier-line { grid-row: ctx; grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); }
-.carrier-line > :not([hidden]) ~ span:not([hidden])::before { content: "·"; margin-right: 6px; color: var(--ink-muted); }
+.carrier-line > span:not([hidden]):has(~ span:not([hidden]))::after { content: "·" / ""; margin-left: 6px; color: var(--ink-muted); }
 /* Its own class: .rater-logo is the Open a rater card's buttons, whose padding squeezed this image to a few pixels. */
 .carrier-logo { display: block; box-sizing: content-box; width: auto; height: 20px; max-width: 120px; object-fit: contain; object-position: left center; flex-shrink: 0; }
 .site { display: inline-flex; align-items: center; padding: 0; border: 0; color: var(--ink-muted); background: none; font: 600 13px/1.35 var(--font-sans); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
@@ -180,7 +180,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .rule-root { grid-row: rule; grid-column: 1 / -1; align-self: stretch; }
 .rule { height: 2px; background: var(--border-row); overflow: hidden; }
 .rule > span { display: block; height: 100%; background: var(--brand); transition: width 0.22s ease; }
-.rule > span.done { background: var(--success); }
 body:has(#settings:not([hidden])) #carrier-line,
 body:has(#settings:not([hidden])) #site-rule,
 .panel-head:not(:has(#quote:not([hidden]), #carrier-line:not([hidden]))) #site-rule { display: none !important; }
@@ -195,7 +194,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .client-title { grid-row: bar; grid-column: 1; min-width: 0; display: flex; align-items: center; min-height: 36px; margin: 6px 4px 6px 8px; padding: 4px 6px; border: 0; border-radius: var(--radius-sm); background: none; text-align: left; }
 .client-title:hover, .client-title[aria-expanded="true"] { background: var(--surface-hover); }
 .client-name { display: block; min-width: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.client-meta { grid-row: ctx; grid-column: 1 / -1; margin: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.client-meta { grid-row: ctx; grid-column: 1 / -1; margin: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 /* Intake, Change file, New quote and Clear: no background until hovered. */
 .client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; }
 .client-tools > button { background: none; border-color: transparent; }

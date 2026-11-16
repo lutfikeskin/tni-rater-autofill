@@ -12,7 +12,7 @@ function SiteRule() {
   const pct = steps.length ? Math.round((done / steps.length) * 100) : 0;
   return (
     <div className="rule" aria-hidden="true">
-      <span className={steps.length && done === steps.length ? 'done' : undefined} style={{ width: `${pct}%` }} />
+      <span style={{ width: `${pct}%` }} />
     </div>
   );
 }
