@@ -1466,6 +1466,33 @@
  */
 
 /**
+ * Identifier of the screen currently shown by the side panel (`screenFor` in
+ * `sidepanel/panel/screen.js`), derived from `intake`, `view`, `settingsOpen` and `dock`:
+ * - `start`: no intake loaded yet (Home; `DOCK.start`)
+ * - `norater`: intake loaded, no supported rater tab in front (`DOCK.openRater`)
+ * - `unreadable`: active tab's URL cannot be read by the extension (`DOCK.unreadable`)
+ * - `preview`: panel opened outside the Chrome extension (`DOCK.preview`)
+ * - `portal`: carrier site outside a quote page (`DOCK.portal`)
+ * - `stopped`: carrier stop page or referral screen (`DOCK.stopped`)
+ * - `yours`: carrier stop step or screen left to the agent (`DOCK.yours`)
+ * - `hold`: quote state on the page disagrees with the intake (`DOCK.stateHold`, `alt: 'fill-anyway'`)
+ * - `defaults`: waiting on whose defaults this quote takes (`DOCK.defaultsAsk`, `DOCK.defaultsHeld`)
+ * - `owner`: rater tab's quote was not started with this intake (`DOCK.otherClient`)
+ * - `ready`: quote page ready to fill before a report exists (`DOCK.ready`)
+ * - `filling`: fill running on the active tab, including when the page hasn't answered (`FILLING`)
+ * - `elsewhere`: fill running on another tab (`FILLING.elsewhere`)
+ * - `review`: filled page in review (`continueSaid`: `needs`, `waiting`, `check`, `yours` with `alt: 'fill-again'`, `ready-continue`)
+ * - `stopped-fill`: fill halted after the agent clicked Stop (`DOCK.stoppedFill`)
+ * - `error`: fill ended with an error (`DOCK.error`)
+ * - `ai`: AI picks waiting for approval before Continue (`DOCK.ai`)
+ * - `finished`: quote at the step or action where TNI stops, with Quote summary (`DOCK.finished`)
+ * - `continued`: transitional state right after Continue was clicked (`CONTINUE.continued`)
+ * - `check`: intake checks view (`state.view === 'check'`)
+ * - `settings`: Settings open over the panel (`state.settingsOpen`)
+ * @typedef {'start' | 'norater' | 'unreadable' | 'preview' | 'portal' | 'stopped' | 'yours' | 'hold' | 'defaults' | 'owner' | 'ready' | 'filling' | 'elsewhere' | 'review' | 'stopped-fill' | 'error' | 'ai' | 'finished' | 'continued' | 'check' | 'settings'} PanelScreen
+ */
+
+/**
  * A fill's waits for the page, by what each was for (its `why`: answer, round, load, continue, …;
  * `other` for one without): how many (`n`), their total ms (`ms`), how many ran to their limit
  * (`limit`), and their total slack in ms (`slack`: the part of each wait that ended quiet after the
