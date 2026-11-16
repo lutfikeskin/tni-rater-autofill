@@ -3,30 +3,7 @@
 // whether Settings is open, and `state.dock` (`dockFor`, `fillingSaid` and `continueSaid` in
 // `coordinator.js`). Pure decision logic: no runtime imports and no DOM.
 
-/** @import { PanelScreen } from '../../types.js' */
-
-/**
- * Shape of `state.dock` (`renderDock` in `coordinator.js`, built from `dockFor`, `fillingSaid`
- * and `continueSaid`).
- * @typedef {object} DockSnapshot
- * @property {string} [phase]
- * @property {'bad' | 'warn' | 'good' | 'blue' | 'ai'} [tone]
- * @property {string} [eyebrow]
- * @property {string} [title]
- * @property {string} [sub]
- * @property {string} [button]
- * @property {string} [label]
- * @property {boolean} [disabled]
- * @property {string} [alt]
- * @property {string} [altLabel]
- * @property {string} [go]
- * @property {number | boolean} [progress]
- * @property {string} [progressSaid]
- * @property {boolean} [hidden]
- * @property {string} [report]
- * @property {boolean} [busy]
- * @property {string} [paused]
- */
+/** @import { DockSnapshot, PanelScreen } from '../../types.js' */
 
 /**
  * @param {{
@@ -82,6 +59,7 @@ export function screenFor({ intake = null, view = null, settingsOpen = false, do
     case 'done':
       return 'continued';
     default:
+      // An empty dock with an intake loaded (before the dock is first drawn) returns `norater`.
       return 'norater';
   }
 }

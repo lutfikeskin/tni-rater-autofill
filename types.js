@@ -1493,6 +1493,29 @@
  */
 
 /**
+ * Shape of `state.dock` (`renderDock` in `coordinator.js`, built from `dockFor`, `fillingSaid`
+ * and `continueSaid` and read by `steps-view.jsx` and `screen.js`).
+ * @typedef {object} DockSnapshot
+ * @property {string} [phase] dock phase id (`start`, `off`, `ready`, `filling`, `needs`, `done`, …)
+ * @property {'bad' | 'warn' | 'good' | 'blue' | 'ai'} [tone] colour tone of the dock and its primary button
+ * @property {string} [eyebrow] short status label above the dock title
+ * @property {string} [title] main dock heading for the current phase
+ * @property {string} [sub] supporting line under the dock title
+ * @property {string} [button] id of the primary dock button shown (`fill`, `fill-stop`, `dock-next`, `look-right`, `ai-approve`, `dock-summary`, `dock-defaults`)
+ * @property {string} [label] text overridden on the primary dock button
+ * @property {boolean} [disabled] whether the primary dock button starts disabled
+ * @property {string} [alt] action key for `#dock-alt` (`fill-again` or `fill-anyway`)
+ * @property {string} [altLabel] text shown on `#dock-alt`
+ * @property {string} [go] `#fill[data-go]` mode (`continue` when `#fill` continues instead of filling)
+ * @property {number | boolean} [progress] fill progress fraction (`0..1`) or `true` when indeterminate
+ * @property {string} [progressSaid] accessible announcement string for the progress bar
+ * @property {boolean} [hidden] whether `#dock` is hidden (`!intake || settingsOpen`)
+ * @property {string} [report] report status attribute mirrored to `#dock[data-report]`
+ * @property {boolean} [busy] mirrored to `#dock[aria-busy]` while a fill runs
+ * @property {string} [paused] footer note when automatic filling is paused on the active tab
+ */
+
+/**
  * A fill's waits for the page, by what each was for (its `why`: answer, round, load, continue, …;
  * `other` for one without): how many (`n`), their total ms (`ms`), how many ran to their limit
  * (`limit`), and their total slack in ms (`slack`: the part of each wait that ended quiet after the
