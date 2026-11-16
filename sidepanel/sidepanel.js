@@ -19,6 +19,7 @@ import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetai
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
 import { mountLive } from './panel/live-view.jsx';
 import { mountDock, mountSteps } from './panel/steps-view.jsx';
+import { mountScreen } from './panel/screen-view.jsx';
 import { mountFeed } from './panel/feed-view.jsx';
 import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
@@ -168,7 +169,8 @@ function wire() {
     t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) replacing.replace(e.dataTransfer.files[0]); });
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
-  // The dock: its one button and its alternative.
+  // The dock: its one button and its alternative. Mounted before #screen-root so Dock's focus-keep
+  // runs before Screen's focus-on-screen-change.
   mountDock($('dock-root'), {
     fill: (go) => fillPage({ continuing: go === 'continue' }),
     stop: () => stopFill(),
@@ -184,6 +186,7 @@ function wire() {
       fillPage();
     },
   });
+  mountScreen($('screen-root'));
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   // During a developer recording it is also a note naming the capture's file (REC-17); Alt+Shift+R
   // starts or stops one (unpacked builds only).

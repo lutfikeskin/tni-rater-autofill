@@ -30,8 +30,6 @@
     <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
   </svg>
 
-  <h1 class="sr-only">TNI Rater Autofill</h1>
-
   <!-- Fixed top: the top bar (client name or Rater Autofill, with window controls and Settings),
        the context line (rater page and stage, or the intake's state and counts), the 2px progress
        rule, and when an intake is loaded, the file tools and steps. -->
@@ -78,16 +76,15 @@
     <!-- Pop out or Back to the side panel that didn't work (windowProblem). -->
     <div id="window-note" class="notices" hidden></div>
 
+    <!-- Canvas screen head (#screen-head, with #screen-title as the document's h1): drawn by screen-view.jsx (mountScreen). -->
+    <div id="screen-root"></div>
+
     <!-- No intake loaded -->
     <section id="home" class="pane">
-      <div class="intro">
-        <h2>Start a quote</h2>
-        <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote" title="Help: starting a quote" data-help="home">?</a>
-        <p class="muted">Add the client’s quote application.</p>
-      </div>
+      <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote" title="Help: starting a quote" data-help="home">?</a>
       <section id="load" class="drop" tabindex="0">
         <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-        <div><h3 class="drop-title">Drop your intake PDF here</h3><p class="drop-hint">or</p></div>
+        <div><h2 class="drop-title">Drop your intake PDF here</h2><p class="drop-hint">or</p></div>
         <button type="button" id="choose" class="primary">Choose a PDF</button>
       </section>
       <p class="privacy-line">Stays on this computer. Cleared when Chrome closes.</p>

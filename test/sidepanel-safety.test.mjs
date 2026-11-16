@@ -62,7 +62,7 @@ test('the dock, the report head, the checks\' title and the source tags take the
   }
   assert.deepEqual(said, []);
   // Every message is used by the code it names (none left behind once a word is changed there).
-  const panel = ['coordinator', 'fill', 'record'].map((f) => fs.readFileSync(`sidepanel/panel/${f}.js`, 'utf8')).join('\n');
+  const panel = ['coordinator.js', 'fill.js', 'record.js', 'screen-view.jsx'].map((f) => fs.readFileSync(`sidepanel/panel/${f}`, 'utf8')).join('\n');
   const unused = Object.entries(MESSAGES).flatMap(([group, words]) => Object.keys(words).filter((id) => !new RegExp(`\\b${group}\\.${id}\\b|\\b(words|open)\\.${id}\\b|\\{[^}]*\\b${id}\\b[^}]*\\} = ${group}\\b`).test(panel)).map((id) => `${group}.${id}`));
   assert.deepEqual(unused, []);
 });

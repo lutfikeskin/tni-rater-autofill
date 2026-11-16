@@ -159,3 +159,14 @@ export const SOURCE = {
   },
   see: { edited: 'Show what the intake said before your edit', derived: 'Show the intake answers this was worked out from', other: 'Show where this came from in the intake' },
 };
+
+// The canvas screen head (screen-view.jsx), where the dock's own words don't fit a 26px page title:
+// Home's title and lead, and Filling's steady answer count in place of the flickering per-field line.
+export const SCREEN = {
+  start: { eyebrow: '', title: 'Start a quote', sub: 'Drop the client’s intake PDF. The panel checks it and fills the rater.' },
+  filling: {
+    eyebrow: 'Filling',
+    starting: 'Filling this page',
+    count: (n) => `${n} ${plural(n, 'answer')} in so far`,
+  },
+};

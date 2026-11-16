@@ -1,6 +1,6 @@
 /* Visual tokens and typography for the side panel: Inter-first sans stack, white
    light-only surface, hairline rows (#e8edf1), plain coloured text tags without pills/badges/boxed
-   cards, 52px primary dock action (#005aa9, radius 12), neutral Stop, and 13px minimum text size
+   cards, 40px primary dock action (#005aa9, radius 8), neutral Stop, and 13px minimum text size
    beyond decorative glyphs. Contrast (WCAG 1.4.3 / 1.4.11) and reduced motion are verified by
    test/panel-contrast.test.mjs. */
 :root {
@@ -125,7 +125,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .eyebrow { color: var(--ink-muted); font: 600 13px/1.3 var(--font-sans); }
 .fine { font-size: 13px; color: var(--ink-muted); text-wrap: pretty; }
 
-/* Buttons: 52px / radius-12 primary dock action, neutral Stop, quiet hairline secondary buttons,
+/* Buttons: 40px / radius-8 primary dock action, neutral Stop, quiet hairline secondary buttons,
    and underlined plain text links. */
 .ghost, .tinted, .primary, .stop { min-height: 32px; padding: 0 12px; border-radius: var(--radius-md); font-size: 13px; font-weight: 600; white-space: nowrap; border: 1px solid transparent; }
 .ghost { color: var(--ink-strong); background: var(--surface); border-color: var(--border-control); }
@@ -138,7 +138,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .primary:hover:not(:disabled) { background: var(--brand-dark); border-color: var(--brand-dark); }
 .stop { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); }
 .stop:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--ink-secondary); }
-.big { min-height: 52px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 600; }
+.big { min-height: 40px; border-radius: var(--radius-md); font-size: 15px; font-weight: 600; }
 .small-btn { min-height: 30px; padding: 0 12px; font-size: 13px; }
 .link { min-height: 28px; background: none; border: 0; padding: 0; color: var(--brand); font-weight: 500; font-size: 13px; text-align: left; text-decoration: underline; text-underline-offset: 2px; }
 .link:hover { color: var(--brand-dark); }
@@ -232,19 +232,31 @@ body:has(#settings:not([hidden])) .panel-head,
    scrolled the header and client strip out of view (AmWINS' declaration, W44-10). */
 /* The scrollbar's room is kept when nothing scrolls, so a short list (a filter that hides most rows) doesn't widen the view. */
 .view { position: relative; flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; display: grid; align-content: start; grid-auto-rows: max-content; }
+/* Canvas screen head (screen-view.jsx): eyebrow, 26px document h1 and 15px lead above the active pane. */
+#screen-root { display: contents; }
+.screen-head { padding: 20px 18px 8px; display: grid; gap: 6px; }
+.screen-eyebrow { font: 600 13px/1.3 var(--font-sans); color: var(--ink-muted); }
+.screen-eyebrow[data-tone="blue"] { color: var(--brand); }
+.screen-eyebrow[data-tone="warn"] { color: var(--amber); }
+.screen-eyebrow[data-tone="bad"] { color: var(--signal); }
+.screen-eyebrow[data-tone="good"] { color: var(--success-ink); }
+.screen-eyebrow[data-tone="ai"] { color: var(--ai-ink); }
+.screen-head h1 { font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-strong); text-wrap: balance; overflow-wrap: break-word; }
+.screen-head[data-screen="start"] h1 { padding-right: 28px; }
+.screen-lead { font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; overflow-wrap: anywhere; }
+.view:has(#screen-head:not([hidden])) #feed-title { display: none; }
 .pane { padding: 14px 14px 16px; display: grid; gap: 12px; align-content: start; }
-.pane-head { display: grid; gap: 6px; }
-.pane-head, .intro { position: relative; }
-.pane-head > .help-link, .intro > .help-link { position: absolute; top: 0; right: 0; }
-.pane-head h2, .intro h2 { padding-right: 28px; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); overflow-wrap: break-word; }
+.pane-head { display: grid; gap: 6px; position: relative; }
+.pane-head > .help-link { position: absolute; top: 0; right: 0; }
+.pane-head h2 { padding-right: 28px; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); overflow-wrap: break-word; }
 .pane-sub { font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; }
 .notices { padding: 8px 14px 0; display: grid; gap: 0; }
 .notices:empty { display: none; }
 
 /* Start: the drop zone */
-#home { padding-top: 18px; }
-.intro { display: grid; gap: 8px; }
-.intro p { font-size: 15px; line-height: 1.5; color: var(--ink-secondary); }
+#home { padding-top: 8px; }
+#home > .help-link { justify-self: end; }
+.view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { position: absolute; top: 20px; right: 18px; }
 .drop { border: 0; border-radius: 14px; background: var(--surface-sunken); padding: 28px 16px; display: grid; gap: 10px; justify-items: center; text-align: center; cursor: pointer; transition: background .15s; }
 .drop:hover, .drop.over { background: var(--surface-selected); }
 .drop-title { font-weight: 600; font-size: 15px; color: var(--ink-strong); }
@@ -688,24 +700,18 @@ body:has(#settings:not([hidden])) .panel-head,
 .summary-note { grid-column: 1 / -1; }
 .summary-saved { padding: 6px 14px 0; color: var(--ink-secondary); font-size: 13px; }
 
-/* The dock: what is happening and the one full-width 52px button to press, always in the same place */
-/* In a window too short for all of it, the dock scrolls rather than pushing the header out. */
-.foot { flex: 0 1 auto; min-height: 0; overflow-y: auto; background: var(--surface); border-top: 1px solid var(--border-row); }
+/* The dock: compact action bar (40px primary button, alternative link, progress bar and short note),
+   always in the same place. Its top border (.foot.line) shows only while #view has content clipped
+   below the fold; in a window too short for all of it, the dock scrolls rather than pushing the header out. */
+.foot { flex: 0 1 auto; min-height: 0; overflow-y: auto; background: var(--surface); border-top: 1px solid transparent; }
+.foot.line { border-top-color: var(--border-row); }
 .progress { height: 2px; background: var(--border-row); overflow: hidden; }
 .progress span { display: block; width: 32%; height: 2px; background: var(--brand); animation: slide 1.3s ease-in-out infinite; }
 .progress.measured span { animation: none; transition: width 0.3s ease; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
-.dock-body { padding: 12px 14px; display: grid; gap: 8px; }
+.dock-body { padding: 10px 16px 12px; display: grid; gap: 6px; }
 .dock-text { display: grid; gap: 2px; }
-.dock-eyebrow { font: 600 13px/1.3 var(--font-sans); color: var(--ink-muted); }
-.dock-eyebrow:empty { display: none; }
-.dock-eyebrow[data-tone="blue"] { color: var(--brand); }
-.dock-eyebrow[data-tone="warn"] { color: var(--warning-ink); }
-.dock-eyebrow[data-tone="bad"] { color: var(--signal); }
-.dock-eyebrow[data-tone="good"] { color: var(--success); }
-.dock-eyebrow[data-tone="ai"] { color: var(--ai-ink); }
-.dock-title { font-size: 15px; line-height: 1.35; font-weight: 600; color: var(--ink-strong); letter-spacing: -0.01em; text-wrap: pretty; overflow-wrap: anywhere; }
-.dock-sub { font-size: 13px; line-height: 1.45; color: var(--ink-secondary); text-wrap: pretty; overflow-wrap: anywhere; }
+.dock-sub { font-size: 13px; line-height: 1.4; color: var(--ink-muted); text-wrap: pretty; overflow-wrap: anywhere; }
 .dock-paused { font-size: 13px; font-weight: 600; color: var(--warning-ink); text-wrap: pretty; overflow-wrap: anywhere; }
 .dock .big { width: 100%; }
 #fill:disabled { opacity: 1; color: var(--ink-muted); background: var(--border-soft); border-color: var(--border-soft); }
@@ -734,7 +740,8 @@ body:has(#settings:not([hidden])) .panel-head,
   .brand { padding-left: 10px; }
   .top-right { padding-right: 10px; }
   .client-title { margin-left: 4px; }
-  .carrier-line, .client-meta, .steps, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
+  .carrier-line, .client-meta, .steps, .screen-head, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
+  .view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { right: 10px; }
   .file-confirm, .client-note { margin-left: 10px; margin-right: 10px; }
   .client-tools { padding-left: 8px; padding-right: 8px; gap: 1px; }
   .site-step { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
