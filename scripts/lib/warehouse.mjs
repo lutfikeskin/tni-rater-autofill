@@ -74,7 +74,7 @@ export const TABLES = {
     columns: [
       ['session', 'VARCHAR'], ['intake_id', 'VARCHAR', 'SHA-256 of the intake PDF: a client quoted twice from one PDF has one'],
       ['agent', 'VARCHAR'], ['install', 'VARCHAR'], ['started_at', 'TIMESTAMPTZ', 'The intake was loaded'], ['last_at', 'TIMESTAMPTZ', "The quote's last event"],
-      ['version', 'VARCHAR', "The extension's version"], ['channel', 'VARCHAR'], ['is_test', 'BOOLEAN', "Marked as a test, listed in the test-run list, or one of the repository's fixture PDFs"],
+      ['version', 'VARCHAR', "The extension's version"], ['channel', 'VARCHAR'], ['is_test', 'BOOLEAN', "Marked as a test, listed in the test-run list, one of the repository's fixture PDFs, or run on a computer that used initials the list names (agent:)"],
       ['profile_source', 'VARCHAR', 'event: an intake_profile was logged; null: only the summary logged on load'],
       ['profile_dropped', 'VARCHAR[]', 'Fields the usage server left out of that profile event as out of shape'],
       ['state', 'VARCHAR', 'Garaging state: the profile, else the summary logged on load'],
@@ -208,12 +208,13 @@ export function eventRows(stored) {
 /**
  * The derived tables' rows, from the events the reviews read.
  * @param {object[]} events  loadEvents(): in time order, test page and blank pages left out
- * @param {{testIntakes?: Iterable<string>}} opts  the test-run list (readTestList().intakes)
+ * @param {{testIntakes?: Iterable<string>, testAgents?: Iterable<string>}} opts  the test-run list
+ *   (readTestList().intakes) and the maintainer's initials (readTestList().agents)
  * @returns {{quotes: object[], quote_vehicles: object[], quote_drivers: object[], quote_prior_insurance: object[], quote_carriers: object[], quote_premiums: object[], answers: object[]}}
  */
-export function warehouseRows(events, { testIntakes = [] } = {}) {
+export function warehouseRows(events, { testIntakes = [], testAgents = [] } = {}) {
   const quoted = quoteSessions(events);
-  const tests = testSessionsOf(events, testIntakes);
+  const tests = testSessionsOf(events, testIntakes, { agents: testAgents });
   const loaded = new Map();
   const profiles = new Map();
   const lastAt = new Map();

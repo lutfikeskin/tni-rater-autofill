@@ -35,7 +35,7 @@ Every row here is a field the usage server keeps today (`EVENT_FIELDS`: the even
 | Choice made on the carrier page | `fill_field.shown`, `field_change.to`, `page_layout.selected` | The option text the extension filled, the agent picked, or the page left standing. `finalAnswers` in [learn.mjs](../scripts/lib/learn.mjs) combines them into one answer per question and unit. Typed text is never logged. |
 | Why that answer | `fill_field.source`, `standard` | Intake, derived, standard (TNI's), fact or attestation. |
 | Who, when, which build | `agent`, `install`, `t`, `receivedAt`, `v`, `channel`, `commit` | `t` is the agent's computer clock; `receivedAt` is the server's. |
-| Test runs | `intake_loaded.test`, `intake_marked`, fixture PDFs, `reviews/test-intakes.txt` | Read by `readTestList` and `testSessionsOf` in [signals.mjs](../scripts/lib/signals.mjs). |
+| Test runs | `intake_loaded.test`, `intake_marked`, fixture PDFs, `reviews/test-intakes.txt` (fingerprints, and `agent:` lines for the warehouse) | Read by `readTestList` and `testSessionsOf` in [signals.mjs](../scripts/lib/signals.mjs). |
 
 Missing today: whether the business has a USDOT or MC number, the 60-day answer, years in business, operations (radius, hazmat, filings, ELD, ...), each vehicle's and trailer's type, year, make and value, drivers' ages and CDLs, the requested limits, the prior insurer, claims, premiums, and whether the client bought.
 
@@ -217,7 +217,7 @@ node scripts/warehouse.mjs server-data --tests <main checkout>/reviews/test-inta
 
 - It reads the server folder, exported logs or both, as the review scripts do ([warehouse.mjs](../scripts/warehouse.mjs)).
 - It builds a new file beside the old one (`warehouse.duckdb.building`) and swaps it in only once it is whole. A failed build leaves the old file.
-- It refuses to run without a test-run list: `--tests <file>`, or `reviews/test-intakes.txt` in the checkout, which may be empty. The review only warns; a database people query for months should not count the maintainer's test quotes as clients. The fixture PDFs' fingerprints are added, as in the review.
+- It refuses to run without a test-run list: `--tests <file>`, or `reviews/test-intakes.txt` in the checkout, which may be empty. A line `agent:AD` in that list names the maintainer's initials: every quote on a computer that ever sent them is a test run (`is_test`), quotes sent there before the initials were typed in included, unless the quote was unmarked as a test in the panel. Only the warehouse reads these lines; the weekly reports still go by fingerprints. The review only warns; a database people query for months should not count the maintainer's test quotes as clients. The fixture PDFs' fingerprints are added, as in the review.
 - It prints counts only (events, quotes, test runs, rows per table) and the commit. It prints no client value.
 - It replaces the file on every run. Keep your own queries in `.sql` files, not as views inside the file. Close the file in the command line before a rebuild: Windows won't replace a file another program has open.
 

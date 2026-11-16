@@ -80,6 +80,8 @@ test('warehouseRows counts quotes as the reviews do, with the last profile and t
   // The PDF never taken to a carrier and the local test page aren't quotes.
   assert.deepEqual(Object.keys(quotes).sort(), ['client', 'listed', 'marked']);
   assert.deepEqual(Object.fromEntries(rows.quotes.map((q) => [q.session, q.is_test])), { client: false, marked: true, listed: true });
+  const own = warehouseRows(history().map((x) => (x.session === 'client' ? { ...x, agent: 'AD' } : x)), { testIntakes: [LISTED], testAgents: ['AD'] });
+  assert.equal(own.quotes.find((q) => q.session === 'client').is_test, true, 'a quote by the maintainer\'s initials is a test run');
 
   const c = quotes.client;
   assert.equal(c.profile_source, 'event');
