@@ -23,7 +23,7 @@ test('itemFieldName and intakeFields find the deal fields that hold intakes', ()
 
 /**
  * A Bitrix that answers the methods a pull sends, and records them.
- * @param {{deals: object[], history: object[], files: Record<string, string>}} data
+ * @param {{deals: any[], history: any[], files: Record<string, string>}} data
  */
 function fakeBitrix(data) {
   /** @type {string[]} */
@@ -128,13 +128,13 @@ test('the warehouse joins quotes to deals by intake PDF and says whether they so
       3: { id: 3, deal: 3, stage: '17', at: '2026-08-05T09:00:00Z' },
     },
   };
-  Object.assign(rows, bitrixRows(state, rows.quotes));
-  assert.deepEqual(rows.quote_deals.map((x) => `${x.session}:${x.deal_id}`).sort(), ['old:3', 'renewal:2', 'sold:1', 'young:3']);
+  const sales = bitrixRows(state, /** @type {any[]} */ (rows.quotes));
+  assert.deepEqual(sales.quote_deals.map((/** @type {any} */ x) => `${x.session}:${x.deal_id}`).sort(), ['old:3', 'renewal:2', 'sold:1', 'young:3']);
 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bitrix-'));
   try {
     const file = path.join(dir, 'w.duckdb');
-    await writeWarehouse(file, { ...rows, build_info: [{ built_at: '2026-11-16T00:00:00Z', bitrix_pulled_at: state.pulledAt, bitrix_since: state.since }] });
+    await writeWarehouse(file, { ...rows, ...sales, build_info: [{ built_at: '2026-11-16T00:00:00Z', bitrix_pulled_at: state.pulledAt, bitrix_since: state.since }] });
     const instance = await DuckDBInstance.create(file, { access_mode: 'READ_ONLY' });
     const db = await instance.connect();
     const got = (await db.runAndReadAll('SELECT session, deal_id, client_before, days_to_sale, sold_within_60_days FROM v_quote_sales ORDER BY session')).getRowObjectsJS();
