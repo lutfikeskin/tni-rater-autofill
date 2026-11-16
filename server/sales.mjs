@@ -35,7 +35,7 @@ const ROW = {
   startedAt: isIso,
   agent: (v) => v === null || (typeof v === 'string' && AGENT.test(v)),
   deal: (v) => v === null || intIn(v, 1, 2 ** 31 - 1),
-  stage: (v) => v === null || (typeof v === 'string' && v.length <= 80 && !/[\u0000-\u001f]/.test(v)),
+  stage: (v) => v === null || (typeof v === 'string' && v.length <= 80 && ![...v].some((c) => c.charCodeAt(0) < 32)),
   open: boolOrNull,
   clientBefore: (v) => typeof v === 'boolean',
   soldAt: isoOrNull,
