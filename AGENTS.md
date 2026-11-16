@@ -37,7 +37,7 @@ Start with the relevant source. Read the matching document when the task affects
 | Adding a carrier or expanding supported carrier scenarios | [New carriers](docs/new-carrier.md) |
 | AI suggestions, prompts, validation, caching, or approval | [AI assistance](docs/ai-assistant.md) |
 | Harnesses, regression coverage, CI, packaging, or release verification | [Testing](docs/testing.md) |
-| The quoting history warehouse: its tables, `npm run warehouse`, business-analysis SQL | [Quoting history database](docs/quoting-history-database.md) |
+| The quoting history warehouse: its tables, `npm run warehouse`, business-analysis SQL; sales from Bitrix (`npm run bitrix`) and the dashboard's sales page (`npm run push-sales`) | [Quoting history database](docs/quoting-history-database.md), then [Hosting](docs/hosting.md#sales-page) for the page |
 | Collection-server operation or deployment | [Hosting](docs/hosting.md) |
 | Chrome Web Store distribution | [Store release](docs/chrome-web-store.md) |
 
