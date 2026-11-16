@@ -1413,6 +1413,7 @@
  * @property {any} [loadError]
  * @property {any[]} [siteTrack]
  * @property {any} [checks]
+ * @property {boolean} [checksAll] true when the agent opened the full intake-checks list instead of one-at-a-time focus mode
  * @property {any[]} [pickers]
  * @property {string | null} [fileConfirm]
  * @property {any} [fileConfirmFrom]

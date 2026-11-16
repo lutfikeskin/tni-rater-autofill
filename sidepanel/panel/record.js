@@ -178,6 +178,7 @@ function renderWarnings() {
     cards,
     // A row like All client details below it, opening its notes in a card joined under it.
     cleanup: infos.map((w) => w.msg),
+    later: () => setView('page'),
   };
   renderSteps();
 }
@@ -194,9 +195,10 @@ async function toggleDone(i, isDone) {
   await save();
   flushSync(renderWarnings);
   renderSections();
-  // Keyboard focus stays where the agent was: on the row's Undo, or the card's Looks right now.
+  // Keyboard focus stays where the agent was: on the row's Undo (full list), the next open card's
+  // first control (focus mode), or the opposite-view link.
   const row = document.querySelector(`#warnings [data-check="${i}"]`);
-  (row?.querySelector('button') ?? $('step-check')).focus();
+  (row?.querySelector('button') ?? document.querySelector('#warnings :is(input, select, textarea, button)') ?? $('step-fill') ?? $('step-check'))?.focus();
 }
 
 function openFlags(prefix) {

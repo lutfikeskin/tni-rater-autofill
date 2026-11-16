@@ -211,19 +211,21 @@ body:has(#settings:not([hidden])) .panel-head,
 .file-confirm .ghost { min-height: 32px; }
 .file-confirm p { color: var(--ink); font-size: 14px; }
 .client-note { grid-row: note; grid-column: 1 / -1; margin: 6px 14px 0; padding: 6px 0; border-top: 1px solid var(--border-row); border-radius: 0; background: none; color: var(--success-ink); font-size: 13px; }
-.steps { grid-row: steps; grid-column: 1 / -1; padding: 6px 14px 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; border-bottom: 1px solid var(--border-row); }
-.step { display: grid; gap: 4px; padding: 0; background: none; border: 0; text-align: left; min-width: 0; }
-.step-bar { height: 2px; border-radius: 0; background: var(--border-row); }
-.step-line { display: flex; align-items: center; gap: 5px; min-width: 0; }
-.step-label { font-size: 13px; font-weight: 600; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.step[aria-current="true"] .step-label { color: var(--ink-strong); font-weight: 600; }
-.step-note { margin-top: -2px; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.step[data-state="done"] .step-bar { background: var(--success); }
+.steps { grid-row: steps; grid-column: 1 / -1; padding: 2px 14px 6px; border-bottom: 1px solid var(--border-row); }
+.step { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 6px; margin: 0 -6px; width: calc(100% + 12px); background: none; border: 0; border-radius: var(--radius-sm); text-align: left; min-width: 0; }
+.step[hidden] { display: none; }
+.step:hover { background: var(--surface-hover); }
+.step-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 3px; background: var(--border-control); }
+.step-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-note { flex-shrink: 0; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step .chev { flex-shrink: 0; color: var(--ink-muted); font-size: 15px; line-height: 1; }
+.step[data-state="done"] .step-dot { background: var(--success); }
 .step[data-state="done"] .step-note { color: var(--success-ink); }
-.step[data-state="active"] .step-bar { background: var(--brand); }
-.step[data-state="warn"] .step-bar { background: var(--warning-bar); }
+.step[data-state="active"] .step-dot { background: var(--brand); }
+.step[data-state="warn"] .step-dot { background: var(--warning-bar); }
+.step[data-state="warn"] .step-label { color: var(--amber); font-weight: 600; }
 .step[data-state="warn"] .step-note { color: var(--warning-ink); }
-.step[data-state="bad"] .step-bar { background: var(--signal-line); }
+.step[data-state="bad"] .step-dot { background: var(--signal-line); }
 .step[data-state="bad"] .step-note { color: var(--signal-dark); }
 
 /* The middle: one scrolling area between the header (and client strip) and the dock. Positioned, so
@@ -320,6 +322,18 @@ body:has(#settings:not([hidden])) .panel-head,
 .check-body textarea { resize: vertical; min-height: 68px; }
 .check-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .check-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Focus mode (one open check at a time on the canvas: Check and CheckSerious) */
+.check.check-focus, .check.check-focus.alert { border-top: 0; padding: 0; gap: 14px; }
+.check-eyebrow { padding-right: 28px; font-size: 13px; line-height: 1.3; font-weight: 500; color: var(--ink-muted); }
+.check-eyebrow .serious { font-weight: 600; color: var(--signal-dark); }
+.check-focus-body { display: grid; gap: 12px; }
+.check-focus-body :is(input, select, textarea) { min-height: 44px; padding: 6px 12px; font-size: 16px; font-weight: 500; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); width: 100%; }
+.check-focus-body textarea { resize: vertical; min-height: 84px; font-size: 14px; font-weight: 400; }
+.check-focus .check-actions :is(.primary, .tinted, .ghost) { min-height: 40px; }
+.check-decide-later { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; font-size: 15px; }
+.check-serious-note { font-size: 13px; line-height: 1.45; color: var(--ink-muted); }
+.check-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 2px; }
+.one-check-link { justify-self: start; }
 .checked-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-radius: 0; background: none; border: 0; border-top: 1px solid var(--border-row); font-size: 14px; }
 .checked-row .tick { flex: 0 0 16px; width: 16px; height: 20px; display: grid; place-items: center; border-radius: 0; background: none; color: var(--success); font-weight: 600; font-size: 13px; }
 .checked-row .grow { color: var(--ink); }

@@ -1,8 +1,8 @@
-// The panel's two tabs (Intake, This page) and the dock in React, drawn from what the panel says of
-// them: the tabs' tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's one
-// next thing to do and its button (state.dock, renderDock from dockFor; #dock-eyebrow and
-// #dock-title stay in the DOM with aria-hidden while #screen-head is shown, and lift sr-only when
-// #screen-title scrolls out of #view).
+// Compact opposite-view link in #steps and the dock in React, drawn from what the panel says of
+// them: the intake/page link's tone, note and which view is shown (state.steps, renderSteps in
+// coordinator.js), and the dock's one next thing to do and its button (state.dock, renderDock from
+// dockFor; #dock-eyebrow and #dock-title stay in the DOM with aria-hidden while #screen-head is
+// shown, and lift sr-only when #screen-title scrolls out of #view).
 // What their buttons do is the panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -11,34 +11,41 @@ import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { useAnnounce } from './announce.js';
+import { CHECKS } from './messages.js';
 import { headShown } from './screen-view.jsx';
 
-// Two tabs: the intake, and the page in front (its fill, then what is left on it for the agent).
-// Not a wizard: the page tab is one view, and the header's "Stage n of m" is the quote's place (audit
-// 2026-11-07, UX-04: three numbered steps, two of them the same view, beside the header's "Step n
-// of m"). `prefix`: the id of its note (#check-summary, #fill-summary: the harnesses read them).
-const TABS = [
-  { id: 'check', prefix: 'check', label: 'Intake', controls: 'check-view' },
-  { id: 'fill', prefix: 'fill', label: 'This page', controls: 'page-view' },
-];
-
-// Each tab: its bar, name and note, toned by what it says ('done', 'active', 'warn', 'bad'); the
-// one shown is marked current. Before the panel has said anything, as the page loads, each is drawn
-// plain. The page tab, once its page is filled (`review`), asks the panel to read the page again
-// (act.confirm); before, it only shows the page (act.fill).
+// Only the opposite-view link shows in #steps (no two-tab bar). On the page view (`!check.current`),
+// #step-check shows as a compact hairline link ("3 intake checks left" while open > 0, "Intake checks"
+// when all checked; #check-summary stays in the DOM for harnesses, sr-only + aria-hidden when open > 0
+// so the count isn't read twice) and #step-fill hides. On the check view (`check.current`), #step-fill
+// shows as a back link ("This page" with #fill-summary beside it) and #step-check hides. Once the page
+// is filled (`review`), #step-fill asks the panel to read the page again (act.confirm); before, it only
+// shows the page (act.fill).
 function Steps({ act }) {
   const said = useStore(panelStore, (s) => s.steps);
-  return TABS.map(({ id, prefix, label, controls }) => {
-    const s = said?.[id] ?? {};
-    return (
-      <button key={id} type="button" id={`step-${id}`} className="step" aria-controls={controls} data-state={s.tone}
-        aria-current={s.current ? 'true' : undefined} onClick={() => act[s.review ? 'confirm' : id]()}>
-        <span className="step-bar" />
-        <span className="step-line"><span className="step-label">{label}</span></span>
-        <span id={`${prefix}-summary`} className="step-note">{s.note ?? ''}</span>
+  const checksOpen = useStore(panelStore, (s) => (s.checks ? s.checks.cards.filter((c) => !c.done).length : null));
+  const c = said?.check ?? {};
+  const f = said?.fill ?? {};
+  const onCheck = !!c.current;
+  const open = checksOpen ?? Number(/^(\d+)\b/.exec(c.note ?? '')?.[1] ?? 0);
+  const checkLabel = open > 0 ? CHECKS.stepLeft(open) : CHECKS.stepAll;
+  return (
+    <>
+      <button type="button" id="step-check" className="step" aria-controls="check-view" data-state={c.tone}
+        aria-current={c.current ? 'true' : undefined} hidden={onCheck} onClick={() => act.check()}>
+        <span className="step-dot" aria-hidden="true" />
+        <span className="step-label">{checkLabel}</span>
+        <span id="check-summary" className={open > 0 ? 'step-note sr-only' : 'step-note'} aria-hidden={open > 0 ? 'true' : undefined}>{c.note ?? ''}</span>
+        <span className="chev" aria-hidden="true">{'\u203a'}</span>
       </button>
-    );
-  });
+      <button type="button" id="step-fill" className="step" aria-controls="page-view" data-state={f.tone}
+        aria-current={f.current ? 'true' : undefined} hidden={!onCheck} onClick={() => act[f.review ? 'confirm' : 'fill']()}>
+        <span className="chev back" aria-hidden="true">{'\u2039'}</span>
+        <span className="step-label">{CHECKS.stepBack}</span>
+        <span id="fill-summary" className="step-note">{f.note ?? ''}</span>
+      </button>
+    </>
+  );
 }
 
 // The dock's buttons: the one dockFor names shows (`button`), the others stay hidden, as the page

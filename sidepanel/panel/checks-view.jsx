@@ -1,13 +1,17 @@
-// Step 1's checks in React: what looked wrong or missing on the intake, one card each with its field
-// to fix, Looks right and where it is on the PDF (a checked one is a row with Undo); the cleanup
-// notes; and the All client details row. Drawn from what renderWarnings says (state.checks). Also the
-// unit pickers above the page's answers, from what renderPickers says (state.pickers).
+// Step 1's checks in React: by default one open check at a time on the canvas (focus mode: canvas
+// Check and CheckSerious), with quiet links to check the rest later or see the full list; in full-list
+// mode (or once every check is done), one row/card per item with Undo, Cleanup notes, and a link back
+// to focus mode while open checks remain; and the All client details row below. Drawn from what
+// renderWarnings says (state.checks) plus state.checksAll. Also the unit pickers above the page's
+// answers, from what renderPickers says (state.pickers).
 // One part of the panel; sidepanel.js mounts it (mountChecks, mountPickers).
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
+import { state } from './core.js';
 import { panelStore } from './state-store.js';
+import { CHECKS } from './messages.js';
 import { HelpLink } from './help-link.jsx';
 
 // A check card's field (fieldSaid in record.js), named by the card above it. Its edit is made as the
@@ -40,12 +44,12 @@ function CheckHead({ title, msg }) {
   );
 }
 
-// One item: checked (a row with Undo), Luna's choices, or its field with Looks right.
+// One item in the full list: checked (a row with Undo), Luna's choices, or its field with Looks right.
 function CheckCard({ card }) {
   if (card.done) {
     return (
       <div className="checked-row" data-check={card.i}>
-        <span className="tick" aria-hidden="true">✓</span>
+        <span className="tick" aria-hidden="true">{'\u2713'}</span>
         <span className="grow">{card.said}</span>
         <button type="button" className="link small" onClick={card.undo}>Undo</button>
       </div>
@@ -71,9 +75,75 @@ function CheckCard({ card }) {
       <div className="check-body">
         {card.field ? <CheckField key={`${card.field.path}|${card.field.value}|${card.field.rev ?? 0}`} field={card.field} /> : null}
         <div className="check-actions">
-          <button type="button" className="tinted" onClick={card.lookRight}>Looks right</button>
-          {pdf ?? (card.details ? <button type="button" className="ghost" onClick={card.details}>Show details</button> : null)}
+          <button type="button" className="tinted" onClick={card.lookRight}>{CHECKS.looksRight}</button>
+          {pdf ?? (card.details ? <button type="button" className="ghost" onClick={card.details}>{CHECKS.showDetails}</button> : null)}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// One open check on the canvas (focus mode: canvas Check and CheckSerious): eyebrow ("Check the
+// intake · i of n", or red "Serious · check i of n"), 26px field title, full explanation, editable
+// control or choice buttons, primary Looks right + See intake / Show details, and Check the rest
+// later (or on CheckSerious an outline "Decide later and fill" button + quote note) plus See all.
+function FocusCheck({ card, at, total, later, onSeeAll }) {
+  const pdf = card.pdf ? <button type="button" className="ghost" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
+  return (
+    <div className={card.alert ? 'check check-focus alert' : 'check check-focus'} role={card.alert ? 'alert' : undefined} data-check={card.i}>
+      <div className="pane-head">
+        <p className="check-eyebrow">
+          {card.alert
+            ? <><b className="serious">{CHECKS.serious}</b>{CHECKS.seriousAt(at, total)}</>
+            : CHECKS.eyebrow(at, total)}
+        </p>
+        <h2 id="check-title">{card.title || CHECKS.fallbackTitle}</h2>
+        <HelpLink topic="intake" />
+        <p id="check-sub" className="pane-sub">{card.msg}</p>
+      </div>
+      <div className="check-focus-body">
+        {card.field ? <CheckField key={`${card.field.path}|${card.field.value}|${card.field.rev ?? 0}`} field={card.field} /> : null}
+        {card.choices ? (
+          <div className="check-actions">
+            <div className="check-choices">
+              {card.choices.map((c, n) => (
+                <button key={n} type="button" className={n === 0 ? 'tinted' : 'ghost'} onClick={c.onClick}>{c.label}</button>
+              ))}
+            </div>
+            {pdf}
+          </div>
+        ) : (
+          <div className="check-actions">
+            <button type="button" className={card.alert ? 'tinted' : 'primary'} onClick={card.lookRight}>{CHECKS.looksRight}</button>
+            {pdf ?? (card.details ? <button type="button" className="ghost" onClick={card.details}>{CHECKS.showDetails}</button> : null)}
+          </div>
+        )}
+        {card.alert ? (
+          <>
+            <button type="button" id="check-later" className="ghost check-decide-later" onClick={later}>
+              {CHECKS.decideLater}
+            </button>
+            <p className="check-serious-note">{CHECKS.seriousNote}</p>
+            {total > 1 ? (
+              <div className="check-foot">
+                <button type="button" id="see-all-checks" className="link subtle" onClick={onSeeAll}>
+                  {CHECKS.seeAll}
+                </button>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="check-foot">
+            <button type="button" id="check-later" className="link subtle" onClick={later}>
+              {CHECKS.later}
+            </button>
+            {total > 1 ? (
+              <button type="button" id="see-all-checks" className="link subtle" onClick={onSeeAll}>
+                {CHECKS.seeAll}
+              </button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -82,33 +152,68 @@ function CheckCard({ card }) {
 // Step 1's view (#check-view). `act.openDetails`: the All client details row.
 function Checks({ act }) {
   const checks = useStore(panelStore, (s) => s.checks);
+  const checksAll = useStore(panelStore, (s) => !!s.checksAll);
+  const intakeId = useStore(panelStore, (s) => s.intake?.intakeId ?? null);
   const filled = useStore(panelStore, (s) => s.intake?.stats?.filled);
   const detailsOpen = useStore(panelStore, (s) => !!s.detailsOpen);
+  const seenIntake = useRef(intakeId);
+  useEffect(() => {
+    if (seenIntake.current !== intakeId) {
+      seenIntake.current = intakeId;
+      if (panelStore.getState().checksAll) state.checksAll = false;
+    }
+  }, [intakeId]);
+  const cards = checks?.cards ?? [];
+  const openCards = cards.filter((c) => !c.done);
+  const open = openCards.length;
+  const focusCard = !checksAll && open > 0 ? openCards[0] : null;
+  const focusAt = focusCard ? cards.indexOf(focusCard) + 1 : 1;
   const cleanup = checks?.cleanup ?? [];
+  const showAll = () => {
+    flushSync(() => { state.checksAll = true; });
+    document.getElementById('one-check-mode')?.focus();
+  };
+  const showOne = () => {
+    flushSync(() => { state.checksAll = false; });
+    (document.getElementById('see-all-checks') ?? document.querySelector('#warnings :is(input, select, textarea, button)'))?.focus();
+  };
   return (
     <>
-      <div className="pane-head">
-        <h2 id="check-title">{checks?.title ?? ''}</h2>
-        <HelpLink topic="intake" />
-        <p id="check-sub" className="pane-sub">{checks?.sub ?? ''}</p>
-      </div>
-      <div id="warnings" className="checks">
-        {(checks?.cards ?? []).map((card) => <CheckCard key={card.i} card={card} />)}
-        {cleanup.length ? (
-          <details className="fold cleanup">
-            <summary className="list-row">
-              <span className="grow">Cleanup notes</span>
-              <span className="small muted">{`${cleanup.length} change${cleanup.length === 1 ? '' : 's'}`}</span>
-              <span className="chev" aria-hidden="true">›</span>
-            </summary>
-            <div className="card">{cleanup.map((msg, n) => <p key={n}>{msg}</p>)}</div>
-          </details>
-        ) : null}
-      </div>
+      {focusCard ? (
+        <div id="warnings" className="checks checks-focus">
+          <FocusCheck card={focusCard} at={focusAt} total={cards.length} later={checks?.later} onSeeAll={showAll} />
+        </div>
+      ) : (
+        <>
+          <div className="pane-head">
+            <h2 id="check-title">{checks?.title ?? ''}</h2>
+            <HelpLink topic="intake" />
+            <p id="check-sub" className="pane-sub">{checks?.sub ?? ''}</p>
+            {open > 0 ? (
+              <button type="button" id="one-check-mode" className="link subtle one-check-link" onClick={showOne}>
+                {CHECKS.oneAtATime}
+              </button>
+            ) : null}
+          </div>
+          <div id="warnings" className="checks">
+            {cards.map((card) => <CheckCard key={card.i} card={card} />)}
+            {cleanup.length ? (
+              <details className="fold cleanup">
+                <summary className="list-row">
+                  <span className="grow">Cleanup notes</span>
+                  <span className="small muted">{`${cleanup.length} change${cleanup.length === 1 ? '' : 's'}`}</span>
+                  <span className="chev" aria-hidden="true">{'\u203a'}</span>
+                </summary>
+                <div className="card">{cleanup.map((msg, n) => <p key={n}>{msg}</p>)}</div>
+              </details>
+            ) : null}
+          </div>
+        </>
+      )}
       <button type="button" id="details-row" className="list-row" aria-controls="details-view" aria-expanded={detailsOpen} onClick={act.openDetails}>
         <span className="grow">All client details</span>
         <span id="details-count" className="small muted">{filled == null ? '' : `${filled} answers`}</span>
-        <span className="chev" aria-hidden="true">›</span>
+        <span className="chev" aria-hidden="true">{'\u203a'}</span>
       </button>
     </>
   );
@@ -139,4 +244,4 @@ function mountPickers(host, act) {
   flushSync(() => root.render(<Pickers act={act} />));
 }
 
-export { CheckCard, Checks, Pickers, mountChecks, mountPickers };
+export { CheckCard, Checks, FocusCheck, Pickers, mountChecks, mountPickers };

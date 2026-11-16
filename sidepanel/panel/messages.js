@@ -119,12 +119,27 @@ export const REPORT = {
   announce: (count, left, held) => `Filled ${count} ${plural(count, 'answer')}. ${left ? `${left} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`,
 };
 
-// The intake's checks, above them (renderWarnings).
+// The intake's checks, above them (renderWarnings, checks-view.jsx, steps-view.jsx).
 export const CHECKS = {
   title: (open) => (open ? `${open} to check on the intake` : 'Intake checked'),
   sub: (open) => (open ? 'Fix or confirm each one, before or after filling.' : 'Nothing else looked wrong.'),
   // An item's link to where the intake PDF shows it (`page`: its page, said).
   seeIntake: (page) => `See intake${page}`,
+  // Focus mode (one open check at a time: canvas Check and CheckSerious) and the compact intake link.
+  eyebrow: (at, total) => `Check the intake \u00b7 ${at} of ${total}`,
+  serious: 'Serious',
+  seriousAt: (at, total) => ` \u00b7 check ${at} of ${total}`,
+  fallbackTitle: 'Check this answer',
+  looksRight: 'Looks right',
+  showDetails: 'Show details',
+  later: 'Check the rest later',
+  decideLater: 'Decide later and fill',
+  seriousNote: 'You can fill now, but this answer affects the quote.',
+  seeAll: 'See all intake checks',
+  oneAtATime: 'One check at a time',
+  stepLeft: (open) => `${open} intake ${plural(open, 'check')} left`,
+  stepAll: 'Intake checks',
+  stepBack: 'This page',
 };
 
 // Where an answer came from: its tag on the row (`text`, `title` on hover), and the title and quote

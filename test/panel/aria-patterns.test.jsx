@@ -5,6 +5,7 @@ import { storeState } from '../../sidepanel/panel/state-store.js';
 import { Settings } from '../../sidepanel/panel/settings-view.jsx';
 import { ClientHead } from '../../sidepanel/panel/client-view.jsx';
 import { Checks } from '../../sidepanel/panel/checks-view.jsx';
+import { Steps } from '../../sidepanel/panel/steps-view.jsx';
 import { Feed } from '../../sidepanel/panel/feed-view.jsx';
 import { DefaultsChip } from '../../sidepanel/panel/agent-defaults/view.jsx';
 
@@ -20,8 +21,8 @@ beforeEach(() => {
     switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true, turnSound: true },
     ai: { on: true, auto: false, autoShown: true, names: false, note: '', keyEdit: 'Add key' }, keyFormOpen: false, usageCard: null, usageNote: '', health: null,
     testRun: null, captureOff: false, captureStatus: null, devrec: { on: false, status: null, unfinished: null }, recordingLine: false,
-    client: { name: 'Acme Hauling LLC', title: 'acme.pdf', meta: 'Maryland · 2 drivers', pdf: true, ask: null }, clientNote: null, newQuoteOff: false, detailsOpen: false,
-    feed: null,
+    client: { name: 'Acme Hauling LLC', title: 'acme.pdf', meta: 'Maryland \u00b7 2 drivers', pdf: true, ask: null }, clientNote: null, newQuoteOff: false, detailsOpen: false,
+    checks: null, checksAll: false, steps: null, feed: null,
   });
 });
 afterEach(cleanup);
@@ -50,8 +51,25 @@ test('the buttons that open client details, the answer key, the AI key\'s box an
   const head = render(<><ClientHead act={quiet({ details })} /><div id="details-view" /></>);
   await checkPattern(head.container.querySelector('#client-card'), 'disclosure');
   cleanup();
-  const checks = render(<><Checks act={quiet({ openDetails: details })} /><div id="details-view" /></>);
-  await checkPattern(checks.container.querySelector('#details-row'), 'disclosure');
+  // Checks in both focus mode (open checks > 0) and full-list mode: #details-row stays a disclosure,
+  // and neither view-switching link in #steps carries aria-expanded.
+  act(() => {
+    state.checks = { title: '2 to check on the intake', sub: 's', cleanup: [], later() {}, cards: [
+      { i: 0, title: 'USDOT #', msg: 'Missing.', alert: false, lookRight() {}, field: { path: 'applicant.dot', label: 'USDOT #', control: 'input', value: '', maxLength: 200, edit() {} } },
+      { i: 1, title: 'State', msg: 'Check state.', alert: false, lookRight() {} },
+    ] };
+  });
+  const checksFocus = render(<><Checks act={quiet({ openDetails: details })} /><div id="details-view" /></>);
+  await checkPattern(checksFocus.container.querySelector('#details-row'), 'disclosure');
+  expect(checksFocus.container.querySelector('#see-all-checks').getAttribute('aria-expanded')).toBe(null);
+  cleanup();
+  act(() => { state.checksAll = true; });
+  const checksList = render(<><Checks act={quiet({ openDetails: details })} /><div id="details-view" /></>);
+  await checkPattern(checksList.container.querySelector('#details-row'), 'disclosure');
+  expect(checksList.container.querySelector('#one-check-mode').getAttribute('aria-expanded')).toBe(null);
+  cleanup();
+  const steps = render(<Steps act={quiet({})} />);
+  expect([...steps.container.querySelectorAll('.step')].map((b) => b.getAttribute('aria-expanded'))).toEqual([null, null]);
   cleanup();
   // The answer key on This page (toggleKey in sidepanel.js flips state.keyOpen; renderSteps says it).
   const feed = { shown: true, title: 'Answers on this page', pages: [], pastKey: null, pastWhen: '', report: true, filter: 'all', counts: { all: 1, needs: 0, done: 1 }, empty: null, keyOpen: false, unmark: false, age: null };

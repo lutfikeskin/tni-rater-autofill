@@ -456,6 +456,7 @@ const state = storeState({
   // draws them: null until an intake is checked. And the unit pickers above the page's answers
   // (renderPickers), none until a page is about one of several.
   checks: null,
+  checksAll: false,
   pickers: [],
   // The file tools' question before the agent's work would go: 'replace' | 'clear' | 'new-quote',
   // the button that asked, for focus on Cancel, and what it says ({ text, yes }: askFile).

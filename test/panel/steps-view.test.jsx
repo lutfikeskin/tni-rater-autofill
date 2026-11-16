@@ -4,15 +4,11 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { Dock, Steps, mountDock, mountSteps } from '../../sidepanel/panel/steps-view.jsx';
 
-// The panel's two tabs (Intake, This page) and the dock in React (React PR 5, 2026-11-01): what renderSteps and
-// renderDock wrote on the page's own elements, drawn from what they say now (state.steps,
-// state.dock). What each says is checked by the safety tests (dockFor, continueSaid, renderSteps,
-// renderDock); here, that the page shows it with the ids, attributes and wording the panel's
-// harnesses read (#dock[data-phase], data-report, #fill, #dock-alt[data-go], #fill-summary), and
-// what each button asks the panel to do (wired in sidepanel.js: the safety tests check the wiring).
+// Compact opposite-view link in #steps and the dock in React: what renderSteps and renderDock say
+// of them (state.steps, state.dock), and what their buttons ask the panel to do.
 
 let state;
-beforeEach(() => { state = storeState({ steps: null, dock: null }); });
+beforeEach(() => { state = storeState({ steps: null, checks: null, dock: null }); });
 afterEach(cleanup);
 
 // What the buttons were asked to do.
@@ -21,24 +17,24 @@ const acts = () => {
   const call = (name) => (...args) => { calls.push([name, ...args]); };
   return { calls, act: Object.fromEntries(['check', 'fill', 'confirm', 'stop', 'next', 'lookRight', 'approve', 'alt'].map((n) => [n, call(n)])) };
 };
-const steps = (container) => [...container.querySelectorAll('.step')].map((b) => [b.id, b.dataset.state ?? null, b.getAttribute('aria-current'),
+const steps = (container) => [...container.querySelectorAll('.step')].map((b) => [b.id, b.hidden, b.dataset.state ?? null, b.getAttribute('aria-current'),
   b.querySelector('.step-label').textContent, b.querySelector('.step-note').textContent]);
 const shown = (container) => [...container.querySelectorAll('.dock-body > button')].filter((b) => !b.hidden).map((b) => [b.id, b.textContent, b.disabled]);
 const $ = (container, id) => container.querySelector(`#${id}`);
 
-// Audit 2026-11-07, UX-04: three numbered steps, two of them the same view (Fill page, Review page),
-// whose checkmarks went back on every page, beside the header's "Step n of m". Now two tabs, no
-// numbers: the intake, and the page in front.
-test('the two tabs say what renderSteps says of them, in order, and ask the panel for their view', () => {
+test('only the opposite-view link shows in #steps, while keeping #check-summary, #fill-summary, aria-controls and view actions intact', () => {
   const t = acts();
   const { container } = render(<Steps act={t.act} />);
-  // Before the panel says anything: plain.
+  // Before the panel says anything: page view's link (#step-check) shows plain; #step-fill is hidden.
   expect(steps(container)).toEqual([
-    ['step-check', null, null, 'Intake', ''],
-    ['step-fill', null, null, 'This page', ''],
+    ['step-check', false, null, null, 'Intake checks', ''],
+    ['step-fill', true, null, null, 'This page', ''],
   ]);
   expect(container.querySelector('.step-num')).toBe(null);
+  expect(container.querySelector('.step-bar')).toBe(null);
   expect([...container.querySelectorAll('.step')].map((b) => b.getAttribute('aria-controls'))).toEqual(['check-view', 'page-view']);
+
+  // On page view with all checks done: #step-check shows "Intake checks" + "All checked"; #step-fill stays hidden with #fill-summary intact.
   act(() => {
     state.steps = {
       check: { tone: 'done', note: 'All checked', current: false },
@@ -46,17 +42,29 @@ test('the two tabs say what renderSteps says of them, in order, and ask the pane
     };
   });
   expect(steps(container)).toEqual([
-    ['step-check', 'done', null, 'Intake', 'All checked'],
-    ['step-fill', 'active', 'true', 'This page', '2 need you'],
+    ['step-check', false, 'done', null, 'Intake checks', 'All checked'],
+    ['step-fill', true, 'active', 'true', 'This page', '2 need you'],
   ]);
-  // Mark done lowers what is left: the note the Luna mock reads (#fill-summary) follows.
+  expect($(container, 'check-summary').getAttribute('aria-hidden')).toBe(null);
+  // Mark done lowers what is left: #fill-summary updates in DOM even while #step-fill is hidden on page view.
   act(() => { state.steps = { ...state.steps, fill: { tone: 'active', note: '1 needs you', current: true, review: true } }; });
   expect($(container, 'fill-summary').textContent).toBe('1 needs you');
-  // A filled page's tab reads the page again (confirm); before the fill it only shows the page.
+  // Open checks on page view: #step-check says "3 intake checks left", and #check-summary stays in DOM as sr-only + aria-hidden so the count isn't read twice.
+  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', current: false } }; });
+  expect([$(container, 'step-check').hidden, $(container, 'step-check').querySelector('.step-label').textContent, $(container, 'check-summary').textContent, $(container, 'check-summary').classList.contains('sr-only'), $(container, 'check-summary').getAttribute('aria-hidden')])
+    .toEqual([false, '3 intake checks left', '3 to check', true, 'true']);
   fireEvent.click($(container, 'step-check'));
+
+  // On check view: #step-fill shows as a back link ("This page" + #fill-summary) and #step-check hides.
+  // A filled page's link reads the page again (confirm); before the fill it only shows the page (fill).
+  act(() => { state.steps = { check: { tone: 'warn', note: '3 to check', current: true }, fill: { tone: 'active', note: '1 needs you', current: false, review: true } }; });
+  expect(steps(container)).toEqual([
+    ['step-check', true, 'warn', 'true', '3 intake checks left', '3 to check'],
+    ['step-fill', false, 'active', null, 'This page', '1 needs you'],
+  ]);
   fireEvent.click($(container, 'step-fill'));
-  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
-  expect(steps(container).map((s) => s.slice(1, 3))).toEqual([['warn', 'true'], ['active', null]]);
+  act(() => { state.steps = { check: { tone: 'warn', note: '1 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
+  expect($(container, 'step-check').querySelector('.step-label').textContent).toBe('1 intake check left');
   fireEvent.click($(container, 'step-fill'));
   expect(t.calls).toEqual([['check'], ['confirm'], ['fill']]);
 });
@@ -72,24 +80,24 @@ test('the dock shows dockFor\'s word, its one button and its alternative, with t
   expect(dock.hidden).toBe(true);
   expect(shown(container)).toEqual([]);
   act(() => {
-    state.dock = { phase: 'needs', tone: 'warn', eyebrow: '12 filled · 2 need you', title: 'Answer 2 questions', sub: 'Then Fill this page again to continue. Never Bind or Submit.',
+    state.dock = { phase: 'needs', tone: 'warn', eyebrow: '12 filled \u00b7 2 need you', title: 'Answer 2 questions', sub: 'Then Fill this page again to continue. Never Bind or Submit.',
       button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again', hidden: false, report: '1700', busy: false };
   });
   expect([dock.hidden, dock.dataset.phase, dock.dataset.report]).toEqual([false, 'needs', '1700']);
   expect([$(container, 'dock-eyebrow').textContent, $(container, 'dock-eyebrow').dataset.tone, $(container, 'dock-title').textContent, $(container, 'dock-sub').hidden])
-    .toEqual(['12 filled · 2 need you', 'warn', 'Answer 2 questions', false]);
+    .toEqual(['12 filled \u00b7 2 need you', 'warn', 'Answer 2 questions', false]);
   expect($(container, 'fill-progress').hidden).toBe(true);
   expect(shown(container)).toEqual([['dock-next', 'Show the next one', false], ['dock-alt', 'Fill this page again', false]]);
   expect($(container, 'dock-alt').dataset.go).toBe('fill-again');
   // A fill running: its progress and Stop, about no report yet, nothing else offered.
   act(() => {
-    state.dock = { phase: 'filling', tone: 'blue', progress: true, eyebrow: 'Filling · 3 in', title: 'Reading the page…', sub: 'Keep this tab open.',
+    state.dock = { phase: 'filling', tone: 'blue', progress: true, eyebrow: 'Filling \u00b7 3 in', title: 'Reading the page\u2026', sub: 'Keep this tab open.',
       button: 'fill-stop', label: 'Stop', disabled: false, hidden: false, report: '', busy: true };
   });
   expect([dock.dataset.phase, dock.dataset.report, $(container, 'fill-progress').hidden]).toEqual(['filling', '', false]);
   expect(shown(container)).toEqual([['fill-stop', 'Stop', false]]);
   // No sub: none shown. Settings open: the dock hides.
-  act(() => { state.dock = { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', hidden: true, report: '', busy: false }; });
+  act(() => { state.dock = { phase: 'off', eyebrow: 'Next', title: 'Open the client\u2019s quote on a rater', hidden: true, report: '', busy: false }; });
   expect([dock.hidden, $(container, 'dock-sub').hidden, $(container, 'dock-eyebrow').dataset.tone]).toEqual([true, true, '']);
   expect(shown(container)).toEqual([]);
 });
@@ -106,7 +114,7 @@ test('the dock says when automatic filling is paused on the tab, and stops sayin
   act(() => { state.dock = { ...word, paused: '' }; });
   expect(line.hidden).toBe(true);
   // Message-only dock on Intake checks (e.g. unreadable/no-rater with no action): dock stays visible with its eyebrow, title and sub.
-  act(() => { state.intake = {}; state.view = 'check'; state.dock = { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.', hidden: false, report: '', busy: false }; });
+  act(() => { state.intake = {}; state.view = 'check'; state.dock = { phase: 'off', eyebrow: 'Next', title: 'The extension can\u2019t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.', hidden: false, report: '', busy: false }; });
   expect([$(container, 'dock').hidden, $(container, 'dock-title').getAttribute('aria-hidden'), $(container, 'dock-sub').hidden, $(container, 'dock-sub').textContent])
     .toEqual([false, null, false, 'Allow it on this site (toolbar icon or site access), then reload.']);
 });
@@ -150,9 +158,9 @@ test('a button a click disabled is enabled again by the dock\'s next word, as re
   act(() => { state.dock = { ...word, eyebrow: 'The page changed' }; });
   expect($(container, 'look-right').disabled).toBe(false);
   // Stopping: Stop held.
-  act(() => { state.dock = { phase: 'filling', title: 'Stopping after the answer going in now…', button: 'fill-stop', label: 'Stopping…', disabled: true, hidden: false, report: '', busy: true }; });
-  expect(shown(container)).toEqual([['fill-stop', 'Stopping…', true]]);
-  act(() => { state.dock = { phase: 'filling', title: 'Reading the page…', button: 'fill-stop', label: 'Stop', disabled: false, hidden: false, report: '', busy: true }; });
+  act(() => { state.dock = { phase: 'filling', title: 'Stopping after the answer going in now\u2026', button: 'fill-stop', label: 'Stopping\u2026', disabled: true, hidden: false, report: '', busy: true }; });
+  expect(shown(container)).toEqual([['fill-stop', 'Stopping\u2026', true]]);
+  act(() => { state.dock = { phase: 'filling', title: 'Reading the page\u2026', button: 'fill-stop', label: 'Stop', disabled: false, hidden: false, report: '', busy: true }; });
   fireEvent.click($(container, 'fill-stop'));
   act(() => { state.dock = { phase: 'needs', title: 'Answer the last question', button: 'dock-next', label: 'Show the next one', hidden: false, report: '1700', busy: false }; });
   fireEvent.click($(container, 'dock-next'));
@@ -187,8 +195,8 @@ test('keyboard focus stays in the dock as its button changes, and is never taken
   // Fill pressed: Stop shows in its place, and takes the focus.
   say({ phase: 'filling', button: 'fill-stop', label: 'Stop', busy: true });
   expect(document.activeElement.id).toBe('fill-stop');
-  // Stop pressed: it stays, disabled, as Stopping…; then the next word's button takes it.
-  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping…', disabled: true, busy: true });
+  // Stop pressed: it stays, disabled, as Stopping\u2026; then the next word's button takes it.
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping\u2026', disabled: true, busy: true });
   say({ phase: 'needs', button: 'dock-next', label: 'Show the next one', alt: 'fill-again', altLabel: 'Fill this page again' });
   expect(document.activeElement.id).toBe('dock-next');
   // A word with no button: its alternative.
@@ -197,7 +205,7 @@ test('keyboard focus stays in the dock as its button changes, and is never taken
   // Stop pressed with nothing else in the dock: the browser drops focus from it (blur, to the page),
   // and the agent then moves on to a control outside the dock before the next word: that is theirs
   // (review of #390, CodeRabbit).
-  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping…', disabled: true, busy: true });
+  say({ phase: 'filling', button: 'fill-stop', label: 'Stopping\u2026', disabled: true, busy: true });
   act(() => { document.activeElement.blur(); });
   $(container, 'elsewhere').focus();
   act(() => { document.activeElement.blur(); });

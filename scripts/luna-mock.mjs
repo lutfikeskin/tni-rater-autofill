@@ -573,17 +573,34 @@ try {
     && Object.values(namesSent.at(-1)).every((n) => loaded.record.drivers.some((d) => String(d.first ?? '').startsWith(n))), true);
   verify('the fixture has no GL ticked', loaded.record.coverage.gl === true, false);
   if (await panel.locator('#check-view').isHidden()) await panel.locator('#step-check').click();
+  const focusCard = panel.locator('#warnings.checks-focus .check-focus');
+  await focusCard.waitFor({ timeout: 15000 });
+  verify('intake checks start in focus mode one check at a time', await panel.locator('#warnings .check').count(), 1);
+  await panel.locator('#see-all-checks').click();
   const glCard = panel.locator('#warnings .check', { hasText: 'mention GL' });
   const genderCard = panel.locator('#warnings .check', { hasText: 'is more often a woman\'s name' });
   await glCard.waitFor({ timeout: 15000 });
+  await genderCard.waitFor({ timeout: 15000 });
   const quoted = (await glCard.innerText()).match(/mention GL: "(.+?)"\./)?.[1] ?? '';
   verify('the GL item quotes a line of the claims box', quoted.length > 0 && loaded.record.claims.text.replace(/\s+/g, ' ').includes(quoted.replace(/…$/, '')), true);
   const claimsBeforeChoice = claimsRequests;
-  verify('the gender item says it is a guess from the name', /guess from the first name only/.test(await genderCard.innerText()), true);
-  verify('the gender item says the TNI standard', /filled Male \(TNI standard\)/.test(await genderCard.innerText()), true);
   await panel.locator('#warnings').screenshot({ path: path.join(out, 'luna-intake-checks.png'), animations: 'disabled' });
   await glCard.getByRole('button', { name: 'Client has GL', exact: true }).click();
-  await genderCard.getByRole('button', { name: 'Use Female', exact: true }).click();
+  await panel.waitForFunction(async () => (await chrome.storage.session.get('intake')).intake?.record.coverage.hasGl === true, null, { timeout: 15000 });
+  // Switch back to one-at-a-time focus mode and step through any earlier checks to verify Luna's
+  // choice buttons in FocusCheck as well as in the full list.
+  await panel.locator('#one-check-mode').click();
+  await focusCard.waitFor({ timeout: 15000 });
+  for (let step = 0; step < 12; step++) {
+    if (/is more often a woman's name/.test(await focusCard.innerText())) break;
+    const prevCheck = await focusCard.getAttribute('data-check');
+    await focusCard.getByRole('button', { name: 'Looks right', exact: true }).click();
+    await panel.waitForFunction((prev) => document.querySelector('#warnings .check-focus')?.getAttribute('data-check') !== prev, prevCheck, { timeout: 15000 });
+  }
+  const genderText = await focusCard.innerText();
+  verify('the gender item says it is a guess from the name', /guess from the first name only/.test(genderText), true);
+  verify('the gender item says the TNI standard', /filled Male \(TNI standard\)/.test(genderText), true);
+  await focusCard.getByRole('button', { name: 'Use Female', exact: true }).click();
   await panel.waitForFunction(async () => {
     const { intake } = await chrome.storage.session.get('intake');
     return intake.record.coverage.hasGl === true && intake.record.drivers[0].gender === 'FEMALE';
@@ -591,6 +608,7 @@ try {
   const edited = await savedIntake();
   verify('the buttons are the agent\'s edits', ['coverage.hasGl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
   verify('Client has GL asks for no GL quote', edited.record.coverage.gl === true, false);
+  if (await panel.locator('#see-all-checks').isVisible()) await panel.locator('#see-all-checks').click();
   verify('both items are checked', await panel.locator('#warnings .check', { hasText: /mention GL|woman's name/ }).count(), 0);
   await panel.waitForTimeout(500);
   verify('confirming GL does not read the claims box again', claimsRequests, claimsBeforeChoice);
@@ -644,6 +662,8 @@ try {
   flagIntake = false;
   const offIntake = await savedIntake();
   verify('assistance off: no claims or name check is sent', claimsRequests + namesRequests, offBefore);
+  if (await panel.locator('#check-view').isHidden()) await panel.locator('#step-check').click();
+  if (await panel.locator('#see-all-checks').isVisible()) await panel.locator('#see-all-checks').click();
   verify('assistance off: no GL or gender item', await panel.locator('#warnings .check', { hasText: /mention GL|woman's name/ }).count(), 0);
   verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);

@@ -35,14 +35,28 @@ test('every control in the panel\'s page has a name', () => {
 });
 
 test('every control the panel\'s views draw has a name', () => {
-  storeState({
+  const sampleChecks = {
+    title: '2 to check on the intake',
+    sub: 'Fix or confirm each one, before or after filling.',
+    cleanup: ['Phone reformatted.'],
+    later() {},
+    cards: [
+      { i: 0, title: 'USDOT #', msg: 'Missing on the intake.', alert: false, lookRight() {},
+        field: { path: 'applicant.dot', label: 'USDOT #', control: 'input', value: '', maxLength: 200, edit() {} },
+        pdf: { label: 'See intake \u00b7 p1', onClick() {} } },
+      { i: 1, title: 'Gender', msg: 'm', done: true, said: 'Gender checked', undo() {} },
+      { i: 2, title: 'General liability', msg: 'Claims box mentions GL.', choices: [{ label: 'Client has GL', onClick() {} }, { label: 'Not GL', onClick() {} }], pdf: null },
+    ],
+  };
+  const state = storeState({
     switches: { autoPages: true, autoFollowUps: true, autoAdvance: true, checkBeforeContinue: true, overwrite: false, finishSound: true, turnSound: true },
     ai: { on: true, auto: false, autoShown: true, names: false, keyEdit: 'Add key' }, keyFormOpen: true, usageCard: null, usageNote: '', health: null,
     testRun: null, captureOff: false, captureStatus: null, devrec: { on: false, status: null, unfinished: null }, recordingLine: false, intake: {},
-    client: { name: 'Acme Hauling LLC', meta: 'Maryland · 2 drivers', pdf: true, ask: { text: 'Clear Acme?', yes: 'Clear this client' } }, clientNote: null, newQuoteOff: false, detailsOpen: false,
-    steps: null, dock: { phase: 'ready', title: 'Fill the Vehicles page', button: 'fill', label: 'Fill this page', hidden: false, alt: 'fill-again', altLabel: 'Fill again', busy: false },
+    client: { name: 'Acme Hauling LLC', meta: 'Maryland \u00b7 2 drivers', pdf: true, ask: { text: 'Clear Acme?', yes: 'Clear this client' } }, clientNote: null, newQuoteOff: false, detailsOpen: false,
+    steps: { check: { tone: 'warn', note: '2 to check', current: false }, fill: { tone: 'active', note: 'Ready to fill', current: true } },
+    dock: { phase: 'ready', title: 'Fill the Vehicles page', button: 'fill', label: 'Fill this page', hidden: false, alt: 'fill-again', altLabel: 'Fill again', busy: false },
     feed: { shown: true, title: 'Answers on this page', pages: [], pastKey: null, pastWhen: '', report: true, filter: 'all', counts: { all: 2, needs: 1, done: 1 }, empty: null, keyOpen: true, unmark: true, age: null },
-    checks: null, pickers: [], summary: null, pdfSheet: null, details: null,
+    checks: sampleChecks, checksAll: false, pickers: [], summary: null, pdfSheet: null, details: null,
   });
   const views = { Settings, ClientHead, Steps, Dock, Feed, Checks, Summary, PdfSheet, Details };
   const missing = Object.entries(views).flatMap(([name, View]) => {
@@ -51,5 +65,13 @@ test('every control the panel\'s views draw has a name', () => {
     cleanup();
     return found;
   });
+  // Also check Checks in full-list mode and Steps on the check view.
+  state.checksAll = true;
+  state.steps = { check: { tone: 'warn', note: '2 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false } };
+  for (const [name, View] of /** @type {const} */ ([['Checks(all)', Checks], ['Steps(check)', Steps]])) {
+    const { container } = render(<View act={quiet} />);
+    missing.push(...nameless(container).map((said) => `${name}: ${said}`));
+    cleanup();
+  }
   expect(missing).toEqual([]);
 });
