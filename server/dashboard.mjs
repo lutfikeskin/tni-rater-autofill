@@ -377,7 +377,8 @@ export function renderDashboard(s, { refreshSeconds = 60 } = {}) {
 <header><div><h1>Rater Autofill · live usage</h1>
 <p class="sub">Updated ${when(s.now)} (${esc(exact(s.now))}) · refreshes every minute</p></div>
 <div class="controls"><nav class="seg" aria-label="Period">${Object.keys(WINDOWS).map((w) => (w === s.window ? `<b>${PERIOD_NAMES[w]}</b>` : `<a href="${esc(link({ window: w }))}">${PERIOD_NAMES[w]}</a>`)).join('')}</nav>
-<a class="pill" href="${esc(link({ includeTests: !s.includeTests }))}">${s.includeTests ? 'Hide test runs' : 'Include test runs'}</a></div></header>
+<a class="pill" href="${esc(link({ includeTests: !s.includeTests }))}">${s.includeTests ? 'Hide test runs' : 'Include test runs'}</a>
+<a class="pill" href="/dashboard/sales">Sales</a></div></header>
 <p class="note">${testNote} A quote is an intake the agent took to a carrier's page. Every number counts by when the server received it; the small numbers under each are the other periods.</p>
 
 <section aria-label="Totals"><div class="hero">

@@ -197,7 +197,7 @@ export const VIEWS = {
   v_quote_sales: {
     comment: 'One row per quote (test runs left out) and the Bitrix deal holding its intake PDF: whether and when it sold after the quote',
     sql: `WITH m AS (
-      SELECT q.session, q.intake_id, q.agent, q.started_at, qd.deal_id, d.stage, d.stage_name,
+      SELECT q.session, q.intake_id, q.agent, q.started_at, qd.deal_id, d.stage, d.stage_name, d.stage_semantics,
         coalesce(bool_or(s.stage_semantics = 'success' AND s.moved_at < q.started_at), false) AS client_before,
         min(s.moved_at) FILTER (WHERE s.stage_semantics = 'success' AND s.moved_at >= q.started_at) AS sold_at
       FROM v_quotes q JOIN quote_deals qd USING (session) JOIN deals d USING (deal_id) LEFT JOIN deal_stages s USING (deal_id)

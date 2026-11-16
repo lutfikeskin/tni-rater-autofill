@@ -278,7 +278,8 @@ $RATER_ADMIN_TOKEN" https://usage-server-production.up.railway.app/v1/health`.
 `/dashboard` on the usage server (https://usage-server-production.up.railway.app/dashboard) shows
 how agents are using the extension, for the maintainer only. It is one server-rendered page
 (`server/dashboard.mjs`, no script) that reloads itself every minute and reads the events the
-server already stored; it changes nothing the extension sends or the server keeps. Building it
+server already stored. Its **Sales** link opens [the sales page](#sales-page), drawn from the last
+push of sales rows. Building it
 reads and sums 31 days of events on the process that takes uploads, so one page serves every
 request for its period for 30 seconds (the log marks those `cached`); a page that can't be built
 answers 500 and the server keeps running.
@@ -301,7 +302,31 @@ as a test, and the fingerprints in `RATER_TEST_INTAKES` (commas, spaces or new l
 each at least 8 hex characters, as in the local `reviews/test-intakes.txt`; anything else is
 ignored). Without that variable the maintainer's own unmarked test quotes count as agents' work,
 as in a review with no test-run list. The page shows only what the events already hold: initials,
-state, business class, unit counts, redacted labels and report texts.
+state, business class, unit counts, redacted labels and report texts; the sales page, only the
+pushed rows.
+
+### Sales page
+
+`/dashboard/sales` (`server/sales.mjs`), behind the same password, shows which quoted clients
+bought: quotes matched to a Bitrix deal, deals sold after the quote, not sold after 60 days and not
+known yet, existing clients apart, per agent, per week of the first quote, the deals' stages now
+and the recent sales. The server doesn't work these out and never calls Bitrix: the maintainer's
+computer builds them in the quoting history warehouse
+([Sales](quoting-history-database.md#sales)) and sends them:
+
+```bash
+npm run bitrix && npm run warehouse && npm run push-sales
+```
+
+`npm run push-sales` ([sales-push.mjs](../scripts/sales-push.mjs)) reads `v_quote_sales` for the
+quotes since `--since` (default 2026-11-03, when agents started; test runs left out) and sends them
+with the admin token to `PUT /v1/sales`. A row is the quote's session id, start time, the agent's
+initials, the deal's id and stage name, and its outcome; no name, contact or note. The server
+refuses a push whole unless every row has exactly those fields in their shapes (up to 20,000 rows
+and 4 MB), keeps only the last one in `DATA_DIR/sales/latest.json` (written beside the old one and
+swapped in), and draws the page from it on each request. The upload token and the dashboard password
+can't push. So the page is as fresh as the last push; its header says when Bitrix was pulled and
+when the rows arrived, and nothing there refreshes by itself.
 
 **Its password.** Set `RATER_DASHBOARD_TOKEN` in the `usage-server` service's Variables (a random
 value of at least 16 characters, for example from `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`),
