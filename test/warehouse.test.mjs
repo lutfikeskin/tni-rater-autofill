@@ -198,6 +198,10 @@ test("every query in the document's Example SQL runs on the warehouse, and the c
   for (const sql of examples) {
     await assert.doesNotReject(query(file, sql), sql);
   }
+  // The Sales section's queries run too, on empty sales tables.
+  const sales = docSql('Sales');
+  assert.equal(sales.length, 2);
+  for (const sql of sales) await assert.doesNotReject(query(file, sql), sql);
   // Test runs are left out.
   const months = await query(file, examples[0]);
   assert.deepEqual(months.map((r) => [r.state, Number(r.quotes)]), [['TX', 1]]);
