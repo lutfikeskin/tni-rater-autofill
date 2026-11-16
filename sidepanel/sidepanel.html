@@ -132,7 +132,9 @@
   <footer class="foot">
     <!-- The dock (#dock), drawn by steps-view.jsx (mountDock). -->
     <div id="dock-root" class="dock-root"></div>
-    <div id="problem-form" class="problem" hidden>
+    <div id="problem-form" class="problem" role="group" aria-labelledby="problem-title" hidden>
+      <h2 id="problem-title" class="problem-title">Report a problem</h2>
+      <p class="problem-lead">Tell TNI what went wrong on this page.</p>
       <select id="problem-kind" aria-label="What kind of problem">
         <option value="wrong-answer">A wrong answer</option>
         <option value="stuck">The page got stuck</option>

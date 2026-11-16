@@ -716,8 +716,8 @@ body:has(#settings:not([hidden])) .panel-head,
    sheet takes the panel's height but a strip, so the page has room. */
 .sheet-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; background: var(--surface); border-radius: 14px 14px 0 0; box-shadow: 0 -8px 30px rgba(17, 24, 39, 0.18); animation: rise .18s ease-out; }
 .sheet-panel > * { flex: 0 0 auto; }
-.sheet-head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border-row); }
-.sheet-head h2 { font-size: 16px; font-weight: 600; color: var(--ink-strong); overflow-wrap: anywhere; }
+.sheet-head { display: flex; align-items: center; gap: 8px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border-row); }
+.sheet-head h2 { font-size: 22px; line-height: 1.2; letter-spacing: -0.015em; font-weight: 600; color: var(--ink-strong); overflow-wrap: anywhere; }
 .sheet-sub { font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sheet-head .icon-btn { width: 32px; height: 32px; color: var(--ink-secondary); }
 .sheet-head .icon-btn svg { width: 16px; height: 16px; }
@@ -739,15 +739,16 @@ body:has(#settings:not([hidden])) .panel-head,
 .zoom button:hover:not(:disabled) { background: var(--surface-hover); }
 .zoom button:disabled { color: var(--border-strong); opacity: 1; }
 #pdf-zoom-fit { width: auto; min-width: 52px; padding: 0 6px; border-left: 1px solid var(--border-row); border-right: 1px solid var(--border-row); font: 600 13px/1 var(--font-sans); }
-.sheet-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border-row); }
-.sheet-foot .primary { min-height: 40px; padding: 0 18px; border-radius: var(--radius-lg); font-size: 14px; }
+.sheet-foot { display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-top: 1px solid var(--border-row); }
+.sheet-foot .primary { flex: 1 1 auto; min-height: 52px; padding: 0 18px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 600; }
+.sheet-foot .ghost { flex: 0 0 auto; min-height: 44px; }
 
 /* All client details, in a drawer from the right over the panel */
 .drawer { position: absolute; inset: 0; z-index: 6; display: flex; background: rgba(23, 34, 43, 0.28); }
 .drawer-scrim { flex: 1 1 auto; min-width: 20px; }
 .drawer-panel { flex: 0 0 auto; width: min(94%, 520px); min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--surface); box-shadow: -8px 0 30px rgba(17, 24, 39, 0.18); animation: slide-in .18s ease-out; }
 .drawer-panel .sheet-head { background: var(--surface); }
-.drawer-panel .sheet-head h2 { font-size: 18px; }
+.drawer-panel .sheet-head h2 { font-size: 22px; }
 .drawer-body { min-height: 0; overflow: auto; padding: 8px 14px 24px; display: grid; gap: 6px; align-content: start; }
 .drawer-body .section { display: grid; gap: 0; }
 .drawer-panel .sheet-head .link { flex-shrink: 0; }
@@ -757,22 +758,23 @@ body:has(#settings:not([hidden])) .panel-head,
 /* The quote summary, read only: a sheet over the panel (summary-view.jsx) */
 .summary-panel .sheet-sub { white-space: normal; }
 .summary-panel > .summary-body { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--surface); }
-.summary-h { font-size: 14px; font-weight: 600; color: var(--ink-strong); margin: 8px 0 2px; }
-.summary-list ul { margin: 0; padding-left: 16px; display: grid; gap: 3px; font-size: 13px; }
+.summary-h { font-size: 15px; font-weight: 600; color: var(--ink-strong); margin: 16px 0 4px; }
+.summary-list ul { list-style: none; margin: 0; padding: 0; display: grid; font-size: 13px; }
+.summary-list li { padding: 8px 0; border-top: 1px solid var(--border-row); overflow-wrap: anywhere; }
 .summary-carrier { display: grid; gap: 4px; }
 .summary-page { background: none; border: 0; border-top: 1px solid var(--border-row); border-radius: 0; padding: 8px 0; }
 .summary-page > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--ink-strong); }
 .summary-counts { font-size: 13px; font-weight: 400; color: var(--ink-muted); }
 .summary-said { color: var(--ink-secondary); margin: 4px 0; font-size: 13px; }
 .summary-rows { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 0; }
-.summary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; font-size: 13px; padding: 6px 0; border-top: 1px solid var(--border-row); }
+.summary-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; row-gap: 2px; font-size: 13px; padding: 8px 0; border-top: 1px solid var(--border-row); }
 .summary-q { color: var(--ink-muted); overflow-wrap: anywhere; }
 .summary-a { grid-column: 1; color: var(--ink-strong); font-weight: 500; overflow-wrap: anywhere; }
 .summary-tag { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
 .summary-tag.edited, .summary-tag.changed { color: var(--success-ink); background: none; }
 .summary-tag.open, .summary-tag.pending, .summary-tag.marked { color: var(--ink-strong); background: none; }
 .summary-note { grid-column: 1 / -1; }
-.summary-saved { padding: 6px 14px 0; color: var(--ink-secondary); font-size: 13px; }
+.summary-saved { padding: 6px 18px 0; color: var(--ink-secondary); font-size: 13px; }
 
 /* The dock: what is happening and the one full-width 52px button to press, always in the same place */
 /* In a window too short for all of it, the dock scrolls rather than pushing the header out. */
@@ -800,9 +802,13 @@ body:has(#settings:not([hidden])) .panel-head,
 .dock .big { width: 100%; }
 #fill:disabled { opacity: 1; color: var(--ink-muted); background: var(--border-soft); border-color: var(--border-soft); }
 .dock-alt { justify-self: center; font-size: 14px; }
-.problem { padding: 10px 14px 0; display: grid; gap: 8px; border-top: 1px solid var(--border-row); }
-.problem textarea, .problem select { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); padding: 6px 10px; resize: vertical; font-size: 13px; }
-.problem-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.problem { padding: 16px 14px 4px; display: grid; gap: 10px; border-top: 1px solid var(--border-row); }
+.problem-title { font-size: 22px; line-height: 1.2; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
+.problem-lead { margin: -4px 0 2px; font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; }
+.problem textarea, .problem select { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); padding: 8px 10px; resize: vertical; font-size: 15px; min-height: 44px; }
+.problem-actions { display: flex; gap: 12px; align-items: center; }
+.problem-actions .primary { flex: 1 1 auto; min-height: 52px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 600; }
+.problem-actions .ghost { flex: 0 0 auto; min-height: 44px; }
 .problem-said { margin: 0; padding: 6px 14px 0; font-size: 13px; color: var(--ink-secondary); }
 .foot-row { padding: 0 14px; min-height: 40px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 8px; border-top: 1px solid var(--border-row); }
 .dock-root:has(> .dock[hidden], > .dock:not([data-head-out]):not(:has(.progress:not([hidden]), .dock-body > button:not([hidden]), .dock-body > .dock-alt:not([hidden]), .dock-text > :not(.sr-only):not([hidden])))) + .problem[hidden] + .problem-said[hidden] + .foot-row { border-top: 0; }
