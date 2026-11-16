@@ -56,6 +56,8 @@ export const MIN_TEST_PREFIX = 8;
 const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => String(e.intakeId).toLowerCase().startsWith(id)));
 // A short or non-hex line would match unrelated quotes: refused rather than hiding them.
 const badFingerprints = (list) => list.filter((x) => x.length < MIN_TEST_PREFIX || !/^[0-9a-f]+$/.test(x));
+// `agent:AD` in the test-run list: the maintainer's initials, not a fingerprint.
+const AGENT_LINE = 'agent:';
 const tooShort = (bad) => `Test fingerprints need at least ${MIN_TEST_PREFIX} hex characters: ${bad.join(', ')}`;
 
 // What the reports say without a local list (a git worktree, CI or another computer has no
@@ -72,32 +74,42 @@ const pdfsIn = (dir) => (fs.existsSync(dir)
 /**
  * The test-run list every review script uses: the fingerprints in `tests` (a file), else in
  * <root>/reviews/test-intakes.txt when there is one, plus the SHA-256 of every PDF under
- * test/fixtures/ and dist/synthetic-intakes/pdfs/. Throws when `tests` is missing or a line
- * isn't at least MIN_TEST_PREFIX hex characters.
+ * test/fixtures/ and dist/synthetic-intakes/pdfs/. A line `agent:<initials>` names the
+ * maintainer's own initials instead (testSessionsOf: every quote on a computer that ever used them).
+ * Throws when `tests` is missing or a line isn't at least MIN_TEST_PREFIX hex characters.
  * @param {{tests?: string|null, root?: string}} opts  root: the repository (default this one)
- * @returns {{file: string|null, intakes: string[], warning: string|null}}  file: the list read;
- *   warning: NO_TEST_LIST when there was none, for stderr and the report
+ * @returns {{file: string|null, intakes: string[], agents: string[], warning: string|null}}  file:
+ *   the list read; agents: the initials, upper case; warning: NO_TEST_LIST when there was none,
+ *   for stderr and the report
  */
 export function readTestList({ tests = null, root = REPO } = {}) {
   if (tests && !fs.existsSync(tests)) throw new Error(`--tests ${tests}: no such file.`);
   const fallback = path.join(root, 'reviews', 'test-intakes.txt');
   const file = tests || (fs.existsSync(fallback) ? fallback : null);
-  const listed = file ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
+  const lines = file ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
+  const agents = [...new Set(lines.filter((l) => l.startsWith(AGENT_LINE)).map((l) => l.slice(AGENT_LINE.length).trim().toUpperCase()))];
+  if (agents.includes('')) throw new Error(`${file}: an ${AGENT_LINE} line needs the initials after it.`);
+  const listed = lines.filter((l) => !l.startsWith(AGENT_LINE));
   const bad = badFingerprints(listed);
   if (bad.length) throw new Error(`${file}: ${tooShort(bad)}`);
   const fixtures = FIXTURE_PDFS.flatMap((dir) => pdfsIn(path.join(root, dir))).map((f) => createHash('sha256').update(fs.readFileSync(f)).digest('hex'));
-  return { file, intakes: [...new Set([...listed, ...fixtures])], warning: file ? null : NO_TEST_LIST };
+  return { file, intakes: [...new Set([...listed, ...fixtures])], agents, warning: file ? null : NO_TEST_LIST };
 }
 
 // The sessions that are test runs: an intake loaded as one (marked before, `test` on
-// intake_loaded) or listed (`testIntakes`), and the agent's latest mark in the panel
-// (intake_marked: marked, or unmarked after). Shared with the review (scripts/review.mjs).
-export function testSessionsOf(all, testIntakes = []) {
+// intake_loaded) or listed (`testIntakes`), a quote on the maintainer's computers (`agents`: every
+// install that ever sent one of those initials, so a quote sent before they were typed in counts
+// too), and the agent's latest mark in the panel (intake_marked: marked, or unmarked after).
+// Shared with the review (scripts/review.mjs).
+export function testSessionsOf(all, testIntakes = [], { agents = [] } = {}) {
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
   const bad = badFingerprints(listed);
   if (bad.length) throw new Error(tooShort(bad));
   const tests = new Set(listed);
-  const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && isTest(e, tests)).map((e) => e.session));
+  const own = new Set([...agents].map((a) => String(a).trim().toUpperCase()).filter(Boolean));
+  const installs = new Set(all.filter((e) => e.install && own.has(String(e.agent ?? '').toUpperCase())).map((e) => e.install));
+  const maintainers = (e) => own.has(String(e.agent ?? '').toUpperCase()) || (!!e.install && installs.has(e.install));
+  const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && (isTest(e, tests) || maintainers(e))).map((e) => e.session));
   const marks = new Map();
   for (const e of all) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
   for (const [session, test] of marks) (test ? out.add(session) : out.delete(session));

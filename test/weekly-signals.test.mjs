@@ -320,7 +320,7 @@ const repo = fileURLToPath(new URL('..', import.meta.url));
 test('readTestList: the repository\'s list or --tests, plus fixture PDFs, checked', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tests-list-'));
   try {
-    assert.deepEqual(readTestList({ root }), { file: null, intakes: [], warning: NO_TEST_LIST });
+    assert.deepEqual(readTestList({ root }), { file: null, intakes: [], agents: [], warning: NO_TEST_LIST });
     // Fixture and synthetic intake PDFs, at any depth, are tests without a list.
     fs.mkdirSync(path.join(root, 'test', 'fixtures', 'more'), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'synthetic-intakes', 'pdfs'), { recursive: true });
@@ -346,6 +346,13 @@ test('readTestList: the repository\'s list or --tests, plus fixture PDFs, checke
     assert.throws(() => readTestList({ tests: path.join(root, 'missing.txt'), root }), /no such file/);
     fs.writeFileSync(other, 'abc\n');
     assert.throws(() => readTestList({ tests: other, root }), /at least 8 hex/);
+    // agent: lines name the maintainer's initials, apart from the fingerprints.
+    fs.writeFileSync(other, 'cafebabe\nagent:ad  # mine\nAGENT: Ayaz\nagent:AD\n');
+    const own = readTestList({ tests: other, root });
+    assert.deepEqual(own.agents, ['AD', 'AYAZ']);
+    assert.deepEqual(own.intakes.filter((x) => x.length < 64), ['cafebabe']);
+    fs.writeFileSync(other, 'agent:\n');
+    assert.throws(() => readTestList({ tests: other, root }), /needs the initials/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -481,4 +488,20 @@ test('signals read a period quote\'s defaults logged before the period', () => {
   events.push({ id: 'd0', t: '2026-10-05T23:00:00Z', receivedAt: '2026-10-05T23:00:00Z', v: '0.9.9', carrier: 'progressive', agent: 'AB', session: 'new', type: 'agent_settings', values: {}, defaults: [{ id: 'umCsl', value: 300000 }] });
   const s = signals(events, { since: '2026-10-06' });
   assert.deepEqual(s.ownDefaults, { quotes: 1, defaults: [{ text: 'Uninsured / underinsured motorist (CSL): $300,000', quotes: 1, agents: ['AB'] }] });
+});
+
+test('testSessionsOf: the maintainer\'s initials make every quote on their computers a test run', () => {
+  const ev = (session, install, agent, extra = {}) => ({ type: 'intake_loaded', session, install, agent, intakeId: `${session}0000000`, ...extra });
+  const events = [
+    ev('mine-before', 'laptop', null), // sent before the initials were typed in
+    ev('mine', 'laptop', 'AD'),
+    ev('pilot', null, 'ayaz'), // an old build with no install id
+    ev('agent', 'desk', 'JC'),
+    ev('unnamed', 'other', null),
+    ev('kept', 'laptop', 'AD'),
+    { type: 'intake_marked', session: 'kept', test: false },
+  ];
+  const tests = testSessionsOf(events, [], { agents: ['AD', 'AYAZ'] });
+  assert.deepEqual([...tests].sort(), ['mine', 'mine-before', 'pilot'], 'the latest mark in the panel still wins');
+  assert.deepEqual([...testSessionsOf(events)], [], 'no initials, no change');
 });

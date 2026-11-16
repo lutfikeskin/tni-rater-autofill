@@ -9,8 +9,9 @@
 //   node scripts/warehouse.mjs [server-data ...] [--tests reviews/test-intakes.txt] [--out file.duckdb]
 //
 // It refuses to run without a test-run list (--tests, or reviews/test-intakes.txt in this checkout):
-// a database people query for months must not count the maintainer's test quotes as clients. From a
-// git worktree, pass the main checkout's list.
+// a database people query for months must not count the maintainer's test quotes as clients. A line
+// `agent:AD` in it makes every quote on a computer that used those initials a test run. From a git
+// worktree, pass the main checkout's list.
 //
 // The file holds client data (git-ignored under server-data/): keep it on this computer. It is
 // replaced on every run, so keep your own queries in .sql files, not as views inside it.
@@ -45,7 +46,7 @@ if (!testList.file) fail('No test-run list: the warehouse would count the mainta
 
 const stored = readEvents(inputs);
 const events = loadEvents(inputs, stored);
-const rows = warehouseRows(events, { testIntakes: testList.intakes });
+const rows = warehouseRows(events, { testIntakes: testList.intakes, testAgents: testList.agents });
 const git = (...a) => {
   const r = spawnSync('git', a, { cwd: root, encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
