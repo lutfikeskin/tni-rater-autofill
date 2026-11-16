@@ -6,7 +6,10 @@
 // source of record; scripts/lib/warehouse.mjs has the tables.
 //
 //   npm run warehouse                                   # server-data -> server-data/warehouse.duckdb
-//   node scripts/warehouse.mjs [server-data ...] [--tests reviews/test-intakes.txt] [--out file.duckdb]
+//   node scripts/warehouse.mjs [server-data ...] [--tests reviews/test-intakes.txt] [--bitrix server-data/bitrix/deals.json] [--out file.duckdb]
+//
+// Sales come from the last npm run bitrix (server-data/bitrix/deals.json): without one, the deal
+// tables are empty.
 //
 // It refuses to run without a test-run list (--tests, or reviews/test-intakes.txt in this checkout):
 // a database people query for months must not count the maintainer's test quotes as clients. A line
@@ -23,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { loadEvents, readEvents } from './lib/events.mjs';
 import { readTestList } from './lib/signals.mjs';
 import { eventRows, warehouseRows, writeWarehouse } from './lib/warehouse.mjs';
+import { bitrixRows, readBitrixState } from './lib/bitrix.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -33,7 +37,7 @@ const opt = (name) => {
   if (args[i + 1] === undefined || args[i + 1].startsWith('--')) fail(`--${name} needs a value.`);
   return args[i + 1];
 };
-const valued = new Set(['--tests', '--out']);
+const valued = new Set(['--tests', '--out', '--bitrix']);
 const inputs = args.filter((a, i) => !a.startsWith('--') && !valued.has(args[i - 1]));
 if (!inputs.length) inputs.push('server-data');
 for (const p of inputs) if (!fs.existsSync(p)) fail(`No usage data at ${p}. Run npm run pull first.`);
@@ -47,6 +51,11 @@ if (!testList.file) fail('No test-run list: the warehouse would count the mainta
 const stored = readEvents(inputs);
 const events = loadEvents(inputs, stored);
 const rows = warehouseRows(events, { testIntakes: testList.intakes, testAgents: testList.agents });
+// Sales (npm run bitrix): the deals pulled, joined to quotes by their intake PDF's hash.
+const bitrixFile = opt('bitrix') ?? 'server-data/bitrix/deals.json';
+let bitrix = null;
+try { bitrix = readBitrixState(bitrixFile); } catch (err) { fail(`${bitrixFile}: ${err.message}`); }
+Object.assign(rows, bitrixRows(bitrix, rows.quotes));
 const git = (...a) => {
   const r = spawnSync('git', a, { cwd: root, encoding: 'utf8' });
   return r.status === 0 ? r.stdout.trim() : null;
@@ -58,6 +67,7 @@ const info = {
   sources: inputs.map((p) => path.resolve(p)), events: stored.length, quotes: rows.quotes.length,
   test_quotes: rows.quotes.filter((q) => q.is_test).length, test_list: testList.file,
   first_event: times.length ? new Date(times[0]).toISOString() : null, last_event: times.length ? new Date(times.at(-1)).toISOString() : null,
+  bitrix_pulled_at: bitrix?.pulledAt ?? null, bitrix_since: bitrix?.since ?? null,
 };
 
 // Built beside the old file, which stays until the new one is whole.
@@ -83,4 +93,7 @@ const count = (name) => (name === 'events' ? stored.length : rows[name].length);
 console.log(`Built ${shown}: ${count('events')} events, ${info.quotes} quotes (${info.test_quotes} test runs, left out of v_quotes), `
   + `${count('quote_carriers')} quote-carrier rows, ${count('quote_premiums')} premiums, ${count('answers')} answers, ${count('quote_drivers')} drivers, ${count('quote_vehicles')} vehicles and trailers.`);
 console.log(`Profiles on ${rows.quotes.filter((q) => q.profile_source).length} quotes. Test-run list: ${testList.file}. Commit ${commit?.slice(0, 7) ?? 'unknown'}${info.dirty ? ' with uncommitted changes' : ''}.`);
+console.log(bitrix
+  ? `Sales: ${rows.deals.length} Bitrix deals pulled ${bitrix.pulledAt?.slice(0, 10)}, ${new Set(rows.quote_deals.map((x) => x.session)).size} quotes matched to a deal by their intake PDF.`
+  : `Sales: no Bitrix pull at ${bitrixFile} (npm run bitrix), so the deal tables are empty.`);
 console.log(`Open it: duckdb -readonly ${shown}`);

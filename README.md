@@ -147,9 +147,10 @@ When `layouts/answer-key/key.json` exists, `npm run signals` adds the key's scor
 
 ### Quoting history
 
-For business questions (states, classes, fleets, coverages, carriers over time), build the warehouse after a pull and query it with the DuckDB command line:
+For business questions (states, classes, fleets, coverages, carriers over time, which quotes sold), build the warehouse after a pull and query it with the DuckDB command line:
 
 ```bash
+npm run bitrix       # Bitrix deals, stages and intake hashes -> server-data/bitrix/deals.json (sales)
 npm run warehouse    # server-data -> server-data/warehouse.duckdb (needs reviews/test-intakes.txt or --tests)
 duckdb -readonly server-data/warehouse.duckdb
 ```
