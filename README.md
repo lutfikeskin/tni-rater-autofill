@@ -152,6 +152,7 @@ For business questions (states, classes, fleets, coverages, carriers over time, 
 ```bash
 npm run bitrix       # Bitrix deals, stages and intake hashes -> server-data/bitrix/deals.json (sales)
 npm run warehouse    # server-data -> server-data/warehouse.duckdb (needs reviews/test-intakes.txt or --tests)
+npm run push-sales   # the warehouse's sales rows -> the usage server's /dashboard/sales
 duckdb -readonly server-data/warehouse.duckdb
 ```
 

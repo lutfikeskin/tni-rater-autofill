@@ -11,7 +11,7 @@
 # entrypoint that chowns /data first), then redeploy and confirm /v1/events still stores.
 FROM node:22-alpine
 WORKDIR /app
-COPY server/index.mjs server/dashboard.mjs server/agent-defaults.mjs server/privacy.html server/
+COPY server/index.mjs server/dashboard.mjs server/sales.mjs server/agent-defaults.mjs server/privacy.html server/
 # The event contract the server shares with the extension (src/usage-schema.js, no imports).
 COPY src/usage-schema.js src/
 # Railway's edge names the client in X-Real-IP: the upload rate limit counts by that address

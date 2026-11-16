@@ -122,7 +122,7 @@ Four rules shape it.
 1. **The JSONL stays the source of record.** Each run builds the whole file again from the pulled log. The pilot's 33,000 events so far take about 3 seconds. A bug in the warehouse costs a rebuild, never data.
 2. **One definition of a quote.** What counts as a quote, a test run, a done quote and a final answer already lives in `scripts/lib`: `quoteSessions` and `loadEvents` ([events.mjs](../scripts/lib/events.mjs)), `readTestList`, `testSessionsOf` and `quoteOutcomes` ([signals.mjs](../scripts/lib/signals.mjs)), `finalAnswers` ([learn.mjs](../scripts/lib/learn.mjs)). The warehouse computes its tables with those functions in Node and writes the rows. Rewriting them in SQL would give the database a second quote count that disagrees with the weekly review.
 3. **The database collects nothing itself.** Everything in it came through the usage server as an event, or from the last `npm run bitrix` pull ([Sales](#sales)). New data, like the profile, is an extension and server change with its own review.
-4. **It stays on the maintainer's computer.** It is one file in git-ignored `server-data/`, beside the log it is built from. There is no server, port or password. It holds client data: don't copy, attach or commit it.
+4. **It stays on the maintainer's computer.** It is one file in git-ignored `server-data/`, beside the log it is built from. There is no server, port or password. It holds client data: don't copy, attach or commit it. The one thing that leaves it is `npm run push-sales`: per quote since launch, its initials, times, deal id, stage and outcome, sent to the usage server's [sales page](hosting.md#sales-page).
 
 ### Tables
 
@@ -388,7 +388,7 @@ It keeps them in git-ignored `server-data/bitrix/deals.json`, written beside the
 
 The webhook URL is a credential: `RATER_BITRIX_WEBHOOK`, or its only line in `~/.config/tni-rater/bitrix-webhook` (chmod 600), beside the admin token. Make it in Bitrix24 under Developer resources, Other, Inbound webhook, with the CRM permission only. It is never printed, and errors name the method, not the URL.
 
-`npm run warehouse` loads the last pull (`--bitrix <file>` for another), or leaves the sales tables empty and says so.
+`npm run warehouse` loads the last pull (`--bitrix <file>` for another), or leaves the sales tables empty and says so. `npm run push-sales` then sends `v_quote_sales` to the usage server's [sales page](hosting.md#sales-page).
 
 What to know when reading `v_quote_sales`:
 
@@ -441,7 +441,7 @@ The whole feature can be removed as one piece (`src/rates.js` stays: the fill en
 ## Limits
 
 - **Only quotes run through the extension.** Quotes typed by hand, other carriers and renewals done elsewhere never reach the log, and the log can't say what share of TNI's business they are. Agents can also turn uploads off, and a computer whose queue fills drops its oldest events (`usage_lost`).
-- **One computer, one reader.** The file lives on the maintainer's computer and is as fresh as the last `npm run pull`. Anyone else needs the Postgres route above, not a copy of the file.
+- **One computer, one reader.** The file lives on the maintainer's computer and is as fresh as the last `npm run pull`. Anyone else needs the Postgres route above, not a copy of the file. The sales page on the usage server shows its sales rows, as fresh as the last `npm run push-sales`.
 - **No ZIPs, cities, names, VINs or numbers, by design.** State is the finest geography. The profile says whether a USDOT or MC number was given, never which. That is not anonymity: a carrier with an unusual fleet in a small state can still be recognised, so the database is client data.
 - **The intake's word, not the policy's.** The profile is what the client wrote on the intake, as corrected by the agent in the panel. A vehicle type or limit changed later on the carrier's page shows in `answers`, not in the profile.
 - **No profile before its release.** Older quotes have only the summary logged on load, unless the backfill finds their PDFs.
@@ -459,7 +459,7 @@ The whole feature can be removed as one piece (`src/rates.js` stays: the fill en
 2. **The profile's fields.** The tables above are a starting list. Confirm it, and decide the open ones: `whatHaul` as redacted text, the prior insurer's name, drivers' exact age or a band, expiration by month. Every identifier stays out unless TNI decides otherwise.
 3. **Where it runs.** Decided on 2026-10-22: a DuckDB file on the maintainer's computer. Postgres later, if several people need it.
 4. **Which tool reads it.** The DuckDB command line for now. A reporting tool on the same computer can open the file; one that runs elsewhere needs Postgres.
-5. **Agents' initials.** They are in `quotes.agent` and `events.agent`, as in the log. Nobody but the maintainer reads the file today; decide whether others see initials or only totals before anyone else does.
+5. **Agents' initials.** They are in `quotes.agent` and `events.agent`, as in the log, and the sales page shows deals sold per agent. Nobody but the maintainer reads either today; decide whether others see initials or only totals before anyone else does.
 6. **The backfill.** Whether to build profiles for older quotes from the PDFs on the maintainer's computer.
 7. **Premiums:** built (2026-10-22): the total, term and payments, every change kept. Still to do: compare readings with printed quotes per carrier.
 
