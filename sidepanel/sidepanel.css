@@ -405,18 +405,40 @@ body:has(#settings:not([hidden])) .panel-head,
 /* An earlier page's answers are read-only: their sources and See in intake stay. */
 .past .change, .past .mark-done, .past .show-on-page, .past .opts, .past .opt-select, .past .change-slot, .past .row-say,
 .past .ai-slot, .past .ai-holder, .past .ai-orphan, .past .needs-head, .past .need-where, .past .need-note button { display: none; }
-/* Plain text filter tabs; the measured thumb slides as a 2px underline indicator (no pill rail). */
-.filters { position: relative; display: flex; gap: 12px; padding: 0; background: none; border-radius: 0; }
-.filters-thumb { position: absolute; top: auto; bottom: 0; left: 0; height: 2px; width: var(--thumb-w, 0); transform: translateX(var(--thumb-x, 0)); border-radius: 0; background: var(--ink-strong); box-shadow: none; transition: transform 0.2s ease, width 0.2s ease, background-color 0.2s ease; }
-.filters button { position: relative; min-height: 28px; padding: 2px 0 4px; border: 0; border-radius: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); background: transparent; white-space: nowrap; }
-.filters button[aria-pressed="true"] { color: var(--ink-strong); font-weight: 600; }
+/* Plain text filter tabs without a sliding thumb. */
+.filters { display: flex; gap: 12px; padding: 0; background: none; border-radius: 0; }
+.filters button { min-height: 28px; padding: 2px 0 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 13px; font-weight: 500; color: var(--ink-muted); background: transparent; white-space: nowrap; }
+.filters button[aria-pressed="true"] { color: var(--ink-strong); font-weight: 600; border-bottom-color: currentColor; }
 /* Need you and Filled take the amber/yellow and green their answers carry. */
 .filters button[data-filter="needs"] { color: var(--warning-ink); }
 .filters button[data-filter="done"] { color: var(--success-ink); }
-.filters[data-filter="needs"] .filters-thumb { background: var(--warning); }
-.filters[data-filter="done"] .filters-thumb { background: var(--success); }
 .report-age { padding: 6px 14px 0; font-size: 13px; color: var(--ink-muted); }
-.report { display: grid; }
+.report { display: grid; min-height: 1px; }
+
+/* Post-fill grouped Review and All answers header (review-view.jsx, canvas screens 10 and 11). */
+.review { padding: 14px 14px 4px; display: grid; gap: 18px; }
+.review-all-head { gap: 8px; padding-bottom: 6px; }
+.review .pane-head { display: grid; gap: 6px; }
+.review .pane-head h2 { margin: 0; font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; color: var(--ink-strong); }
+.review-back { justify-self: start; }
+.review-group { display: grid; gap: 2px; }
+.review-group-head { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--ink-secondary); }
+.review-rows { display: grid; border-top: 1px solid var(--border-row); }
+.review-row { width: 100%; min-height: 40px; padding: 10px 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border: 0; border-bottom: 1px solid var(--border-row); border-radius: 0; background: transparent; color: var(--ink-strong); text-align: left; cursor: pointer; }
+.review-row:hover { background: var(--surface-hover); }
+.review-row-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
+.review-row-label { font-size: 14px; font-weight: 500; line-height: 1.35; color: var(--ink-strong); overflow-wrap: anywhere; }
+.review-row-label::first-letter { text-transform: uppercase; }
+.review-row-sub { font-size: 13px; line-height: 1.35; color: var(--ink-muted); overflow-wrap: anywhere; }
+.review-row[data-tone="amber"] .review-row-sub { color: var(--amber); }
+.review-row[data-tone="ai"] .review-row-sub, .review-row[data-tone="ai"] .review-row-val { color: var(--ai); }
+.review-row-val { flex: 0 1 46%; min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.35; color: var(--ink-strong); text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.review-see-all { justify-self: start; font-size: 13px; }
+#feed[data-grouped="true"] { margin-top: 0; }
+#feed[data-grouped="true"] :is(#feed-title, #key-btn, #filters, #answer-key, #feed-empty) { display: none; }
+#feed[data-grouped="true"] .feed-head:not(:has(#page-menu:not([hidden]))) { border-bottom: 0; min-height: 0; padding-top: 2px; padding-bottom: 2px; justify-content: flex-end; background: transparent; position: static; }
+#feed[data-grouped="true"] .row:not(.need) { display: none; }
+#feed[data-grouped="true"] .rows:not(:has(> .row.need)) { border-top: 0; border-bottom: 0; }
 /* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
 .report-head { display: contents; }
 .report > .issue, .report > .ai-holder, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 8px 14px 0; }
@@ -764,7 +786,7 @@ body:has(#settings:not([hidden])) .panel-head,
   .brand { padding-left: 10px; }
   .top-right { padding-right: 10px; }
   .client-title { margin-left: 4px; }
-  .carrier-line, .client-meta, .steps, .screen-head, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
+  .carrier-line, .client-meta, .steps, .screen-head, .review, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
   .view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { right: 10px; }
   .file-confirm, .client-note { margin-left: 10px; margin-right: 10px; }
   .client-tools { padding-left: 8px; padding-right: 8px; gap: 1px; }

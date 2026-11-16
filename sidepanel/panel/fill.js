@@ -1541,4 +1541,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, runKit, showNextNeed, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, runKit, showNextNeed, toggleRow, unitArrival, worldFor };

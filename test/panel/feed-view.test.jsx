@@ -108,3 +108,22 @@ test('the answer key shows Your default only while the feature is on', () => {
   act(() => { state.defaultsOn = true; });
   expect([...container.querySelectorAll('#answer-key .tag.own, #answer-key .mark.own')].length).toBe(2);
 });
+
+test('grouped Review marks #feed data-grouped without setting #report hidden; All answers switches to data-all', () => {
+  const { container } = render(<Feed act={acts().act} />);
+  const entry = { list: [{ type: 'answer' }] };
+  act(() => {
+    state.reportFor = entry;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+    state.filling = false;
+    state.feed = feed();
+  });
+  expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual(['true', undefined, false]);
+  act(() => {
+    state.allAnswers = true;
+    state.allAnswersFor = entry;
+  });
+  expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual([undefined, 'true', false]);
+  expect(container.querySelector('.filters-thumb')).toBeNull();
+});

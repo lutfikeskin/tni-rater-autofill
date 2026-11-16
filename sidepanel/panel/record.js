@@ -30,6 +30,8 @@ function render() {
   if (renderedIntake !== currentIntake) {
     renderedIntake = currentIntake;
     state.checksAll = false;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
   }
   showScreen();
   state.recordingLine = has;
@@ -120,6 +122,11 @@ function setView(view) {
 
 function setChecksAll(all) {
   state.checksAll = !!all;
+}
+
+function setAllAnswers(all) {
+  state.allAnswers = !!all;
+  state.allAnswersFor = all ? state.reportFor : null;
 }
 
 // "Decide later and fill" / "Check the rest later": switches to the page view without starting a
@@ -552,4 +559,4 @@ function releaseUnitForms(list, index) {
   if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
-export { agentEdit, checkShown, closeSettings, decideLater, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setChecksAll, setFilter, setView, showEmpty, showScreen, toggleDone };
+export { agentEdit, checkShown, closeSettings, decideLater, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setAllAnswers, setChecksAll, setFilter, setView, showEmpty, showScreen, toggleDone };

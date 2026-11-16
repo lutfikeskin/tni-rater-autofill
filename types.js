@@ -1414,6 +1414,8 @@
  * @property {any[]} [siteTrack]
  * @property {any} [checks]
  * @property {boolean} [checksAll] true when the agent opened the full intake-checks list instead of one-at-a-time focus mode
+ * @property {boolean} [allAnswers] true when the agent opened All answers instead of the grouped post-fill Review
+ * @property {any} [allAnswersFor] report entry for which All answers was opened; another report returns to Review
  * @property {any[]} [pickers]
  * @property {string | null} [fileConfirm]
  * @property {any} [fileConfirmFrom]
