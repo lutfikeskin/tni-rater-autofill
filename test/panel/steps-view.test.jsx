@@ -37,7 +37,7 @@ test('only the opposite-view link shows in #steps, while keeping #check-summary,
   // On page view with all checks done: #step-check shows "Intake checks" + "All checked"; #step-fill stays hidden with #fill-summary intact.
   act(() => {
     state.steps = {
-      check: { tone: 'done', note: 'All checked', current: false },
+      check: { tone: 'done', note: 'All checked', open: 0, current: false },
       fill: { tone: 'active', note: '2 need you', current: true, review: true },
     };
   });
@@ -50,20 +50,20 @@ test('only the opposite-view link shows in #steps, while keeping #check-summary,
   act(() => { state.steps = { ...state.steps, fill: { tone: 'active', note: '1 needs you', current: true, review: true } }; });
   expect($(container, 'fill-summary').textContent).toBe('1 needs you');
   // Open checks on page view: #step-check says "3 intake checks left", and #check-summary stays in DOM as sr-only + aria-hidden so the count isn't read twice.
-  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', current: false } }; });
+  act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', open: 3, current: false } }; });
   expect([$(container, 'step-check').hidden, $(container, 'step-check').querySelector('.step-label').textContent, $(container, 'check-summary').textContent, $(container, 'check-summary').classList.contains('sr-only'), $(container, 'check-summary').getAttribute('aria-hidden')])
     .toEqual([false, '3 intake checks left', '3 to check', true, 'true']);
   fireEvent.click($(container, 'step-check'));
 
   // On check view: #step-fill shows as a back link ("This page" + #fill-summary) and #step-check hides.
   // A filled page's link reads the page again (confirm); before the fill it only shows the page (fill).
-  act(() => { state.steps = { check: { tone: 'warn', note: '3 to check', current: true }, fill: { tone: 'active', note: '1 needs you', current: false, review: true } }; });
+  act(() => { state.steps = { check: { tone: 'warn', note: '3 to check', open: 3, current: true }, fill: { tone: 'active', note: '1 needs you', current: false, review: true } }; });
   expect(steps(container)).toEqual([
     ['step-check', true, 'warn', 'true', '3 intake checks left', '3 to check'],
     ['step-fill', false, 'active', null, 'This page', '1 needs you'],
   ]);
   fireEvent.click($(container, 'step-fill'));
-  act(() => { state.steps = { check: { tone: 'warn', note: '1 to check', current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
+  act(() => { state.steps = { check: { tone: 'warn', note: '1 to check', open: 1, current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
   expect($(container, 'step-check').querySelector('.step-label').textContent).toBe('1 intake check left');
   fireEvent.click($(container, 'step-fill'));
   expect(t.calls).toEqual([['check'], ['confirm'], ['fill']]);

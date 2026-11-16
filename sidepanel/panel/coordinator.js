@@ -1184,9 +1184,9 @@ function renderSteps() {
   const notice = filling || error ? null : report?.notice ?? null;
   const left = filled ? report.left ?? 0 : 0;
   const steps = {};
-  const step = (id, { tone = '', note, current, review = false }) => { steps[id] = { tone, note, current: !!current, review: !!review }; };
+  const step = (id, { tone = '', note, open: count = undefined, current, review = false }) => { steps[id] = { tone, note, ...(count !== undefined ? { open: count } : {}), current: !!current, review: !!review }; };
   // The Intake tab.
-  step('check', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', current: state.view === 'check' });
+  step('check', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', open, current: state.view === 'check' });
   // The page tab: the page in front's fill, then what's left on it for the agent, and Continue;
   // "Quote done" where the quote ends (quoteFinished). Once filled, opening it reads the page again
   // (`review`: the panel's confirm).

@@ -36,7 +36,7 @@ test('every control in the panel\'s page has a name', () => {
 
 test('every control the panel\'s views draw has a name', () => {
   const sampleChecks = {
-    title: '2 to check on the intake',
+    title: '2 to check on the intake', open: 2,
     sub: 'Fix or confirm each one, before or after filling.',
     cleanup: ['Phone reformatted.'],
     later() {},

@@ -23,8 +23,14 @@ import { CHECKS } from './messages.js';
 
 // The client's header is said as data (state.client), which client-view.jsx draws: the name, the
 // garaging state and what the quote is about, the intake PDF's button, and the file tools' question.
+let renderedIntake = null;
 function render() {
   const has = !!state.intake;
+  const currentIntake = has ? (state.intake.intakeId ?? state.intake) : null;
+  if (renderedIntake !== currentIntake) {
+    renderedIntake = currentIntake;
+    state.checksAll = false;
+  }
   showScreen();
   state.recordingLine = has;
   // Marking a test run (Settings → Advanced) needs an intake to mark: null hides it (settings-view.jsx).
@@ -112,6 +118,22 @@ function setView(view) {
   $('view').scrollTop = 0;
 }
 
+function setChecksAll(all) {
+  state.checksAll = !!all;
+}
+
+// "Decide later and fill" / "Check the rest later": switches to the page view without starting a
+// fill on its own; when keyboard focus was inside the panel, moves focus to the dock's enabled
+// primary button instead of leaving it on #screen-title.
+function decideLater() {
+  const hadFocus = document.hasFocus() && !!document.activeElement && document.activeElement !== document.body;
+  flushSync(() => setView('page'));
+  if (!hadFocus) return;
+  const dock = $('dock');
+  if (!dock || dock.hidden) return;
+  dock.querySelector('.dock-body > button.primary:not([hidden]):not(:disabled)')?.focus();
+}
+
 // A check the agent sees here. The current insurance being with a carrier the panel quotes
 // (prior.carrier-is-quoted) only on that carrier's site: on another carrier's quote it is no
 // concern (TNI, 2026-10-27: GEICO's red card on a Progressive quote).
@@ -175,10 +197,11 @@ function renderWarnings() {
   state.checks = {
     title: CHECKS.title(open),
     sub: CHECKS.sub(open),
+    open,
     cards,
     // A row like All client details below it, opening its notes in a card joined under it.
     cleanup: infos.map((w) => w.msg),
-    later: () => setView('page'),
+    later: () => decideLater(),
   };
   renderSteps();
 }
@@ -529,4 +552,4 @@ function releaseUnitForms(list, index) {
   if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
-export { agentEdit, checkShown, closeSettings, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setFilter, setView, showEmpty, showScreen, toggleDone };
+export { agentEdit, checkShown, closeSettings, decideLater, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setChecksAll, setFilter, setView, showEmpty, showScreen, toggleDone };

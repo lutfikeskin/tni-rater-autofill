@@ -2,15 +2,15 @@
 // Check and CheckSerious), with quiet links to check the rest later or see the full list; in full-list
 // mode (or once every check is done), one row/card per item with Undo, Cleanup notes, and a link back
 // to focus mode while open checks remain; and the All client details row below. Drawn from what
-// renderWarnings says (state.checks) plus state.checksAll. Also the unit pickers above the page's
-// answers, from what renderPickers says (state.pickers).
+// renderWarnings says (state.checks) plus state.checksAll (toggled through act.showAll / act.showOne).
+// Also the unit pickers above the page's answers, from what renderPickers says (state.pickers).
 // One part of the panel; sidepanel.js mounts it (mountChecks, mountPickers).
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
-import { state } from './core.js';
 import { panelStore } from './state-store.js';
+import { useAnnounce } from './announce.js';
 import { CHECKS } from './messages.js';
 import { HelpLink } from './help-link.jsx';
 
@@ -84,15 +84,20 @@ function CheckCard({ card }) {
 }
 
 // One open check on the canvas (focus mode: canvas Check and CheckSerious): eyebrow ("Check the
-// intake · i of n", or red "Serious · check i of n"), 26px field title, full explanation, editable
-// control or choice buttons, primary Looks right + See intake / Show details, and Check the rest
-// later (or on CheckSerious an outline "Decide later and fill" button + quote note) plus See all.
-function FocusCheck({ card, at, total, later, onSeeAll }) {
+// intake · i of n", or red "Serious · check i of n" with role="alert" on the eyebrow and the serious
+// note announced once on arrival), 26px field title, full explanation, editable control or equal-weight
+// choice buttons, primary Looks right + See intake / Show details, and Check the rest later (or on
+// CheckSerious an outline "Decide later and fill" button + quote note) plus See all whenever more
+// items or cleanup notes exist.
+function FocusCheck({ card, at, total, hasCleanup, later, onSeeAll }) {
+  const noteRef = useRef(null);
+  useAnnounce(card.alert ? CHECKS.seriousNote : '', noteRef);
+  const canSeeAll = total > 1 || hasCleanup;
   const pdf = card.pdf ? <button type="button" className="ghost" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
   return (
-    <div className={card.alert ? 'check check-focus alert' : 'check check-focus'} role={card.alert ? 'alert' : undefined} data-check={card.i}>
+    <div className={card.alert ? 'check check-focus alert' : 'check check-focus'} data-check={card.i}>
       <div className="pane-head">
-        <p className="check-eyebrow">
+        <p className="check-eyebrow" role={card.alert ? 'alert' : undefined}>
           {card.alert
             ? <><b className="serious">{CHECKS.serious}</b>{CHECKS.seriousAt(at, total)}</>
             : CHECKS.eyebrow(at, total)}
@@ -107,7 +112,7 @@ function FocusCheck({ card, at, total, later, onSeeAll }) {
           <div className="check-actions">
             <div className="check-choices">
               {card.choices.map((c, n) => (
-                <button key={n} type="button" className={n === 0 ? 'tinted' : 'ghost'} onClick={c.onClick}>{c.label}</button>
+                <button key={n} type="button" className="ghost" onClick={c.onClick}>{c.label}</button>
               ))}
             </div>
             {pdf}
@@ -123,8 +128,8 @@ function FocusCheck({ card, at, total, later, onSeeAll }) {
             <button type="button" id="check-later" className="ghost check-decide-later" onClick={later}>
               {CHECKS.decideLater}
             </button>
-            <p className="check-serious-note">{CHECKS.seriousNote}</p>
-            {total > 1 ? (
+            <p ref={noteRef} className="check-serious-note">{CHECKS.seriousNote}</p>
+            {canSeeAll ? (
               <div className="check-foot">
                 <button type="button" id="see-all-checks" className="link subtle" onClick={onSeeAll}>
                   {CHECKS.seeAll}
@@ -137,7 +142,7 @@ function FocusCheck({ card, at, total, later, onSeeAll }) {
             <button type="button" id="check-later" className="link subtle" onClick={later}>
               {CHECKS.later}
             </button>
-            {total > 1 ? (
+            {canSeeAll ? (
               <button type="button" id="see-all-checks" className="link subtle" onClick={onSeeAll}>
                 {CHECKS.seeAll}
               </button>
@@ -149,20 +154,13 @@ function FocusCheck({ card, at, total, later, onSeeAll }) {
   );
 }
 
-// Step 1's view (#check-view). `act.openDetails`: the All client details row.
+// Step 1's view (#check-view). `act.openDetails`: the All client details row; `act.showAll` /
+// `act.showOne`: toggle full-list mode vs one-check focus mode.
 function Checks({ act }) {
   const checks = useStore(panelStore, (s) => s.checks);
   const checksAll = useStore(panelStore, (s) => !!s.checksAll);
-  const intakeId = useStore(panelStore, (s) => s.intake?.intakeId ?? null);
   const filled = useStore(panelStore, (s) => s.intake?.stats?.filled);
   const detailsOpen = useStore(panelStore, (s) => !!s.detailsOpen);
-  const seenIntake = useRef(intakeId);
-  useEffect(() => {
-    if (seenIntake.current !== intakeId) {
-      seenIntake.current = intakeId;
-      if (panelStore.getState().checksAll) state.checksAll = false;
-    }
-  }, [intakeId]);
   const cards = checks?.cards ?? [];
   const openCards = cards.filter((c) => !c.done);
   const open = openCards.length;
@@ -170,18 +168,18 @@ function Checks({ act }) {
   const focusAt = focusCard ? cards.indexOf(focusCard) + 1 : 1;
   const cleanup = checks?.cleanup ?? [];
   const showAll = () => {
-    flushSync(() => { state.checksAll = true; });
+    flushSync(() => act.showAll?.());
     document.getElementById('one-check-mode')?.focus();
   };
   const showOne = () => {
-    flushSync(() => { state.checksAll = false; });
+    flushSync(() => act.showOne?.());
     (document.getElementById('see-all-checks') ?? document.querySelector('#warnings :is(input, select, textarea, button)'))?.focus();
   };
   return (
     <>
       {focusCard ? (
         <div id="warnings" className="checks checks-focus">
-          <FocusCheck card={focusCard} at={focusAt} total={cards.length} later={checks?.later} onSeeAll={showAll} />
+          <FocusCheck key={focusCard.i} card={focusCard} at={focusAt} total={cards.length} hasCleanup={cleanup.length > 0} later={checks?.later} onSeeAll={showAll} />
         </div>
       ) : (
         <>

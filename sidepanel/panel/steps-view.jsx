@@ -23,11 +23,11 @@ import { headShown } from './screen-view.jsx';
 // shows the page (act.fill).
 function Steps({ act }) {
   const said = useStore(panelStore, (s) => s.steps);
-  const checksOpen = useStore(panelStore, (s) => (s.checks ? s.checks.cards.filter((c) => !c.done).length : null));
+  const checksOpen = useStore(panelStore, (s) => s.checks?.open);
   const c = said?.check ?? {};
   const f = said?.fill ?? {};
   const onCheck = !!c.current;
-  const open = checksOpen ?? Number(/^(\d+)\b/.exec(c.note ?? '')?.[1] ?? 0);
+  const open = checksOpen ?? c.open ?? 0;
   const checkLabel = open > 0 ? CHECKS.stepLeft(open) : CHECKS.stepAll;
   return (
     <>

@@ -10791,7 +10791,7 @@ test('the client strip: the name opens client details, and Change file, New quot
   // Both openers say whether client details are open, from the same state: the name (client-view.jsx)
   // and the checks' All client details row (test/panel/checks-view.test.jsx).
   assert.match(view, /const detailsOpen = useStore\(panelStore, \(s\) => !!s\.detailsOpen\);/);
-  assert.match(extractFunction('wire'), /mountChecks\(\$\('check-view'\), \{ openDetails: \(\) => openDetails\(\) \}\);/, 'the checks\' row opens client details');
+  assert.match(extractFunction('wire'), /mountChecks\(\$\('check-view'\), \{\s+openDetails: \(\) => openDetails\(\),\s+showAll: \(\) => setChecksAll\(true\),\s+showOne: \(\) => setChecksAll\(false\),\s+\}\);/, 'the checks view opens client details and toggles focus/list mode through act');
   assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
   // New quote is off while answers go in: renderSteps says it, the header draws it.
   assert.match(extractFunction('renderSteps'), /state\.newQuoteOff = !!state\.filling;/);

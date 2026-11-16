@@ -110,6 +110,7 @@ async function loadFile(file, { reset = false } = {}) {
     const restored = gate?.known ? await restoreKeptWork(state.intake, gate.after) : null;
     if (gate && !gate.known) holdKeptWork(state.intake.intakeId);
     state.view = firstView(state.intake);
+    state.checksAll = false;
     state.filter = 'all';
     state.aiDocks = new Map();
     state.pastKey = null;

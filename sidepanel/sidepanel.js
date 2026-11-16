@@ -7,7 +7,7 @@ import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
 import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
-import { closeSettings, firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty } from './panel/record.js';
+import { closeSettings, firstView, openSettings, pickUnit, render, setChecksAll, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, scrollBehavior, showPast, stopFill } from './panel/coordinator.js';
@@ -116,8 +116,12 @@ function wire() {
       if (what === 'new-quote') newQuote().catch(storageSaid);
     },
   });
-  // Step 1's checks and their All client details row.
-  mountChecks($('check-view'), { openDetails: () => openDetails() });
+  // Step 1's checks, its focus/list mode switch, and its All client details row.
+  mountChecks($('check-view'), {
+    openDetails: () => openDetails(),
+    showAll: () => setChecksAll(true),
+    showOne: () => setChecksAll(false),
+  });
   // Client details: Close, the scrim, and the empty fields shown or hidden.
   mountDetails($('details-view'), { close: () => closeDetails(), showEmpty: () => showEmpty() });
   // The quote summary (read only): Back, Close and the scrim; Save summary.
