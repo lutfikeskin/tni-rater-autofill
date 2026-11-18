@@ -199,13 +199,14 @@ body:has(#settings:not([hidden])) .panel-head,
 /* Intake, Change file, New quote and Clear: no background until hovered. */
 .client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; background: var(--surface-sunken); }
 /* The tools, their question and note sit on the tabs' grey strip, one band down to the tabs. */
-.client-tools { padding-bottom: 6px; }
-/* The tools as one joined button group: white, one hairline edge, dividers between, the ends rounded. */
-.btn-group { display: inline-flex; align-items: stretch; background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05); overflow: hidden; }
+.client-tools { padding-top: 0; padding-bottom: 6px; }
+/* The tools as one tab hanging from the white section above: white, joined to it along the rule,
+   the tabs' grey edge on its sides and bottom, dividers between; the buttons themselves don't light up. */
+.btn-group { display: inline-flex; align-items: stretch; background: var(--surface); border: 1px solid var(--border-row); border-top: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow: hidden; }
 .btn-group > button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; width: auto; padding: 0 12px; border: 0; border-radius: 0; background: var(--surface); color: var(--ink-secondary); font: 600 13px/1 var(--font-sans); white-space: nowrap; }
 .btn-group > button[hidden] { display: none; }
-.btn-group > button:not([hidden]) ~ button:not([hidden]) { border-left: 1px solid var(--border-control); }
-.btn-group > button:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink-strong); }
+.btn-group > button:not([hidden]) ~ button:not([hidden]) { border-left: 1px solid var(--border-row); }
+.btn-group > button:hover:not(:disabled) { background: var(--surface); color: var(--ink-strong); }
 .btn-group > button:disabled { color: var(--ink-muted); }
 .btn-group svg { width: 16px; height: 16px; flex-shrink: 0; }
 .pdf-icon { flex-shrink: 0; display: inline-grid; place-items: center; width: 14px; height: 17px; border: 1px solid var(--border-strong); border-radius: 2px; color: var(--signal); font: 700 5.5px/1 var(--font-mono); }
@@ -214,7 +215,6 @@ body:has(#settings:not([hidden])) .panel-head,
   .tool-word { display: none; }
   .btn-group > .tool-btn { padding: 0 10px; }
 }
-.btn-group > .danger:hover:not(:disabled) { color: var(--signal-dark); }
 .file-confirm { grid-row: confirm; grid-column: 1 / -1; margin: 0; display: grid; gap: 8px; padding: 10px 14px; background: var(--surface-sunken); border-top: 0; border-radius: 0; }
 .file-confirm .ghost { min-height: 32px; }
 .file-confirm p { color: var(--ink); font-size: 14px; }
