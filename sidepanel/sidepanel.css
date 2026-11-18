@@ -199,10 +199,10 @@ body:has(#settings:not([hidden])) .panel-head,
 /* Intake, Change file, New quote and Clear: no background until hovered. */
 .client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; background: var(--surface-sunken); }
 /* The tools, their question and note sit on the tabs' grey strip, one band down to the tabs. */
-.client-tools { padding-top: 0; padding-bottom: 6px; }
-/* The tools as one tab hanging from the white section above: white, joined to it along the rule,
-   the tabs' grey edge on its sides and bottom, dividers between; the buttons themselves don't light up. */
-.btn-group { display: inline-flex; align-items: stretch; background: var(--surface); border: 1px solid var(--border-row); border-top: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow: hidden; }
+.client-tools { justify-content: center; padding-top: 0; padding-bottom: 6px; }
+/* The tools as one tab hanging from the white section above, centred: white, covering the rule
+   under it so it joins that section, no outline but the dividers between; the buttons don't light up. */
+.btn-group { position: relative; z-index: 1; display: inline-flex; align-items: stretch; margin-top: -2px; padding-top: 2px; background: var(--surface); border: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow: hidden; }
 .btn-group > button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; width: auto; padding: 0 12px; border: 0; border-radius: 0; background: var(--surface); color: var(--ink-secondary); font: 600 13px/1 var(--font-sans); white-space: nowrap; }
 .btn-group > button[hidden] { display: none; }
 .btn-group > button:not([hidden]) ~ button:not([hidden]) { border-left: 1px solid var(--border-row); }
