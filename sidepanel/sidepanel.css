@@ -209,6 +209,9 @@ body:has(#settings:not([hidden])) .panel-head,
 .btn-group > button:not([hidden]) ~ button:not([hidden]) { border-left: 1px solid var(--border); }
 .btn-group > button:hover:not(:disabled) { background: var(--surface); color: var(--ink-strong); }
 .btn-group > button:disabled { color: var(--ink-muted); }
+/* Clear deletes the client's work here: its word and icon in red (it still asks first). */
+.btn-group > .danger { color: var(--signal); }
+.btn-group > .danger:hover:not(:disabled) { color: var(--signal-dark); text-decoration: underline; text-underline-offset: 2px; }
 .btn-group svg { width: 16px; height: 16px; flex-shrink: 0; }
 .pdf-icon { flex-shrink: 0; display: inline-grid; place-items: center; width: 14px; height: 17px; border: 1px solid var(--border-strong); border-radius: 2px; color: var(--signal); font: 700 5.5px/1 var(--font-mono); }
 /* A narrow panel keeps the icons; each button's name (aria-label) still says its word. */
