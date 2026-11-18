@@ -30,3 +30,16 @@ test('the Windows smoke runs e2e:extension on both the unpacked copy and the ext
   assert.match(step, /\$env:E2E_CHANNEL\s*=\s*'store'/);
   assert.match(step, /Remove-Item Env:E2E_EXT_DIR, Env:E2E_CHANNEL/);
 });
+
+test('checks.yml runs renumbered Progressive fixtures and unpacked E2E_DEFAULTS=advanced', () => {
+  const checks = read('checks.yml');
+  const ext = checks.slice(checks.indexOf('\n  extension:'), checks.indexOf('\n  browser:'));
+  assert.match(
+    ext,
+    /npm run e2e:extension\n\s+E2E_DEFAULTS=advanced npm run e2e:extension\n\s+E2E_EXT_DIR="\$RUNNER_TEMP\/rater-store-package" E2E_CHANNEL=store npm run e2e:extension/,
+    'runs plain unpacked, E2E_DEFAULTS=advanced unpacked, then store ZIP',
+  );
+  const browser = checks.slice(checks.indexOf('\n  browser:'));
+  assert.match(browser, /run: npm run e2e -- --fixtures\n/);
+  assert.match(browser, /run: npm run e2e -- --fixtures --renumber\n/);
+});
