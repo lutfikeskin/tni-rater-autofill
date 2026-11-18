@@ -31,3 +31,12 @@ test('the store e2e opens the mock as AmWINS itself, from its Commercial Lines',
   assert.match(script, /route\.fetch\(\{ url: `http:\/\/localhost:8792\$\{local\}\$\{search\}` \}\)/);
   assert.match(script, /const MOCK_URL = MOCK_HOST \? `https:\/\/\$\{MOCK_HOST\}\$\{MOCK_PREFIX\}\$\{MOCK_PATH\}` : `http:\/\/localhost:8792\$\{MOCK_PATH\}`;/);
 });
+
+// Chrome's own side panel is no page of Playwright's, so no route answers its requests: the store
+// build's uploaded the run's queued events to TNI's server on every run (2026-11-09 to 2026-11-18).
+// The browser is started resolving no name but this machine's.
+test('the e2e browser resolves no name but this machine\'s, for what no route sees', () => {
+  const rules = script.match(/const OFFLINE = '--host-resolver-rules=([^']+)'/)?.[1];
+  assert.equal(rules, 'MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1');
+  assert.match(script, /launchPersistentContext\(userDir, \{[^}]*args: \[[^\]]*\bOFFLINE\]/);
+});
