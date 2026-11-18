@@ -51,7 +51,7 @@ function CheckCard({ card }) {
       <div className="checked-row" data-check={card.i}>
         <span className="tick" aria-hidden="true">{'\u2713'}</span>
         <span className="grow">{card.said}</span>
-        <button type="button" className="link small" onClick={card.undo}>Undo</button>
+        <button type="button" className="icon-btn undo-btn" aria-label={`Undo: ${card.said}`} title="Undo" onClick={card.undo}><svg aria-hidden="true"><use href="#undo" /></svg></button>
       </div>
     );
   }

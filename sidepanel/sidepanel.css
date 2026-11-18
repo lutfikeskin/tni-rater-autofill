@@ -154,6 +154,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 /* Fixed top: top bar (client name or Rater Autofill, with window controls and Settings), context
    line (rater page and stage, or intake summary), 2px progress rule, then file tools and steps. */
 .panel-head {
+  position: relative;
+  z-index: 4;
   flex: 0 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -196,6 +198,9 @@ body:has(#settings:not([hidden])) .panel-head,
 .client-title:hover, .client-title[aria-expanded="true"] { background: var(--surface-hover); }
 .client-name { display: block; min-width: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .client-meta { grid-row: ctx; grid-column: 1 / -1; margin: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+#client-meta:not([hidden]) { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; }
+.meta-count { display: inline-flex; align-items: center; gap: 4px; }
+.meta-count svg { width: 15px; height: 15px; color: var(--ink-muted); }
 /* Intake, Change file, New quote and Clear: no background until hovered. */
 .client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; background: var(--surface-sunken); }
 /* The tools, their question and note sit on the tabs' grey strip, one band down to the tabs. */
@@ -219,9 +224,18 @@ body:has(#settings:not([hidden])) .panel-head,
   .tool-word { display: none; }
   .btn-group > .tool-btn { padding: 0 10px; }
 }
-.file-confirm { grid-row: confirm; grid-column: 1 / -1; margin: 0; display: grid; gap: 8px; padding: 10px 14px; background: var(--surface-sunken); border-top: 0; border-radius: 0; }
-.file-confirm .ghost { min-height: 32px; }
-.file-confirm p { color: var(--ink); font-size: 14px; }
+/* The file tools' question: a popover under the button that asked, its arrow pointing at it
+   (client-view.jsx places it); over the view below, white with a soft shadow. */
+.client-tools:has(> .popover:not([hidden])) { z-index: 5; }
+.popover { position: absolute; top: calc(100% + 2px); left: 12px; z-index: 5; width: min(300px, calc(100% - 16px)); display: grid; gap: 6px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: 0 12px 24px -6px rgba(16, 24, 40, 0.16), 0 4px 8px -4px rgba(16, 24, 40, 0.08); text-align: left; }
+.popover[hidden] { display: none; }
+.popover::before { content: ""; position: absolute; top: -6px; left: calc(var(--arrow-x, 50%) - 6px); width: 10px; height: 10px; background: var(--surface); border-left: 1px solid var(--border); border-top: 1px solid var(--border); transform: rotate(45deg); }
+.popover-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink-strong); }
+.popover-text { margin: 0; font-size: 13px; line-height: 1.45; color: var(--ink-secondary); text-wrap: pretty; }
+.popover-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.popover-actions button { min-height: 36px; padding: 0 14px; border-radius: var(--radius-md); font-size: 13px; font-weight: 600; }
+.danger-solid { color: #ffffff; background: var(--signal); border: 1px solid var(--signal); }
+.danger-solid:hover:not(:disabled) { background: var(--signal-dark); border-color: var(--signal-dark); }
 .client-note { grid-row: note; grid-column: 1 / -1; margin: 0; padding: 6px 14px; border-top: 0; border-radius: 0; background: var(--surface-sunken); color: var(--success-ink); font-size: 13px; }
 .steps { grid-row: steps; grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 4px; padding: 5px 14px 0; background: var(--surface-sunken); border-bottom: 1px solid var(--border-row); }
 /* Browser-style tabs: the one in view is white and joins the view under it; the other sits on the strip. */
@@ -354,6 +368,8 @@ body:has(#settings:not([hidden])) .panel-head,
 .one-check-link { justify-self: start; }
 .checked-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-radius: 0; background: none; border: 0; border-top: 1px solid var(--border-row); font-size: 14px; }
 .checked-row .tick { flex: 0 0 16px; width: 16px; height: 20px; display: grid; place-items: center; border-radius: 0; background: none; color: var(--success); font-weight: 600; font-size: 13px; }
+.checked-row .undo-btn { flex-shrink: 0; width: 32px; height: 32px; color: var(--brand); }
+.checked-row .undo-btn svg { width: 17px; height: 17px; }
 .checked-row .grow { color: var(--ink); }
 .checked-row .link { color: var(--brand); font-weight: 500; }
 .cleanup .card > p { margin: 0; padding: 8px 0; font-size: 13px; line-height: 1.45; color: var(--ink-secondary); overflow-wrap: anywhere; }
@@ -845,7 +861,7 @@ body:has(#settings:not([hidden])) .panel-head,
   .client-title { margin-left: 4px; }
   .carrier-line, .client-meta, .steps, .screen-head, .review, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
   .view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { right: 10px; }
-  .file-confirm, .client-note { padding-left: 10px; padding-right: 10px; }
+  .client-note { padding-left: 10px; padding-right: 10px; }
   .client-tools { padding-left: 8px; padding-right: 8px; gap: 1px; }
   .btn-group > button { padding: 0 9px; }
   .site-step { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }

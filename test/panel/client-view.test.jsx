@@ -25,6 +25,11 @@ test('the header: client name in the top-bar disclosure, context-line meta hidde
   expect(card.querySelector('#client-meta')).toBeNull();
   expect([card.textContent, $(container, '#client-name').title, meta.textContent, meta.hidden])
     .toEqual(['Acme Hauling LLC', 'acme.pdf · 61 answers', 'Maryland · 2 drivers · 1 vehicle', false]);
+  // With its counts, each is an icon and its number, its words for a screen reader.
+  act(() => { state.client = { ...state.client, counts: { state: 'Maryland', drivers: 2, vehicles: 1, trailers: 0 } }; });
+  expect([...meta.querySelectorAll('.meta-count')].map((c) => [c.querySelector('use').getAttribute('href'), c.querySelector('[aria-hidden="true"]:not(svg)').textContent, c.querySelector('.sr-only').textContent]))
+    .toEqual([['#driver', '2', '2 drivers'], ['#truck', '1', '1 vehicle']]);
+  expect(meta.firstElementChild.textContent).toBe('Maryland');
   // When a rater tab is in front, #carrier-line takes the context line and #client-meta hides.
   act(() => { state.tab = { id: 1, carrier: { id: 'amwins', name: 'AmWINS' } }; });
   expect(meta.hidden).toBe(true);
@@ -57,13 +62,17 @@ test('the file tools\' question: hidden until asked, what it says and its two bu
   const calls = [];
   const { container } = render(<ClientHead act={acts(calls)} />);
   const ask = $(container, '#file-confirm');
-  expect([ask.hidden, ask.getAttribute('role'), ask.getAttribute('aria-labelledby')]).toEqual([true, 'group', 'file-confirm-text']);
+  // A popover under the button that asked: its title names the question, its text says what goes.
+  expect([ask.hidden, ask.getAttribute('role'), ask.getAttribute('aria-labelledby'), ask.getAttribute('aria-describedby')]).toEqual([true, 'group', 'file-confirm-title', 'file-confirm-text']);
   act(() => { state.client = { name: 'Acme', title: '', meta: '', pdf: true, ask: { text: 'Clear Acme? Your corrections, checks and reports go.', yes: 'Clear this client' } }; });
   expect([ask.hidden, $(container, '#file-confirm-text').textContent, $(container, '#file-confirm-yes').textContent, $(container, '#file-confirm-no').textContent])
     .toEqual([false, 'Clear Acme? Your corrections, checks and reports go.', 'Clear this client', 'Cancel']);
   fireEvent.click($(container, '#file-confirm-yes'));
   fireEvent.click($(container, '#file-confirm-no'));
   expect(calls).toEqual(['yes', 'cancel']);
+  // Escape in it is Cancel too.
+  fireEvent.keyDown($(container, '#file-confirm-yes'), { key: 'Escape' });
+  expect(calls).toEqual(['yes', 'cancel', 'cancel']);
   act(() => { state.client = { ...state.client, ask: null }; });
   expect(ask.hidden).toBe(true);
   // The note: hidden until it says something, and said through #announce (announce.js), not a live

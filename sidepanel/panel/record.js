@@ -47,6 +47,8 @@ function render() {
     // "Maryland · 2 drivers · 1 vehicle".
     meta: [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
       record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · '),
+    // The same, drawn with an icon for each count (client-view.jsx); `meta` stays its words.
+    counts: { state: st ? STATES[st] ?? st : null, drivers: record.drivers.length, vehicles: record.vehicles.length, trailers: record.trailers.length },
     pdf: pdfAvailable(),
     ask: state.fileConfirm ? state.fileQuestion : null,
   };

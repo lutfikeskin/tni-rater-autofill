@@ -368,7 +368,9 @@ test('in full-list mode a checked item is a row with Undo; choices are ghost but
   });
   const [checked, choiceCard, cleanupNotes] = $(container, '#warnings').children;
   expect([checked.className, checked.dataset.check, checked.querySelector('.tick').textContent, checked.querySelector('.grow').textContent]).toEqual(['checked-row', '2', '\u2713', 'Gender checked']);
-  fireEvent.click(checked.querySelector('button.link'));
+  // Undo is an icon button, named for the check it undoes.
+  expect(checked.querySelector('button.undo-btn').getAttribute('aria-label')).toBe('Undo: Gender checked');
+  fireEvent.click(checked.querySelector('button.undo-btn'));
   expect([choiceCard.className, choiceCard.querySelector('input, select, textarea'), [...choiceCard.querySelectorAll('.check-choices button')].map((b) => b.textContent)]).toEqual(['check', null, ['Client has GL', 'Not GL']]);
   expect(choiceCard.querySelector('.tinted')).toBe(null);
   for (const b of choiceCard.querySelectorAll('.check-choices button')) fireEvent.click(b);
