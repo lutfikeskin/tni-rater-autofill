@@ -1255,3 +1255,25 @@ test('a failed first messages read falls back to an empty Set so later ticks sti
   assert.deepEqual(onTick.map((m) => m.event), ['field_changes', 'new_fields', 'removed_fields', 'new_messages', 'list_shown', 'step_shown']);
   assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:notes', 'before', 'after', true]]);
 });
+
+test('an agent edit made while paused on another step is reported with that step on resume', async () => {
+  const h = harness();
+  const heading = (text) => [{ tagName: 'H2', textContent: text, getClientRects: () => [{}] }];
+  h.document.headings = heading('Drivers');
+  const years = select({ id: 'yrsInBusiness' });
+  h.append(years);
+  h.context.__raterRecorder.rebaseline();
+
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.document.headings = heading('Vehicles');
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+
+  const sent = h.sent.filter((m) => m.event === 'field_changes');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].step, 'Vehicles');
+  assert.deepEqual(Array.from(sent[0].changes, (c) => [c.key, c.before, c.after, c.agent]), [['field:yrsInBusiness', '', '3', true]]);
+});

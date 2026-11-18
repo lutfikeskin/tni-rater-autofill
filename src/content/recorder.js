@@ -648,7 +648,7 @@
         const before = prev.get(key)?.v ?? '';
         if (before !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before, after: c.v, agent: true });
       }
-      if (changes.length) send({ event: 'field_changes', page, forms: unitForms(), changes });
+      if (changes.length) send({ event: 'field_changes', page, step: stepKey(), forms: unitForms(), changes });
     }
     trustedPending.clear();
     trustedImmediate.clear();
