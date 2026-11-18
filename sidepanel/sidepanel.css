@@ -201,8 +201,9 @@ body:has(#settings:not([hidden])) .panel-head,
 /* The tools, their question and note sit on the tabs' grey strip, one band down to the tabs. */
 .client-tools { justify-content: center; padding-top: 0; padding-bottom: 6px; }
 /* The tools as one tab hanging from the white section above, centred: white, covering the rule
-   under it so it joins that section, no outline but the dividers between; the buttons don't light up. */
-.btn-group { position: relative; z-index: 1; display: inline-flex; align-items: stretch; margin-top: -2px; padding-top: 2px; background: var(--surface); border: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow: hidden; }
+   under it so it joins that section seamlessly, outlined on its sides and bottom with dividers
+   between; the buttons don't light up. */
+.btn-group { position: relative; z-index: 1; display: inline-flex; align-items: stretch; margin-top: -2px; padding-top: 2px; background: var(--surface); border: 1px solid var(--border-control); border-top: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); overflow: hidden; }
 .btn-group > button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; width: auto; padding: 0 12px; border: 0; border-radius: 0; background: var(--surface); color: var(--ink-secondary); font: 600 13px/1 var(--font-sans); white-space: nowrap; }
 .btn-group > button[hidden] { display: none; }
 .btn-group > button:not([hidden]) ~ button:not([hidden]) { border-left: 1px solid var(--border-row); }
