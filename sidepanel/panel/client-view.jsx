@@ -35,12 +35,16 @@ function ClientHead({ act }) {
         <p id="client-meta" className="client-meta" hidden={onRater || !client?.meta}>{client?.meta ?? ''}</p>
         <div className="client-tools">
           <DefaultsChip />
-          <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
-          <button type="button" id="quote-summary" className="ghost tool-btn" aria-label="Quote summary" title="Quote summary: every answer of this quote, with where it came from" onClick={() => act.summary()}><svg aria-hidden="true"><use href="#list" /></svg></button>
-          <button type="button" id="replace" className="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF" onClick={() => act.replace()}><svg aria-hidden="true"><use href="#file-in" /></svg></button>
-          <button type="button" id="new-quote" className="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"
-            disabled={newQuoteOff} onClick={() => act.newQuote()}><svg aria-hidden="true"><use href="#restart" /></svg></button>
-          <button type="button" id="clear-client" className="ghost tool-btn danger" aria-label="Clear this client" title="Clear this client" onClick={() => act.clear()}><svg aria-hidden="true"><use href="#trash" /></svg></button>
+          {/* One joined group (canvas: a button group): icon and word, the word hidden on a narrow panel
+              where the button's own name still says it. */}
+          <div className="btn-group" role="group" aria-label="Client tools">
+            <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
+            <button type="button" id="quote-summary" className="ghost tool-btn" aria-label="Quote summary" title="Quote summary: every answer of this quote, with where it came from" onClick={() => act.summary()}><svg aria-hidden="true"><use href="#list" /></svg><span className="tool-word" aria-hidden="true">Summary</span></button>
+            <button type="button" id="replace" className="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF" onClick={() => act.replace()}><svg aria-hidden="true"><use href="#file-in" /></svg><span className="tool-word" aria-hidden="true">Change file</span></button>
+            <button type="button" id="new-quote" className="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"
+              disabled={newQuoteOff} onClick={() => act.newQuote()}><svg aria-hidden="true"><use href="#restart" /></svg><span className="tool-word" aria-hidden="true">New quote</span></button>
+            <button type="button" id="clear-client" className="ghost tool-btn danger" aria-label="Clear this client" title="Clear this client" onClick={() => act.clear()}><svg aria-hidden="true"><use href="#trash" /></svg><span className="tool-word" aria-hidden="true">Clear</span></button>
+          </div>
         </div>
       </div>
       {/* Asked before work the agent did on this intake would go (askFile). */}
