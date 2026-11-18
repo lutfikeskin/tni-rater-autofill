@@ -9089,6 +9089,20 @@ test('a GEICO edit on a unit step is filed by the unit forms on screen with it; 
   }
 });
 
+test('editScope and changeScopes use the active units passed in on per-unit pages, not state.active', () => {
+  const state = { tab: { id: 1, carrier: null }, active: { vehicles: 1, drivers: 2, trailers: 1 }, tabSteps: new Map(), unitShown: null, unitForms: {} };
+  const context = { state };
+  vm.runInNewContext(extractFunction('changeScopes'), context);
+  const progressive = { vehiclePages: ['AddVehicle'], trailerPages: ['AddTrailer'], driverPage: 'AddDriver' };
+  const active = { vehicles: 0, drivers: 0, trailers: 0 };
+  assert.equal(context.editScope('AddVehicle', progressive, undefined, { active }), 'AddVehicle|v0');
+  assert.equal(context.editScope('AddTrailer', progressive, undefined, { active }), 'AddTrailer|tr0');
+  assert.equal(context.editScope('AddDriver', progressive, undefined, { active }), 'AddDriver|d0');
+  assert.deepEqual([...context.changeScopes('AddVehicle', progressive, undefined, null, { active })], ['AddVehicle|v0']);
+  assert.deepEqual([...context.changeScopes('AddTrailer', progressive, undefined, null, { active })], ['AddTrailer|tr0']);
+  assert.deepEqual([...context.changeScopes('AddDriver', progressive, undefined, null, { active })], ['AddDriver|d0']);
+});
+
 test('the recorder\'s field_changes file a GEICO edit under each scope its forms give, the tab\'s latest form when it names none', () => {
   const state = { intake: { record: {} }, tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, filled: new Map(), labels: new Map(), choices: new Map(),
     agentKeys: new Map(), visitedPages: new Set(), autoPages: new Set(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), quoteStates: new Map(),
