@@ -137,7 +137,7 @@ export const CHECKS = {
   seriousNote: 'You can fill now, but this answer affects the quote.',
   seeAll: 'See all intake checks',
   oneAtATime: 'One check at a time',
-  stepLeft: (open) => `${open} intake ${plural(open, 'check')} left`,
+  stepLeft: (open) => `${open} to check`,
   stepAll: 'Intake checks',
   stepBack: 'This page',
 };

@@ -28,19 +28,17 @@ function Steps({ act }) {
   const f = said?.fill ?? {};
   const onCheck = !!c.current;
   const open = checksOpen ?? c.open ?? 0;
-  const checkLabel = open > 0 ? CHECKS.stepLeft(open) : CHECKS.stepAll;
+  // Two tabs, both always shown, the one in view joined to the view under it (as a browser's tab).
+  // The intake's note counts what is left to check as the checks say it now.
   return (
     <>
       <button type="button" id="step-check" className="step" aria-controls="check-view" data-state={c.tone}
-        aria-current={c.current ? 'true' : undefined} hidden={onCheck} onClick={() => act.check()}>
-        <span className="step-dot" aria-hidden="true" />
-        <span className="step-label">{checkLabel}</span>
-        <span id="check-summary" className={open > 0 ? 'step-note sr-only' : 'step-note'} aria-hidden={open > 0 ? 'true' : undefined}>{c.note ?? ''}</span>
-        <span className="chev" aria-hidden="true">{'\u203a'}</span>
+        aria-current={onCheck ? 'page' : undefined} onClick={() => act.check()}>
+        <span className="step-label">{CHECKS.stepAll}</span>
+        <span id="check-summary" className="step-note">{open > 0 ? CHECKS.stepLeft(open) : (c.note ?? '')}</span>
       </button>
       <button type="button" id="step-fill" className="step" aria-controls="page-view" data-state={f.tone}
-        aria-current={f.current ? 'true' : undefined} hidden={!onCheck} onClick={() => act[f.review ? 'confirm' : 'fill']()}>
-        <span className="chev back" aria-hidden="true">{'\u2039'}</span>
+        aria-current={onCheck ? undefined : 'page'} onClick={() => act[f.review ? 'confirm' : 'fill']()}>
         <span className="step-label">{CHECKS.stepBack}</span>
         <span id="fill-summary" className="step-note">{f.note ?? ''}</span>
       </button>

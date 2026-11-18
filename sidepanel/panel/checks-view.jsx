@@ -131,7 +131,7 @@ function FocusCheck({ card, at, total, hasCleanup, later, onSeeAll }) {
             <p ref={noteRef} className="check-serious-note">{CHECKS.seriousNote}</p>
             {canSeeAll ? (
               <div className="check-foot">
-                <button type="button" id="see-all-checks" className="link subtle" onClick={onSeeAll}>
+                <button type="button" id="see-all-checks" className="link" onClick={onSeeAll}>
                   {CHECKS.seeAll}
                 </button>
               </div>
@@ -139,14 +139,15 @@ function FocusCheck({ card, at, total, hasCleanup, later, onSeeAll }) {
           </>
         ) : (
           <div className="check-foot">
-            <button type="button" id="check-later" className="link subtle" onClick={later}>
-              {CHECKS.later}
-            </button>
+            {/* All the checks at once, first and in the link colour: agents often prefer the list. */}
             {canSeeAll ? (
-              <button type="button" id="see-all-checks" className="link subtle" onClick={onSeeAll}>
+              <button type="button" id="see-all-checks" className="link" onClick={onSeeAll}>
                 {CHECKS.seeAll}
               </button>
             ) : null}
+            <button type="button" id="check-later" className="link subtle" onClick={later}>
+              {CHECKS.later}
+            </button>
           </div>
         )}
       </div>

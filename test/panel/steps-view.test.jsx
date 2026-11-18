@@ -22,19 +22,19 @@ const steps = (container) => [...container.querySelectorAll('.step')].map((b) =>
 const shown = (container) => [...container.querySelectorAll('.dock-body > button')].filter((b) => !b.hidden).map((b) => [b.id, b.textContent, b.disabled]);
 const $ = (container, id) => container.querySelector(`#${id}`);
 
-test('only the opposite-view link shows in #steps, while keeping #check-summary, #fill-summary, aria-controls and view actions intact', () => {
+test('#steps draws both views as tabs, the one in view current, with each tab\'s note, aria-controls and view action', () => {
   const t = acts();
   const { container } = render(<Steps act={t.act} />);
-  // Before the panel says anything: page view's link (#step-check) shows plain; #step-fill is hidden.
+  // Before the panel says anything: both tabs show, This page in view.
   expect(steps(container)).toEqual([
     ['step-check', false, null, null, 'Intake checks', ''],
-    ['step-fill', true, null, null, 'This page', ''],
+    ['step-fill', false, null, 'page', 'This page', ''],
   ]);
   expect(container.querySelector('.step-num')).toBe(null);
   expect(container.querySelector('.step-bar')).toBe(null);
   expect([...container.querySelectorAll('.step')].map((b) => b.getAttribute('aria-controls'))).toEqual(['check-view', 'page-view']);
 
-  // On page view with all checks done: #step-check shows "Intake checks" + "All checked"; #step-fill stays hidden with #fill-summary intact.
+  // On page view with all checks done.
   act(() => {
     state.steps = {
       check: { tone: 'done', note: 'All checked', open: 0, current: false },
@@ -43,28 +43,27 @@ test('only the opposite-view link shows in #steps, while keeping #check-summary,
   });
   expect(steps(container)).toEqual([
     ['step-check', false, 'done', null, 'Intake checks', 'All checked'],
-    ['step-fill', true, 'active', 'true', 'This page', '2 need you'],
+    ['step-fill', false, 'active', 'page', 'This page', '2 need you'],
   ]);
-  expect($(container, 'check-summary').getAttribute('aria-hidden')).toBe(null);
-  // Mark done lowers what is left: #fill-summary updates in DOM even while #step-fill is hidden on page view.
+  // Mark done lowers what is left.
   act(() => { state.steps = { ...state.steps, fill: { tone: 'active', note: '1 needs you', current: true, review: true } }; });
   expect($(container, 'fill-summary').textContent).toBe('1 needs you');
-  // Open checks on page view: #step-check says "3 intake checks left", and #check-summary stays in DOM as sr-only + aria-hidden so the count isn't read twice.
+  // Open checks: the intake tab counts them, said once.
   act(() => { state.steps = { ...state.steps, check: { tone: 'warn', note: '3 to check', open: 3, current: false } }; });
-  expect([$(container, 'step-check').hidden, $(container, 'step-check').querySelector('.step-label').textContent, $(container, 'check-summary').textContent, $(container, 'check-summary').classList.contains('sr-only'), $(container, 'check-summary').getAttribute('aria-hidden')])
-    .toEqual([false, '3 intake checks left', '3 to check', true, 'true']);
+  expect([$(container, 'step-check').querySelector('.step-label').textContent, $(container, 'check-summary').textContent, $(container, 'check-summary').getAttribute('aria-hidden')])
+    .toEqual(['Intake checks', '3 to check', null]);
   fireEvent.click($(container, 'step-check'));
 
-  // On check view: #step-fill shows as a back link ("This page" + #fill-summary) and #step-check hides.
-  // A filled page's link reads the page again (confirm); before the fill it only shows the page (fill).
+  // On check view: the intake tab is current. A filled page's tab reads the page again (confirm);
+  // before the fill it only shows the page (fill).
   act(() => { state.steps = { check: { tone: 'warn', note: '3 to check', open: 3, current: true }, fill: { tone: 'active', note: '1 needs you', current: false, review: true } }; });
   expect(steps(container)).toEqual([
-    ['step-check', true, 'warn', 'true', '3 intake checks left', '3 to check'],
+    ['step-check', false, 'warn', 'page', 'Intake checks', '3 to check'],
     ['step-fill', false, 'active', null, 'This page', '1 needs you'],
   ]);
   fireEvent.click($(container, 'step-fill'));
   act(() => { state.steps = { check: { tone: 'warn', note: '1 to check', open: 1, current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });
-  expect($(container, 'step-check').querySelector('.step-label').textContent).toBe('1 intake check left');
+  expect($(container, 'check-summary').textContent).toBe('1 to check');
   fireEvent.click($(container, 'step-fill'));
   expect(t.calls).toEqual([['check'], ['confirm'], ['fill']]);
 });

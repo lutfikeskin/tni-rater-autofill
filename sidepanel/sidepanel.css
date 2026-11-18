@@ -212,21 +212,18 @@ body:has(#settings:not([hidden])) .panel-head,
 .file-confirm .ghost { min-height: 32px; }
 .file-confirm p { color: var(--ink); font-size: 14px; }
 .client-note { grid-row: note; grid-column: 1 / -1; margin: 6px 14px 0; padding: 6px 0; border-top: 1px solid var(--border-row); border-radius: 0; background: none; color: var(--success-ink); font-size: 13px; }
-.steps { grid-row: steps; grid-column: 1 / -1; padding: 2px 14px 6px; border-bottom: 1px solid var(--border-row); }
-.step { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 4px 6px; margin: 0 -6px; width: calc(100% + 12px); background: none; border: 0; border-radius: var(--radius-sm); text-align: left; min-width: 0; }
+.steps { grid-row: steps; grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 4px; padding: 8px 14px 0; background: var(--surface-sunken); border-bottom: 1px solid var(--border-row); }
+/* Browser-style tabs: the one in view is white and joins the view under it; the other sits on the strip. */
+.step { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-height: 48px; padding: 7px 12px 6px; margin-bottom: -1px; background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; text-align: left; cursor: pointer; }
 .step[hidden] { display: none; }
-.step:hover { background: var(--surface-hover); }
-.step-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 3px; background: var(--border-control); }
-.step-label { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.step-note { flex-shrink: 0; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.step .chev { flex-shrink: 0; color: var(--ink-muted); font-size: 15px; line-height: 1; }
-.step[data-state="done"] .step-dot { background: var(--success); }
+.step:hover:not([aria-current]) { background: var(--surface-hover); }
+.step[aria-current] { background: var(--surface); border-color: var(--border-row); cursor: default; }
+.step[aria-current]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--surface); }
+.step-label { max-width: 100%; font-size: 14px; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step[aria-current] .step-label { font-weight: 600; color: var(--ink-strong); }
+.step-note { max-width: 100%; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step[data-state="done"] .step-note { color: var(--success-ink); }
-.step[data-state="active"] .step-dot { background: var(--brand); }
-.step[data-state="warn"] .step-dot { background: var(--warning-bar); }
-.step[data-state="warn"] .step-label { color: var(--amber); font-weight: 600; }
-.step[data-state="warn"] .step-note { color: var(--warning-ink); }
-.step[data-state="bad"] .step-dot { background: var(--signal-line); }
+.step[data-state="warn"] .step-note { color: var(--amber); font-weight: 600; }
 .step[data-state="bad"] .step-note { color: var(--signal-dark); }
 
 /* The middle: one scrolling area between the header (and client strip) and the dock. Positioned, so
@@ -342,6 +339,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .check-decide-later { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; font-size: 15px; }
 .check-serious-note { font-size: 13px; line-height: 1.45; color: var(--ink-muted); }
 .check-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 2px; }
+#see-all-checks { min-height: 32px; font-size: 14px; font-weight: 600; }
 .one-check-link { justify-self: start; }
 .checked-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-radius: 0; background: none; border: 0; border-top: 1px solid var(--border-row); font-size: 14px; }
 .checked-row .tick { flex: 0 0 16px; width: 16px; height: 20px; display: grid; place-items: center; border-radius: 0; background: none; color: var(--success); font-weight: 600; font-size: 13px; }
