@@ -18,3 +18,15 @@ test('a failed mock or replay job keeps what its run left, and the Windows smoke
   const windows = read('windows-smoke.yml');
   assert.match(windows, /on:\n\s+workflow_dispatch:\n\s+schedule:\n\s+- cron: '30 6 \* \* \*'/);
 });
+
+test('the Windows smoke runs e2e:extension on both the unpacked copy and the extracted store ZIP', () => {
+  const windows = read('windows-smoke.yml');
+  const step = windows.slice(
+    windows.indexOf('- name: Packaged extension with the Node replay server'),
+    windows.indexOf('- run: npm run mock:amwins'),
+  );
+  assert.equal((step.match(/npm run e2e:extension/g) ?? []).length, 2, 'runs both the unpacked copy and the extracted store ZIP');
+  assert.match(step, /\$env:E2E_EXT_DIR\s*=\s*Join-Path \$env:RUNNER_TEMP 'rater-store-package'/);
+  assert.match(step, /\$env:E2E_CHANNEL\s*=\s*'store'/);
+  assert.match(step, /Remove-Item Env:E2E_EXT_DIR, Env:E2E_CHANNEL/);
+});
