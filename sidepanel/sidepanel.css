@@ -197,10 +197,11 @@ body:has(#settings:not([hidden])) .panel-head,
 .client-name { display: block; min-width: 0; font-size: 15px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.25; color: var(--ink-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .client-meta { grid-row: ctx; grid-column: 1 / -1; margin: 0; padding: 0 14px 10px; font-size: 13px; line-height: 1.35; color: var(--ink-muted); min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 /* Intake, Change file, New quote and Clear: no background until hovered. */
-.client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; }
+.client-tools { grid-row: tools; grid-column: 1 / -1; position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; padding: 6px 12px 0; background: var(--surface-sunken); }
+/* The tools, their question and note sit on the tabs' grey strip, one band down to the tabs. */
 .client-tools > button { background: none; border-color: transparent; }
-.client-tools > button:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
-.client-tools > .danger:hover:not(:disabled) { background: var(--surface-hover); border-color: transparent; }
+.client-tools > button:hover:not(:disabled) { background: var(--surface); border-color: transparent; }
+.client-tools > .danger:hover:not(:disabled) { background: var(--surface); border-color: transparent; }
 .intake-btn { flex-shrink: 0; display: flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 4px; border-radius: var(--radius-sm); font-size: 13px; }
 .pdf-icon { display: inline-grid; place-items: center; width: 14px; height: 17px; border: 1px solid var(--border-strong); border-radius: 2px; color: var(--signal); font: 700 5.5px/1 var(--font-mono); }
 /* Change file, New quote, Clear: small, always in view (a menu took a click to open first). */
@@ -208,20 +209,20 @@ body:has(#settings:not([hidden])) .panel-head,
 .tool-btn svg { width: 16px; height: 16px; }
 .tool-btn.danger { color: var(--ink-secondary); }
 .tool-btn.danger:hover:not(:disabled) { background: var(--surface-hover); color: var(--ink-strong); }
-.file-confirm { grid-row: confirm; grid-column: 1 / -1; margin: 6px 14px 0; display: grid; gap: 8px; padding: 10px 0; background: none; border-top: 1px solid var(--border-row); border-radius: 0; }
+.file-confirm { grid-row: confirm; grid-column: 1 / -1; margin: 0; display: grid; gap: 8px; padding: 10px 14px; background: var(--surface-sunken); border-top: 0; border-radius: 0; }
 .file-confirm .ghost { min-height: 32px; }
 .file-confirm p { color: var(--ink); font-size: 14px; }
-.client-note { grid-row: note; grid-column: 1 / -1; margin: 6px 14px 0; padding: 6px 0; border-top: 1px solid var(--border-row); border-radius: 0; background: none; color: var(--success-ink); font-size: 13px; }
-.steps { grid-row: steps; grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 4px; padding: 8px 14px 0; background: var(--surface-sunken); border-bottom: 1px solid var(--border-row); }
+.client-note { grid-row: note; grid-column: 1 / -1; margin: 0; padding: 6px 14px; border-top: 0; border-radius: 0; background: var(--surface-sunken); color: var(--success-ink); font-size: 13px; }
+.steps { grid-row: steps; grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 4px; padding: 5px 14px 0; background: var(--surface-sunken); border-bottom: 1px solid var(--border-row); }
 /* Browser-style tabs: the one in view is white and joins the view under it; the other sits on the strip. */
-.step { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-height: 48px; padding: 7px 12px 6px; margin-bottom: -1px; background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; text-align: left; cursor: pointer; }
+.step { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-height: 32px; padding: 6px 10px 5px; margin-bottom: -1px; background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; text-align: left; cursor: pointer; }
 .step[hidden] { display: none; }
 .step:hover:not([aria-current]) { background: var(--surface-hover); }
 .step[aria-current] { background: var(--surface); border-color: var(--border-row); cursor: default; }
 .step[aria-current]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--surface); }
-.step-label { max-width: 100%; font-size: 14px; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-label { max-width: 100%; font-size: 13px; line-height: 1.4; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step[aria-current] .step-label { font-weight: 600; color: var(--ink-strong); }
-.step-note { max-width: 100%; font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-note { max-width: 100%; font-size: 13px; line-height: 1.4; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step[data-state="done"] .step-note { color: var(--success-ink); }
 .step[data-state="warn"] .step-note { color: var(--amber); font-weight: 600; }
 .step[data-state="bad"] .step-note { color: var(--signal-dark); }
@@ -830,7 +831,7 @@ body:has(#settings:not([hidden])) .panel-head,
   .client-title { margin-left: 4px; }
   .carrier-line, .client-meta, .steps, .screen-head, .review, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
   .view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { right: 10px; }
-  .file-confirm, .client-note { margin-left: 10px; margin-right: 10px; }
+  .file-confirm, .client-note { padding-left: 10px; padding-right: 10px; }
   .client-tools { padding-left: 8px; padding-right: 8px; gap: 1px; }
   .site-step { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
   .pane { padding-left: 10px; padding-right: 10px; }
