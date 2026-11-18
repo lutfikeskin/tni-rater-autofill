@@ -816,10 +816,14 @@ body:has(#settings:not([hidden])) .panel-head,
 .problem-actions .primary { flex: 1 1 auto; min-height: 52px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 600; }
 .problem-actions .ghost { flex: 0 0 auto; min-height: 44px; }
 .problem-said { margin: 0; padding: 6px 14px 0; font-size: 13px; color: var(--ink-secondary); }
-.foot-row { padding: 0 14px; min-height: 40px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 8px; border-top: 1px solid var(--border-row); }
+.foot-row { padding: 0 14px 6px; min-height: 40px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 4px 8px; border-top: 1px solid var(--border-row); background: var(--surface-sunken); }
+.foot-row > :not(#report-problem) { align-self: center; margin-top: 3px; }
 .dock-root:has(> .dock[hidden], > .dock:not([data-head-out]):not(:has(.progress:not([hidden]), .dock-body > button:not([hidden]), .dock-body > .dock-alt:not([hidden]), .dock-text > :not(.sr-only):not([hidden])))) + .problem[hidden] + .problem-said[hidden] + .foot-row { border-top: 0; }
 .dock-root:has(> .dock[hidden], > .dock:not([data-head-out]):not(:has(.progress:not([hidden]), .dock-body > button:not([hidden]), .dock-body > .dock-alt:not([hidden]), .dock-text > :not(.sr-only):not([hidden])))) + .problem { border-top: 0; }
-.foot-row #report-problem { min-height: 36px; display: inline-flex; align-items: center; white-space: nowrap; }
+/* Report a problem as a tab hanging from the white dock above, as the client tools hang from the
+   header: white, covering the line under it, light grey edges on its sides and bottom. */
+.foot-row #report-problem { position: relative; z-index: 1; min-height: 34px; margin-top: -1px; padding: 1px 14px 0; display: inline-flex; align-items: center; white-space: nowrap; background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); color: var(--ink-secondary); font-weight: 600; text-decoration: none; }
+.foot-row #report-problem:hover { color: var(--ink-strong); }
 .recording, .foot-version { font: 400 13px/1.2 var(--font-sans); color: var(--ink-muted); white-space: nowrap; }
 /* The host React draws #recording into (settings-view.jsx): no box of its own, so the footer row lays it out as before. */
 .recording-root { display: contents; }
