@@ -454,7 +454,7 @@
   let page = pageKey();
   // Read guarded: a page the recorder can't read yet still gets a recorder, which says why.
   let prev = guarded(snapshot)() ?? new Map();
-  let prevMessages = guarded(messages)() ?? [];
+  let prevMessages = guarded(messages)() ?? new Set();
   // The unit lists last seen. Not taken again on rebaseline: a list a fill's own Next drew while
   // the recorder was paused is news to the panel, which adds the next unit to it.
   let shownLists = unitLists();

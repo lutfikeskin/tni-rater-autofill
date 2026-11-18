@@ -1222,3 +1222,36 @@ test('a recorder that replaces another keeps the agent edits the old one held fo
   const again = h.sent.slice(sentBefore).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
   assert.deepEqual(again.map((c) => [c.key, c.after, c.agent]), [['field:yrsInBusiness', '3', true]]);
 });
+
+test('a failed first messages read falls back to an empty Set so later ticks still report events', () => {
+  const h = harness();
+  const notes = new Control('input', { id: 'notes', value: 'before' });
+  const oldField = new Control('input', { id: 'oldField', value: 'keep' });
+  h.append(notes, oldField);
+  h.context.__raterRecorder.dispose();
+  delete h.context.__raterRecorder;
+  const query = h.document.querySelectorAll.bind(h.document);
+  let failOnce = true;
+  h.document.querySelectorAll = (selector) => {
+    if (failOnce && /role=alert/.test(selector ?? '')) {
+      failOnce = false;
+      throw new Error('messages unreadable');
+    }
+    return query(selector);
+  };
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  const afterInit = h.sent.length;
+
+  notes.value = 'after';
+  h.emit('input', notes, true);
+  h.append(new Control('input', { id: 'followUp' }));
+  oldField.disabled = true;
+  h.document.messages = [{ textContent: 'This field is required', getClientRects: () => [{}] }];
+  h.context.__raterKit = { unitListsNow: () => '#summaryPage-AddCommercialVehicle:1' };
+  h.document.headings = [{ tagName: 'H2', textContent: 'Vehicles', getClientRects: () => [{}] }];
+  h.tick();
+
+  const onTick = h.sent.slice(afterInit);
+  assert.deepEqual(onTick.map((m) => m.event), ['field_changes', 'new_fields', 'removed_fields', 'new_messages', 'list_shown', 'step_shown']);
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:notes', 'before', 'after', true]]);
+});
