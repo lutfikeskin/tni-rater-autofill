@@ -268,9 +268,44 @@ test('Progressive standard answers: USDOT belongs to the business is TNI\'s stan
   assert.equal(plan.find((step) => step.re === '^state( filing)?$').ignore, true);
 });
 
+// The audit of 2026-11-19: the boxes were left blank as optional, and agents typed the intake's own
+// number into them on 65 of the 88 quotes of 2026-11-03 to 2026-11-17.
+test('Progressive gets the intake\'s phone in its three boxes; one that is no US number, or none, is the agent\'s', () => {
+  const parts = (phone) => {
+    const record = baseRecord();
+    record.applicant.phone = phone;
+    return ['2DB', '2DD', '2DF'].map((q) => byQ(buildPlan(record, progressive, {}), q));
+  };
+  const filled = parts('(402) 555-0142');
+  assert.deepEqual(filled.map((s) => s.value), ['402', '555', '0142']);
+  assert.deepEqual(filled.map((s) => [s.field, s.source, s.ignore, s.note, s.kind]), [
+    ['AccountInput.PhoneAreaCodeString', 'derived', false, null, 'text'],
+    ['AccountInput.PhoneThreeDigitsString', 'derived', false, null, 'text'],
+    ['AccountInput.PhoneFourDigitsString', 'derived', false, null, 'text'],
+  ]);
+  assert.ok(filled.every((s) => s.from.includes('applicant.phone')), 'its evidence is the intake\'s phone box');
+  // As written when it isn't a 10-digit US number (normalizeIntake keeps the box's text): never
+  // typed in parts, the agent's, with the note GEICO's boxes get.
+  const unread = parts('555-12');
+  assert.deepEqual(unread.map((s) => s.value), [null, null, null]);
+  assert.ok(unread.every((s) => s.note === 'The intake\'s phone isn\'t a 10-digit number: enter it yourself.'));
+  assert.equal(buildPlan({ ...baseRecord(), applicant: { ...baseRecord().applicant, phone: '555-12' } }, geico).find((s) => s.field === 'GivePhoneNumber').note, unread[0].note, 'one note for every carrier');
+  // No phone on the intake: nothing to type and nothing to say; the page's own boxes stay the agent's.
+  const none = parts(null);
+  assert.deepEqual(none.map((s) => [s.value, s.note, s.ignore]), [[null, null, false], [null, null, false], [null, null, false]]);
+});
+
+// Progressive asks it since 2026-11-17 (required). The intake has one phone box and no kind.
+test('Progressive\'s "Is this a mobile phone number?" is the agent\'s, never filled', () => {
+  const step = buildPlan(baseRecord(), progressive, {}).find((s) => s.field === 'MailingAddressInput.PrimaryPhoneNumberType');
+  assert.deepEqual([step.source, step.value, step.manualOnly, step.ignore], ['fact', null, true, false]);
+  assert.deepEqual(step.ask, ['Is this a mobile phone number?']);
+  assert.match(step.note, /isn't on the intake/);
+});
+
 test('Progressive preserves optional and server-owned controls', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
+  for (const q of ['18F', '194', '1CC', '77', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
     assert.equal(byQ(plan, q).ignore, true, `q${q} is preserved`);
   }
   // Maryland's own PIP list is no longer kept as Progressive set it: "$2,500 Full PIP" (TNI,

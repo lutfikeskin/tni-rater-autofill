@@ -524,8 +524,8 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('1B7F').value, 'Jordan', 'NoHit: the first word only (TNI 2026-10-26, W44-30)');
   assert.equal(byQ('297').value, 'Sample');
   assert.equal(byQ('2BB').value, '02/03/1988');
-  assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), [null, null, null]);
-  assert.ok(['2DB', '2DD', '2DF'].every((q) => byQ(q).ignore), 'optional phone is deliberately left blank');
+  assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), ['555', '201', '0199'], 'the intake\'s phone, in its three boxes');
+  assert.ok(['2DB', '2DD', '2DF'].every((q) => !byQ(q).ignore && byQ(q).source === 'derived'));
   assert.ok(byQ('450').note, 'MVR/CLUE order is marked for the agent, never filled');
   assert.equal(byQ('2B9D').value, 501, 'Unlimited radius picks "More than 500 miles"');
   assert.equal(byQ('2C05').value, 'Business Only');

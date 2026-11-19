@@ -42,6 +42,7 @@ import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleValueNote, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { incidentRowNote } from '../answers/claims.js';
+import { phoneDigits, phoneNote } from '../answers/contact.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
@@ -930,10 +931,18 @@ export const progressive = {
         name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
         source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
       { concept: 'owner.dob', tni: 'progressive.owner', q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
-      // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
-      { concept: 'business.contact', q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
-      { concept: 'business.contact', q: '2DD', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
-      { concept: 'business.contact', q: '2DF', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number (optional)', ignore: true },
+      // The intake's phone, in Progressive's three boxes (answers/contact.js), as GEICO and AmWINS
+      // get it. The first workflow left these boxes blank as optional; agents then typed the
+      // intake's own number into them on 65 of the 88 quotes of 2026-11-03 to 2026-11-17 (the audit
+      // of 2026-11-19). No phone on the intake: the agent's; one that isn't a 10-digit US number:
+      // the agent's, with a note.
+      { concept: 'business.contact', q: '2DB', source: 'derived', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code', kind: 'text', value: (r) => phoneDigits(r)?.slice(0, 3) ?? null, note: phoneNote },
+      { concept: 'business.contact', q: '2DD', source: 'derived', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix', kind: 'text', value: (r) => phoneDigits(r)?.slice(3, 6) ?? null, note: phoneNote },
+      { concept: 'business.contact', q: '2DF', source: 'derived', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number', kind: 'text', value: (r) => phoneDigits(r)?.slice(6) ?? null, note: phoneNote },
+      // Asked since 2026-11-17, required. The intake's one phone box doesn't say which kind of
+      // number it holds: the agent's.
+      { concept: 'business.contact', q: '334', source: 'fact', field: 'MailingAddressInput.PrimaryPhoneNumberType', ask: 'Is this a mobile phone number?', name: 'Mobile phone number? (the agent\'s)', kind: 'bool',
+        note: 'Whether the phone is a mobile number isn\'t on the intake: answer it yourself.' },
       // The intake's answer; blank: TNI's standard No unless they haul hazmat (hazPlacard, 2026-10-19).
       { concept: 'operations.hazmat-placard', q: '2F6', tni: 'general.hazmat-placard', source: hazPlacardSource, field: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required (standard: No when the intake leaves it blank)', kind: 'bool', value: hazPlacard, note: hazPlacardNote },
     ]),
