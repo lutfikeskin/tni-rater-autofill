@@ -18,14 +18,17 @@ import { currentReportKey, stopNoteFor } from './report-model.js';
 // ---------------------------------------------------------------------------------------------
 // Usage recording (see src/usage.js for what is and isn't kept)
 
-// Free-text typing floods field_change (#587): coalesce consecutive free-text changes (kind 'text')
-// on the same field into one settled usage event carrying the first `before` and final `after`.
+// Free-text typing floods field_change (#587): coalesce consecutive free-text changes (plain text
+// boxes and textareas: kind 'text', neither combo nor date) on the same field into one settled
+// usage event carrying the first `before`, final `after`, and the last recorder tick's timestamp.
 // Agent-edit bookkeeping (agentKeys, answeredOnPage, settleRejectedAi, auto-fill) still runs
 // immediately on every recorder message; only the usage log write is deferred until the edit
 // settles. 4 s (~2.7 recorder ticks at 1.5 s) bridges brief pauses while reading the intake PDF
-// yet flushes promptly to storage; moving to another field, clicking a button, changing
-// page/step/unit/tab/intake/quote, starting a fill, stopping a developer recording, or
-// hiding/closing the panel flushes immediately.
+// yet flushes promptly to storage. Any other usage event about to be logged flushes it first via
+// usage.beforeLog (preserving order before page_layout, fill_run, page_view, agent_click,
+// intake_closed, etc.), and page/step/unit/tab/intake/quote changes, fillPage start, recording
+// stop, and panel handoff/hide/close flush explicitly. Automatic follow-up fills that log nothing
+// do not split typing.
 const TEXT_SETTLE_MS = 4000;
 
 /**
@@ -36,8 +39,9 @@ const TEXT_SETTLE_MS = 4000;
  * @property {string} pageKey
  * @property {string | undefined} step
  * @property {string} view
- * @property {string | undefined} session
- * @property {string | undefined} intakeId
+ * @property {string | null} session
+ * @property {string | null} intakeId
+ * @property {string} t
  * @property {any} change
  * @property {any} ctx
  */
@@ -48,7 +52,7 @@ let pendingTextTimer = null;
 
 /** @param {any} c */
 function isCoalescedText(c) {
-  return c?.kind === 'text' && !c.combo;
+  return c?.kind === 'text' && !c.combo && !c.date;
 }
 
 /** @param {PendingTextChange} a @param {PendingTextChange} b */
@@ -67,36 +71,46 @@ function samePendingText(a, b) {
 /**
  * Flushes any pending settled free-text field_change event to the usage log.
  * When `tabId` is given, only flushes if the pending edit belongs to that tab.
+ * Returns the usage.log write promise (or a resolved promise if nothing was pending).
  * @param {number} [tabId]
+ * @returns {Promise<void>}
  */
 function flushPendingTextChanges(tabId) {
-  if (tabId !== undefined && pendingText?.tabId !== tabId) return;
+  if (tabId !== undefined && pendingText?.tabId !== tabId) return Promise.resolve();
   if (pendingTextTimer != null) {
     clearTimeout(pendingTextTimer);
     pendingTextTimer = null;
   }
   const pending = pendingText;
   pendingText = null;
-  if (!pending) return;
-  if (String(pending.change.before ?? '') === String(pending.change.after ?? '')) return;
-  usage.log({
+  if (!pending) return Promise.resolve();
+  if (String(pending.change.before ?? '') === String(pending.change.after ?? '')) return Promise.resolve();
+  return usage.log({
     carrier: pending.carrier,
     page: pending.page,
     view: pending.view,
-    ...(pending.session !== undefined ? { session: pending.session } : {}),
-    ...(pending.intakeId !== undefined ? { intakeId: pending.intakeId } : {}),
+    t: pending.t,
+    session: pending.session,
+    intakeId: pending.intakeId,
     ...fieldChangeEvent(pending.change, pending.ctx),
-  });
+  }) ?? Promise.resolve();
 }
 
+// Any other usage event about to be logged flushes a pending text edit first, so page_layout,
+// fill_run, page_view, agent_click, intake_closed, etc. never land before the edit that preceded them.
+usage.beforeLog?.(() => { flushPendingTextChanges(); });
+
 /**
- * Logs a batch of recorder field_changes: free-text edits coalesce into one event per settled
- * edit, while choice/checkbox/radio/select/date changes log immediately as before.
+ * Logs a batch of recorder field_changes: plain free-text edits coalesce into one event per settled
+ * edit, while choice/checkbox/radio/select/combo/date changes log immediately as before.
  * @param {any[]} changes
  * @param {{ tabId: number | null, carrier: string | null, page: string, step: string | undefined, view: string, session: any, ctx: any }} info
  */
 function logFieldChanges(changes, { tabId, carrier, page, step, view, session, ctx }) {
+  // Never buffer or log across a mid-swap intake/session mismatch (loadFile before startSession).
+  if (state.intake?.intakeId && session?.intakeId && state.intake.intakeId !== session.intakeId) return;
   const pageKey = samePage(page);
+  const now = new Date().toISOString();
   for (const c of changes) {
     if (isCoalescedText(c)) {
       const filledEntry = ctx.filled?.get(c.key);
@@ -109,8 +123,9 @@ function logFieldChanges(changes, { tabId, carrier, page, step, view, session, c
         pageKey,
         step,
         view,
-        session: session?.id,
-        intakeId: session?.intakeId,
+        session: session?.id ?? null,
+        intakeId: session?.intakeId ?? null,
+        t: now,
         change: { ...c },
         ctx: {
           ...ctx,
@@ -120,6 +135,8 @@ function logFieldChanges(changes, { tabId, carrier, page, step, view, session, c
       };
       if (pendingText && samePendingText(pendingText, next)) {
         pendingText.change = { ...c, before: pendingText.change.before };
+        pendingText.t = now;
+        pendingText.ctx = next.ctx;
         if (pendingTextTimer != null) clearTimeout(pendingTextTimer);
         pendingTextTimer = setTimeout(() => flushPendingTextChanges(), TEXT_SETTLE_MS);
       } else {
@@ -166,7 +183,6 @@ async function ensureRecorder() {
 }
 
 function tellRecorder(cmd, tabId = state.tab?.id) {
-  if (cmd === 'pause') flushPendingTextChanges();
   if (!Number.isInteger(tabId)) return Promise.resolve();
   return chrome.tabs.sendMessage(tabId, { ra: 'recorder', cmd }).catch(() => {});
 }
@@ -177,8 +193,7 @@ function tellRecorder(cmd, tabId = state.tab?.id) {
 function onRecorderMessage(msg, sender, sendResponse) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
-  const unlogged = !!(state.tab.carrier?.practice || state.tab.carrier?.recon);
-  const log = (...events) => { if (!unlogged) usage.log(...events); };
+  const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
   // Layouts are of the quote page, the tab's top frame; a child frame names its own address.
   const layoutPage = sender.frameId ? pageOf(state.tab.url) : samePage(msg.page);
   if (msg.event === 'page_view') {
@@ -242,7 +257,7 @@ function onRecorderMessage(msg, sender, sendResponse) {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: session?.keySalt,
       step };
     const view = viewOf(sender.tab.id, samePage(msg.page));
-    if (!unlogged) logFieldChanges(msg.changes, { tabId: sender.tab?.id ?? null, carrier, page: msg.page, step, view, session, ctx });
+    if (!state.tab.carrier?.practice) logFieldChanges(msg.changes, { tabId: sender.tab?.id ?? null, carrier, page: msg.page, step, view, session, ctx });
     scheduleLayout(layoutPage, 'changed');
     // The quote's state, by whoever picked it: remembered for this tab, checked against the intake.
     for (const c of msg.changes) {

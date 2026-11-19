@@ -65,6 +65,8 @@ async function loadFile(file, { reset = false } = {}) {
     if (state.intake) usage.log({ type: 'intake_closed', reason: reset ? 'reset' : 'replaced' });
     // A recording ends with its client (redacted with that client's names), as on clearing it.
     if (state.recording && !same) await stopRecording('Another client was loaded, so the recording stopped.');
+    // Flush again in case a tick arrived during stopRecording's wait before intake/session change.
+    flushPendingTextChanges();
     // A tab that went into a quote while the panel was closed did so before this intake (quote-owner.js).
     await settleQuoteEntries(async (id) => (await chrome.tabs.get(id)).url);
     clearTimeout(state.autoTimer);
@@ -138,6 +140,7 @@ async function loadFile(file, { reset = false } = {}) {
     state.triedAgain = null;
     doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
     discardAiSuggestions();
+    flushPendingTextChanges();
     await store.set('session', usage.startSession(summary.intakeId));
     await persistAiPending();
     await restoreAiPending();

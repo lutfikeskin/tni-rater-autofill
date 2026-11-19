@@ -17,7 +17,7 @@ import { inExtension, popped } from './env.js';
 import { $, forgetKeptReports, keepJournal, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn } from './core.js';
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
-import { flushPendingTextChanges, pageOf, tellRecorder } from './usage.js';
+import { pageOf, tellRecorder } from './usage.js';
 import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, resumeHeldFill, runKit, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
@@ -420,7 +420,6 @@ async function autoFill(page) {
   // A fill the agent started while the list was read (Fill this page, Looks right) goes first;
   // this one follows it rather than running beside it.
   if (state.filling) { state.autoPending = true; if (drawn) state.autoDrawn = page; return; }
-  flushPendingTextChanges();
   state.fillingKind = 'fill';
   state.filling = true;
   state.autoPending = false;

@@ -95,6 +95,8 @@
       // A coverage list by its coverage and row (cov:COMP#2), or its caption (cov:liability coverage).
       special: coverageKey,
     },
+    // GEICO date inputs sit inside a <gds-date-input-wrapper> or a date-masked <gds-input-wrapper>.
+    date: (el) => !!el?.closest?.('gds-date-input-wrapper, [mask-type*="date"]'),
   };
 
   globalThis.__raterAdapter = { carrier: 'geico', shared };

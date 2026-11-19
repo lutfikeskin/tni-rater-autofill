@@ -431,6 +431,8 @@ async function clearClient() {
     flushPendingTextChanges();
     // A recording ends with its client, saved as it is.
     if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
+    // Flush again in case a tick arrived during stopRecording's wait, before intake_closed and session clear.
+    flushPendingTextChanges();
     if (profileTimer) logProfile();
     usage.log({ type: 'intake_closed', reason: 'cleared' });
     cancelLayouts();
@@ -446,6 +448,7 @@ async function clearClient() {
     state.summary = null;
     dropReports();
     clientNote(null);
+    flushPendingTextChanges();
     usage.restoreSession(null);
     await store.remove('intake');
     await store.remove('session');

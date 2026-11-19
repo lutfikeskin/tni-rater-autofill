@@ -79,7 +79,7 @@ async function giveWay(to) {
   state.closing = true;
   if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
   for (const end = Date.now() + 15000; state.filling && Date.now() < end;) await new Promise((r) => setTimeout(r, 100));
-  flushPendingTextChanges();
+  await flushPendingTextChanges();
   // The copy taking over doesn't take up a recording: this one saves it, with its last events.
   if (state.recording) await stopRecording('The panel moved, so the recording stopped.');
   await handOver(to);

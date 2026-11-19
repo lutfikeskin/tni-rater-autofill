@@ -613,3 +613,34 @@ test('the store copy takes no server or token of the agent\'s own', async () => 
     await usage.saveSettings({ serverUrl: undefined, serverToken: '', aiOn: undefined });
   }
 });
+
+test('beforeLog runs synchronously before an event enters the log, without recursing, and preserves explicit t and seq order', async () => {
+  await usage.clearLog();
+  usage.startSession('intake-1');
+  const seen = [];
+  let pending = { type: 'field_change', page: 'P', t: '2026-11-19T10:00:00.000Z', key: 'notes', kind: 'text', by: 'agent', change: 'entered' };
+  const untap = usage.onLogged((events) => seen.push(...events.map((e) => e.type)));
+  const unhook = usage.beforeLog(() => {
+    const next = pending;
+    pending = null;
+    if (next) usage.log(next);
+  });
+  let uploaded = [];
+  globalThis.fetch = async (url, init) => {
+    uploaded = JSON.parse(init.body).events;
+    return { ok: true, json: async () => ({ accepted: uploaded.length, duplicates: 0, rejected: [] }) };
+  };
+  try {
+    await usage.saveSettings({ serverUrl: 'http://usage.test' });
+    await usage.log({ type: 'page_layout', page: 'P', reason: 'changed' });
+    await usage.upload();
+    assert.deepEqual(seen, ['field_change', 'page_layout'], 'onLogged sees the flushed event first');
+    assert.deepEqual(uploaded.map((e) => e.type), ['field_change', 'page_layout']);
+    assert.ok(uploaded[0].seq < uploaded[1].seq, 'flushed event gets the earlier seq');
+    assert.equal(uploaded[0].t, '2026-11-19T10:00:00.000Z', 'explicit event timestamp t is preserved');
+  } finally {
+    unhook();
+    untap();
+    globalThis.fetch = realFetch;
+  }
+});

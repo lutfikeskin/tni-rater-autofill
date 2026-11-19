@@ -52,9 +52,13 @@ function copyUsage(rec) {
   return usage.onLogged((events, { t, session }) => {
     if (rec.stopping || state.recording !== rec) return;
     const mine = rec.store.manifest.session;
-    if (mine && session !== mine) return;
-    const at = Date.parse(t);
-    rec.store.add(events.filter((/** @type {any} */ e) => e && typeof e.type === 'string').map((event) => ({ kind: 'usage', t: Number.isFinite(at) ? at : Date.now(), frame: 0, event })));
+    const matched = events.filter((/** @type {any} */ e) => e && typeof e.type === 'string' && (!mine || (e.session ?? session) === mine));
+    if (!matched.length) return;
+    const fallbackAt = Date.parse(t);
+    rec.store.add(matched.map((/** @type {any} */ event) => {
+      const at = event.t ? Date.parse(event.t) : fallbackAt;
+      return { kind: 'usage', t: Number.isFinite(at) ? at : Date.now(), frame: 0, event };
+    }));
   });
 }
 

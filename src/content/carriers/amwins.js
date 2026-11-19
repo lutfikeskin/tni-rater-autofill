@@ -27,6 +27,9 @@
         return row ? `${el.name}#${Number(row) + 1}` : null;
       },
     },
+    // AmWINS date pickers carry .datepicker-input or data-type="date".
+    date: (el) => !!el?.classList?.contains?.('datepicker-input')
+      || el?.getAttribute?.('data-type')?.toLowerCase() === 'date',
   };
 
   globalThis.__raterAdapter = { carrier: 'amwins', shared };
