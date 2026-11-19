@@ -5,7 +5,7 @@ import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { PROVIDERS } from '../../src/ai/providers.js';
 import { inExtension } from './env.js';
-import { $, state } from './core.js';
+import { $, state, unlogged } from './core.js';
 import { logSettings, problemContext } from './intake.js';
 import { pageOf } from './usage.js';
 import { announce, issueSaid, renderSite, renderSteps, scheduleLayout, unlockAudio } from './coordinator.js';
@@ -45,7 +45,7 @@ async function renderUsage() {
   for (const [id, v] of [['agent', agent], ['server-url', serverUrl], ['server-token', locked ? '' : serverToken]]) {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
-  state.recordingLine = !!state.intake && !state.tab?.carrier?.practice;
+  state.recordingLine = !!state.intake && !unlogged(state.tab?.carrier);
   renderHealth({ up });
 }
 

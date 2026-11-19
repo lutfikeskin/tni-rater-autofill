@@ -143,6 +143,13 @@ function noteTabLeft(ctx) {
 // for (its doneSteps key), logged as a retry only when this fill continued that step.
 /** @param {{ auto?: boolean | string, confirmed?: any, continuing?: boolean, retried?: string | false }} [options] */
 async function fillPage({ auto = false, confirmed = null, continuing = false, retried = false } = {}) {
+  // A carrier being explored before its first rules (recon) is never filled or clicked.
+  if (state.tab?.carrier?.recon) {
+    if (!auto && state.intake && !state.filling && !state.closing && !state.resetting && !state.newQuoteFailed) {
+      fillProblem({ tabId: state.tab.id, page: pageOf(state.tab.url), carrier: state.tab.carrier }, `${state.tab.carrier.name} is being explored: this build fills nothing here.`, 'notice');
+    }
+    return;
+  }
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says

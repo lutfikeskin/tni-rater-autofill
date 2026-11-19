@@ -14,7 +14,7 @@ import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
 import * as usage from '../usage-log.js';
 import { inExtension, popped } from './env.js';
-import { $, forgetKeptReports, keepJournal, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn } from './core.js';
+import { $, forgetKeptReports, keepJournal, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn, unlogged } from './core.js';
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -40,8 +40,8 @@ import { bindQuoteTab, portalHold, quoteOwnerIssue } from './quote-owner.js';
 // (revealed by an answer, or in a panel that opens) are filled with the intake/standard answers.
 // Fields that already have a value, or that the agent changed, are left alone.
 
-// Automatic fills only run on the carrier's quote pages (never e.g. its quote-search page).
-const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUrl || state.tab.carrier.autoFillUrl.test(state.tab.url ?? ''));
+// Automatic fills only run on the carrier's quote pages (never e.g. its quote-search page or a recon stub).
+const onQuotePage = () => !!state.tab?.carrier && !state.tab.carrier.recon && (!state.tab.carrier.autoFillUrl || state.tab.carrier.autoFillUrl.test(state.tab.url ?? ''));
 
 // A step counts as continued per page, and on a page about one vehicle or driver (Progressive's
 // Add Vehicle, Add Driver) per active vehicle/driver: Add Vehicle looks the same for every
@@ -1028,8 +1028,8 @@ function renderSite() {
     logo.hidden = true;
     site.hidden = false;
   }
-  // Practice pages aren't recorded: don't say they are.
-  state.recordingLine = !!state.intake && !carrier?.practice;
+  // Practice pages and recon stubs aren't recorded: don't say they are.
+  state.recordingLine = !!state.intake && !unlogged(carrier);
   site.title = title;
   site.classList.toggle('on', !!carrier);
   // Settings' Capture page layout (settings-view.jsx; "Let me look first" is off with Continue when

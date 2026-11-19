@@ -7,7 +7,7 @@ import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usa
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { logCrash, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
+import { logCrash, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn, unlogged } from './core.js';
 import { releaseDiscardedForms } from './record.js';
 import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
@@ -60,7 +60,7 @@ function tellRecorder(cmd, tabId = state.tab?.id) {
 function onRecorderMessage(msg, sender, sendResponse) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
-  const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
+  const log = (...events) => { if (!unlogged(state.tab.carrier)) usage.log(...events); };
   // Layouts are of the quote page, the tab's top frame; a child frame names its own address.
   const layoutPage = sender.frameId ? pageOf(state.tab.url) : samePage(msg.page);
   if (msg.event === 'page_view') {

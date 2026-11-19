@@ -304,6 +304,7 @@ async function applyCheckChoice(i, choice) {
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
+  if (ctx?.carrier?.recon || state.tab?.carrier?.recon) return;
   // The quote the review is for: its ai_suggest is logged as that quote's, also when the intake was
   // replaced while Luna answered (usage-log.js log keeps an event's own session and intakeId).
   const origin = usage.currentSession();

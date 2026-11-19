@@ -153,3 +153,16 @@ test('every registered carrier declares a known product', () => {
     assert.ok(known.has(c.product), `${c.id}: declares a product in PRODUCTS (src/products.js), got ${JSON.stringify(c.product)}`);
   }
 });
+
+test('a recon carrier has no rules, no generic rules, no display, and an autoFillUrl matching nothing', () => {
+  const recon = CARRIERS.filter((c) => c.recon);
+  for (const c of recon) {
+    assert.equal(c.rules?.length ?? 0, 0, `${c.id}: drop recon when the first rules land`);
+    assert.equal(c.useGenericRules, false, `${c.id}: recon carriers never use generic rules`);
+    assert.equal(c.display, undefined, `${c.id}: recon carriers are not offered in the panel`);
+    assert.ok(c.autoFillUrl instanceof RegExp, `${c.id}: recon carriers set an inert autoFillUrl`);
+    for (const sample of ['', 'https://example.com/', 'https://portal.bhhomestate.com/breeze/quote']) {
+      assert.equal(c.autoFillUrl.test(sample), false, `${c.id}: autoFillUrl must match nothing (${JSON.stringify(sample)})`);
+    }
+  }
+});
