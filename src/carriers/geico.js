@@ -1012,6 +1012,8 @@ export const geico = {
   // in layouts, fill and field-change events only when it is one of these (src/usage.js knownStep).
   layoutSteps: STEPS,
   quoteSteps: STEPS.map((name) => ({ name, step: name })),
+  // Where GEICO quotes its premium (src/premium.js premiumHere).
+  premiumPages: [COVERAGES],
   // The generic label rules misfired on GEICO's pages (FL: the first driver in the owner's boxes,
   // the intake's phone in the mobile-homes cargo question).
   useGenericRules: false,

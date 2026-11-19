@@ -423,7 +423,7 @@ ORDER BY 1;
 
 ## Premiums
 
-The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), on the pages where a carrier quotes its premium (`premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates) it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
+The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), on the pages where a carrier quotes its premium (each carrier's `premiumPages`, checked by `premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates) it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
 
 | Field | Shape |
 | --- | --- |
