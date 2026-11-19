@@ -1532,7 +1532,7 @@ function dockFor() {
     const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
     const ai = aiDock ? pendingAi(state.tab.id, page) : [];
     if (ai.length) {
-      const waiting = ai.filter((x) => !x.rejected).length;
+      const waiting = ai.filter((x) => !x.rejected && !x.unconfirmed).length;
       const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
       return { phase: 'ai', tone: 'ai', eyebrow: DOCK.ai.eyebrow(ai.length), title: DOCK.ai.title(waiting),
         sub: DOCK.ai.sub(waiting < ai.length, !!aiDock.canContinue), button: 'ai-approve', label: DOCK.ai.label(waiting, continues) };
