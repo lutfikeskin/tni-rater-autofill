@@ -47,7 +47,7 @@ let testList;
 try { testList = readTestList({ tests: opt('tests', null) }); } catch (err) { fail(err.message); }
 if (testList.warning) console.error(`Warning: ${testList.warning}`);
 const events = loadEvents(inputs);
-const result = learn(events, { carriers: CARRIERS, minIntakes, threshold, excludeSessions: learnerTestRuns(events, testList.intakes) });
+const result = learn(events, { carriers: CARRIERS, minIntakes, threshold, excludeSessions: learnerTestRuns(events, testList.intakes, { agents: testList.agents }) });
 const candidates = result.undecided;
 const drafted = live ? await proposeRules(candidates, { apiKey, max }) : null;
 

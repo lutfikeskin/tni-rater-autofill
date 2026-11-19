@@ -47,7 +47,7 @@ if (since && Number.isNaN(Date.parse(since))) fail(`--since ${since} is not a da
 
 let testList;
 try { testList = readTestList({ tests: opt('tests') }); } catch (err) { fail(err.message); }
-const { file: testFile, intakes: testIntakes, warning } = testList;
+const { file: testFile, intakes: testIntakes, agents: testAgents, warning } = testList;
 if (warning) console.error(`Warning: ${warning}`);
 const events = loadEvents(inputs);
 
@@ -64,7 +64,7 @@ if (keyFile) {
   if (absent) console.error(`Warning: ${absent} of the answer key's intake PDFs are not in ${folder}; their quotes are not scored.`);
   // Test runs are left out, as the sheet leaves them out.
   let tests;
-  try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile ?? 'signals'}: ${err.message}`); }
+  try { tests = testSessionsOf(events, testIntakes, { agents: testAgents }); } catch (err) { fail(`${testFile ?? 'signals'}: ${err.message}`); }
   // Only the keyed intakes' quotes are replayed. Every quote's page layouts stay: a question recorded
   // without its name takes it from the layouts, as the sheet named it.
   const keyed = new Set(events.filter((e) => e.type === 'intake_loaded' && key.quotes[e.intakeId] && !tests.has(e.session)).map((e) => e.session));
@@ -73,7 +73,7 @@ if (keyFile) {
 }
 
 let result;
-try { result = signals(events, { since, testIntakes, answerKey }); } catch (err) { fail(`signals: ${err.message}`); }
+try { result = signals(events, { since, testIntakes, testAgents, answerKey }); } catch (err) { fail(`signals: ${err.message}`); }
 // A fingerprint list that hides many quotes may be hiding real ones.
 if (result.kpis.testRunsLeftOut > 3) console.error(`Warning: ${result.kpis.testRunsLeftOut} quotes left out as test runs${testFile ? ` (${testFile})` : ''}. Check the list.`);
 if (args.includes('--json')) {
