@@ -79,7 +79,8 @@ test('ledger --json emits complete, valid JSON over a pipe when output exceeds 6
     }
     fs.writeFileSync(ledgerFile, `${body.join('\n')}\n`);
 
-    const r = await runPiped('scripts/ledger.mjs', [log, '--ledger', ledgerFile, '--since', '2026-10-06', '--tests', testsFile, '--json']);
+    // --main HEAD: a pull request's checkout in CI has no origin/main or main (test/ledger.test.mjs does the same).
+    const r = await runPiped('scripts/ledger.mjs', [log, '--ledger', ledgerFile, '--since', '2026-10-06', '--tests', testsFile, '--main', 'HEAD', '--json']);
     assert.equal(r.status, 0, r.stderr);
     const parsed = JSON.parse(r.stdout);
     assert.ok(Buffer.byteLength(r.stdout) > 64 * 1024, `expected > 64 KB JSON output, got ${Buffer.byteLength(r.stdout)} bytes`);
