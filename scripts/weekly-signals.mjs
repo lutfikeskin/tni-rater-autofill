@@ -78,9 +78,9 @@ try { result = signals(events, { since, testIntakes, answerKey }); } catch (err)
 if (result.kpis.testRunsLeftOut > 3) console.error(`Warning: ${result.kpis.testRunsLeftOut} quotes left out as test runs${testFile ? ` (${testFile})` : ''}. Check the list.`);
 if (args.includes('--json')) {
   console.log(JSON.stringify(result, null, 1));
-  process.exit(0);
+} else {
+  const out = opt('out') ?? path.join('reviews', `signals-${new Date().toISOString().slice(0, 10)}.md`);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, markdown(result, { noTestList: !!warning }));
+  console.log(`${out}  (${result.quotes} quotes, ${result.problems.length} problem reports, newest version ${result.newestVersion ?? '?'})`);
 }
-const out = opt('out') ?? path.join('reviews', `signals-${new Date().toISOString().slice(0, 10)}.md`);
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, markdown(result, { noTestList: !!warning }));
-console.log(`${out}  (${result.quotes} quotes, ${result.problems.length} problem reports, newest version ${result.newestVersion ?? '?'})`);

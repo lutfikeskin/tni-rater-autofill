@@ -205,10 +205,10 @@ const result = {
 };
 if (args.includes('--json')) {
   console.log(JSON.stringify(result, null, 1));
-  process.exit(0);
+} else {
+  const out = opt('out') ?? path.join('reviews', `ledger-${new Date().toISOString().slice(0, 10)}.md`);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, markdown(result));
+  const count = (s) => items.filter((x) => x.status === s).length;
+  console.log(`${out}  (${items.length} items: ${count('verified')} verified, ${count('recurred')} recurred, ${count('not exercised')} not exercised, ${count('still open')} still open; ${kpis.quotes} quotes)`);
 }
-const out = opt('out') ?? path.join('reviews', `ledger-${new Date().toISOString().slice(0, 10)}.md`);
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, markdown(result));
-const count = (s) => items.filter((x) => x.status === s).length;
-console.log(`${out}  (${items.length} items: ${count('verified')} verified, ${count('recurred')} recurred, ${count('not exercised')} not exercised, ${count('still open')} still open; ${kpis.quotes} quotes)`);
