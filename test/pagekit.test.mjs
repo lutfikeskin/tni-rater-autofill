@@ -1497,6 +1497,219 @@ test('Progressive: a Continue the page refuses in the browser is not reported as
   assert.deepEqual(await run(true), { pressed: 1, advanced: 'Continue', refused: null, said: false });
 });
 
+// Issue #590: pressedAt must be stamped before pressButton() (a click handler that takes > 5 ms
+// after starting the request is not a refusal) and the refusal check must also read
+// performance.getEntriesByType('resource') synchronously (observer delivery lag past the 250 ms
+// settle window cannot hide a sent request). A Continue that sends no post-press same-origin
+// fetch/XHR (Snapshot Pro style) is still refused with CONTINUE_REFUSED.
+test('Progressive: a slow Continue click handler is not read as refused (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => {
+    const startTime = clock.Date.now() - t0;
+    // The page's click handler spends ~20 ms on the main thread after starting the request
+    // (ExtJS/DOM work under load) before pressButton() returns.
+    clock.advance(20);
+    observer?.fn({ getEntries: () => [{ initiatorType: 'fetch', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime, responseEnd: startTime + 50 }] });
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: 'Continue', refused: null, said: false },
+  );
+});
+
+test('Progressive: a Continue request in performance.getEntriesByType without observer delivery is not refused; no request still refuses (#590)', async () => {
+  const run = async (mode) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor() {} observe() {} };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    cont.onclick = () => {
+      const now = clock.Date.now() - t0;
+      if (mode === 'buffered') {
+        resources.push({ initiatorType: 'fetch', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime: now, responseEnd: now + 30 });
+      } else if (mode === 'noise') {
+        // Pre-press request, cross-origin fetch, and non-fetch resource must not mask a refusal.
+        resources.push(
+          { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: now - 500, responseEnd: now - 450 },
+          { initiatorType: 'fetch', name: 'https://other.example/beacon', startTime: now, responseEnd: now + 10 },
+          { initiatorType: 'img', name: 'https://synthetic.example/spinner.gif', startTime: now, responseEnd: now + 10 },
+        );
+      }
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('buffered'), { advanced: 'Continue', refused: null, said: false });
+  assert.deepEqual(await run('none'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('noise'), { advanced: null, refused: 'Continue', said: true });
+});
+
+// PR #591 review: with pressedAt stamped before pressButton(), a request that started 1-3 ms
+// before the click must not mask a genuine refusal (even with a ~20 ms validating click handler).
+test('Progressive: a pre-click request 1-3 ms before Continue does not mask a refusal (#590)', async () => {
+  const run = async (where) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    let observer = null;
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    cont.onclick = () => {
+      // Request started 2 ms before the click; the page refuses Continue after ~20 ms of validation.
+      const entry = { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: clock.Date.now() - t0 - 2, responseEnd: clock.Date.now() - t0 + 10 };
+      clock.advance(20);
+      if (where === 'observer') observer?.fn({ getEntries: () => [entry] });
+      else resources.push(entry);
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('observer'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('buffer'), { advanced: null, refused: 'Continue', said: true });
+});
+
+// PR #591 review: once a long-lived Progressive SPA document fills Chromium's 250-entry resource
+// buffer, performance.getEntriesByType('resource') stops recording new requests, but
+// PerformanceObserver.takeRecords() still holds undelivered entries.
+test('Progressive: a Continue request queued in observer.takeRecords() is not refused when the resource buffer is full (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  const fullBuffer = Array.from({ length: 250 }, (_, i) => ({
+    initiatorType: 'xmlhttprequest',
+    name: `https://synthetic.example/Express/Step${i}.aspx`,
+    startTime: i,
+    responseEnd: i + 5,
+  }));
+  let queued = [];
+  h.context.performance = {
+    now: () => clock.Date.now() - t0,
+    getEntriesByType: (type) => (type === 'resource' ? fullBuffer : []),
+  };
+  h.context.PerformanceObserver = class {
+    observe() {}
+    takeRecords() { const out = queued; queued = []; return out; }
+  };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => {
+    const startTime = clock.Date.now() - t0;
+    // Buffer is full (entry not added to fullBuffer) and observer callback hasn't fired yet;
+    // only takeRecords() holds the Continue request.
+    queued.push({ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime, responseEnd: startTime + 40 });
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: 'Continue', refused: null, said: false },
+  );
+});
+
+// PR #591 review: a periodic same-origin heartbeat (isBeat) firing during the Continue settle
+// window must not mask a refusal, whether delivered to the observer or only in the resource buffer;
+// a non-beat request at the same URL between beats still counts as accepted.
+test('Progressive: a background poll during Continue settle does not mask a refusal (#590)', async () => {
+  const run = async (mode) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    let observer = null;
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    const beatUrl = 'https://synthetic.example/Express/KeepAlive';
+    cont.onclick = () => {
+      const now = clock.Date.now() - t0;
+      // Establish a 2000 ms beat before the press (4 ticks ending 1950 ms ago -> next beat in 50 ms).
+      const prior = [-7950, -5950, -3950, -1950].map((d) => ({ initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 }));
+      observer?.fn({ getEntries: () => prior });
+      resources.push(...prior);
+      if (mode === 'poll-observer') {
+        const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + 50, responseEnd: now + 70 };
+        setTimeout(() => { observer?.fn({ getEntries: () => [beat] }); resources.push(beat); }, 50);
+      } else if (mode === 'poll-buffer') {
+        const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + 50, responseEnd: now + 70 };
+        setTimeout(() => { resources.push(beat); }, 50);
+      } else if (mode === 'save-between-beats') {
+        // Real request on the same URL well before the next 2000 ms beat (last beat was 300 ms ago).
+        const recent = [-6300, -4300, -2300, -300].map((d) => ({ initiatorType: 'fetch', name: `${beatUrl}/same`, startTime: now + d, responseEnd: now + d + 20 }));
+        observer?.fn({ getEntries: () => recent });
+        resources.push(...recent, { initiatorType: 'fetch', name: `${beatUrl}/same`, startTime: now, responseEnd: now + 30 });
+      }
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('poll-observer'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('poll-buffer'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('save-between-beats'), { advanced: 'Continue', refused: null, said: false });
+});
+
+// PR #591 round-2 review: if settle stays open across 4+ beat periods, isBeat() trims b.starts
+// to its last 4 ticks. Entries recordRequests() already classified as poll: true must not be
+// re-evaluated by the resource-buffer fallback (which would otherwise lose the pre-click tick and
+// misclassify the first post-click beat as a real request).
+test('Progressive: a refused Continue stays refused when a background beat runs across 4+ periods during settle (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  let busyUntil = 0;
+  const resources = [];
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  h.context.performance = {
+    now: () => clock.Date.now() - t0,
+    getEntriesByType: (type) => (type === 'resource' ? resources : []),
+  };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  const beatUrl = 'https://synthetic.example/Express/KeepAlive';
+  cont.onclick = () => {
+    const now = clock.Date.now() - t0;
+    const prior = [-7950, -5950, -3950, -1950].map((d) => ({ initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 }));
+    observer?.fn({ getEntries: () => prior });
+    resources.push(...prior);
+    // Keep settle open across 4 post-click beats (6.5 s > 6.05 s) with no Continue request.
+    busyUntil = clock.Date.now() + 6500;
+    for (const d of [50, 2050, 4050, 6050]) {
+      const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 };
+      setTimeout(() => { observer?.fn({ getEntries: () => [beat] }); resources.push(beat); }, d);
+    }
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: null, refused: 'Continue', said: true },
+  );
+});
+
 // Review of PR #284: a fill that returns before it waits (the panel asked for another page) uses up
 // the helper's settled page too, so the fill after it isn't taken for the helper's continuation.
 test('Progressive: a fill that returns early uses up the helper\'s settled page', async () => {

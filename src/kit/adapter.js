@@ -163,6 +163,7 @@ export function partsUndefined(onlyLook = false) {
   return waiting;
 }
 
+/** @type {PerformanceObserver | false | null} */
 let requestWatch = null;
 /** @type {Array<{ start: number, end: number, poll: boolean }>} */
 export const recentRequests = [];
@@ -173,9 +174,15 @@ const lastRequestEnd = () => recentRequests.reduce((m, r) => (r.poll ? m : Math.
 const POLL_SLACK_MS = 40;
 /** @type {Map<string, { starts: number[], period: number | null }>} */
 const beats = new Map();
+/** @type {WeakSet<PerformanceEntry>} */
+const seenEntries = new WeakSet();
 
 /**
  * Determines whether requests at an address represent a periodic background poll heartbeat.
+ * Note: callers key `address` without its query string and this check has no upper bound on
+ * `start - prev`, so a future `serverBacked` page that polls the same pathname Continue posts to
+ * while staying on `startPage` would need this revisited (safe on Progressive today: no heartbeat
+ * on `/Express/Default.aspx`, and an accepted Continue changes `pageName`).
  * @param {string} address
  * @param {number} start
  * @returns {boolean}
@@ -194,22 +201,81 @@ export function isBeat(address, start) {
 
 export const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+/** @param {PerformanceEntry} e */
+function isOwnRequest(e) {
+  const res = /** @type {PerformanceResourceTiming} */ (e);
+  return (res.initiatorType === 'fetch' || res.initiatorType === 'xmlhttprequest')
+    && String(res.name).startsWith(`${location.origin}/`);
+}
+
+/**
+ * Read-only beat check for undelivered entries in the synchronous resource-buffer fallback (does
+ * not mutate `beats`): only called for entries not yet in `seenEntries`, matching an undelivered
+ * beat on a known polling address while still letting a non-beat request between beats count.
+ * @param {string} address
+ * @param {number} start
+ * @returns {boolean}
+ */
+function isKnownBeat(address, start) {
+  const b = beats.get(address);
+  if (b?.period == null) return false;
+  let prev = null;
+  for (let i = b.starts.length - 1; i >= 0; i--) {
+    if (b.starts[i] < start) { prev = b.starts[i]; break; }
+  }
+  return prev != null && start - prev >= b.period * 0.75;
+}
+
+/**
+ * Records same-origin fetch/XHR entries into `recentRequests`, classifying periodic heartbeats.
+ * Shared by the PerformanceObserver callback and synchronous `takeRecords()` draining.
+ * @param {PerformanceEntryList | PerformanceEntry[]} entries
+ */
+function recordRequests(entries) {
+  for (const e of entries) {
+    if (!isOwnRequest(e) || seenEntries.has(e)) continue;
+    seenEntries.add(e);
+    const res = /** @type {PerformanceResourceTiming} */ (e);
+    const start = res.startTime ?? res.responseEnd;
+    recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
+    if (recentRequests.length > 200) recentRequests.shift();
+  }
+}
+
+/**
+ * Whether this frame completed a non-poll same-origin fetch or XHR started at or after `since`
+ * (`performance.now()` ms): drains `PerformanceObserver.takeRecords()` first (works even after a
+ * long-lived document fills Chromium's 250-entry resource buffer), then falls back to
+ * `performance.getEntriesByType('resource')` only for entries not already classified by
+ * `recordRequests()` (`seenEntries`).
+ * @param {number} since
+ * @returns {boolean}
+ */
+export function requestSentSince(since) {
+  if (requestWatch && typeof requestWatch.takeRecords === 'function') {
+    try { recordRequests(requestWatch.takeRecords()); } catch { /* ignore */ }
+  }
+  if (recentRequests.some((r) => !r.poll && r.start >= since)) return true;
+  if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
+  try {
+    return performance.getEntriesByType('resource').some((e) => {
+      if (seenEntries.has(e) || !isOwnRequest(e)) return false;
+      const res = /** @type {PerformanceResourceTiming} */ (e);
+      const start = res.startTime ?? res.responseEnd;
+      return start >= since && !isKnownBeat(String(res.name).split(/[?#]/)[0], start);
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Starts observing this frame's network requests.
  */
 export function watchRequests() {
   if (requestWatch !== null) return;
   try {
-    requestWatch = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) {
-        const res = /** @type {PerformanceResourceTiming} */ (e);
-        if ((res.initiatorType === 'fetch' || res.initiatorType === 'xmlhttprequest') && String(res.name).startsWith(`${location.origin}/`)) {
-          const start = res.startTime ?? res.responseEnd;
-          recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
-          if (recentRequests.length > 200) recentRequests.shift();
-        }
-      }
-    });
+    requestWatch = new PerformanceObserver((list) => recordRequests(list.getEntries()));
     requestWatch.observe({ type: 'resource', buffered: true });
   } catch {
     requestWatch = false;

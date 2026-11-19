@@ -4,7 +4,7 @@
 import { oneLine, squash, loose } from "./text.js";
 import {
   adapter, currentPage,
-  pageAt, pageBusy, perfNow, recentRequests, setComponentPrefix, watchRequests, watchingRequests, settle,
+  pageAt, pageBusy, perfNow, recentRequests, requestSentSince, setComponentPrefix, watchRequests, watchingRequests, settle,
   pause, stopWaitsWhen, INTERRUPTED, ratesStale, premiumReady,
 } from "./adapter.js";
 import {
@@ -2395,6 +2395,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           state.report.signatureBefore = signature();
+          // Stamped before the click so any request started by pressButton() has startTime >= pressedAt
+          // regardless of click-handler duration, while pre-click requests stay < pressedAt (#590).
+          const pressedAt = perfNow();
           pressButton(button);
           // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
           // a second at most), never before it.
@@ -2417,7 +2420,6 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               state.report.repeatsHeld = (state.report.repeatsHeld ?? 0) + 1;
             };
             document.addEventListener('click', repeat, true);
-            const pressedAt = perfNow();
             try {
               // A Stop meanwhile doesn't end this wait (`abort: null`): Continue's request is the page's
               // until it is done, and the click guard above holds until then.
@@ -2429,7 +2431,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               // top; recording of 2026-11-04, Snapshot Pro: no request). A Continue that goes through
               // always posts. Not reported as continued, so the panel doesn't press it again 6 s later and
               // then pause its automatic fills; the agent's answer there fills and continues as usual.
-              else if (done && currentPage() === startPage && !stepChanged() && watchingRequests() && !recentRequests.some((r) => r.start >= pressedAt - 5)) {
+              else if (done && currentPage() === startPage && !stepChanged() && watchingRequests() && !requestSentSince(pressedAt)) {
                 delete state.report.advanced;
                 delete state.report.advanceKey;
                 state.report.continueRefused = text;
