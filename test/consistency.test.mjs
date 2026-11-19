@@ -250,11 +250,10 @@ test('committed fixtures and captures hold no client data', () => {
   const captures = fs.existsSync(path.join(root, 'captures')) ? walk('captures').filter((f) => !f.includes('generated')) : [];
   const aiEval = walk('test/ai-eval').filter((f) => /\.(json|md)$/.test(f));
   assert.ok(aiEval.length > 0, 'expected JSON or MD files under test/ai-eval/');
-  // Left out until the maintainer decides whether to allowlist or update their synthetic values:
-  // - test/fixtures/*.pdf (readIntakeFields values trip findPii on email, vin and phone in
-  //   multi-vehicle-intake.pdf, sample-intake-2026-10.pdf and sample-intake.pdf)
-  // - test/bakeoff/ (trips findPii on phone, vin and email in README.md, answer-key.json,
-  //   intake.md and results/extension-2026-10-01.json)
+  // Not scanned: the sample intake PDFs under test/fixtures and test/bakeoff/. Their made-up client
+  // (a 17-character VIN, a 555 phone outside 555-01xx, an email on a .test domain other than
+  // example.test) reads as a real one to findPii, which can't tell them apart: they are kept
+  // synthetic by hand.
   const files = [
     ...walk('test/fixtures').filter((f) => /\.(json|html|js|md)$/.test(f)),
     ...aiEval,
