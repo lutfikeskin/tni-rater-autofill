@@ -194,9 +194,10 @@ function stateAndZip(body) {
   return null;
 }
 
-// Splits a one-line US address. `confident` is false when there were no commas and the city had
-// to be inferred from where the street part seems to end, when trailing ZIP junk was dropped, or
-// when the state was written out, came after the ZIP or had no ZIP (W45-03). A directional glued to
+// Splits a one-line US address. `confident` is false when there were no commas and where the
+// street ends is a guess (a place word, or a city that holds a street type, a direction or a
+// digit; TNI, 2026-11-19), when trailing ZIP junk was dropped, or when the state was written out,
+// came after the ZIP or had no ZIP (W45-03). A directional glued to
 // the city ("SWCARTERSVILLE") stays in the city for the agent to confirm: without a list of cities
 // it can't be told from NEWARK or SEATTLE (TNI, 2026-10-27). A city run together with its state
 // ("HENRICOVA") is `joined`, and nothing is split: the agent's (TNI, 2026-11-03).
@@ -229,9 +230,10 @@ export function parseAddress(raw) {
     const place = (i) => PLACE_SUFFIX.has(word(i));
     const saint = (i) => /^ste?\.?$/i.test(t[i] ?? '');
     let cut = -1;
+    let byPlace = false;
     for (let i = 1; i < t.length - 1; i++) {
-      if (UNIT_WORD.test(t[i])) { cut = i + 1; break; }
-      if (/^#\w+/.test(t[i])) { cut = i; break; }
+      if (UNIT_WORD.test(t[i])) { cut = i + 1; byPlace = false; break; }
+      if (/^#\w+/.test(t[i])) { cut = i; byPlace = false; break; }
       // The street's type, unless another follows it ("Court St", "Oak Ridge Rd"); "Main St St
       // Louis" ends at the first St, and "Main St Glen Allen" at St, as a place word can't outrank it.
       const outranked = suffix(i + 1) && (place(i) || !place(i + 1)) && !(saint(i) && saint(i + 1));
@@ -240,11 +242,24 @@ export function parseAddress(raw) {
         // A numbered route or county road: "Hwy 60", "County Rd 12".
         if (/^\d+[A-Za-z]?$/.test(t[end + 1] ?? '')) end++;
         cut = DIRECTIONAL.has(t[end + 1]?.toLowerCase()) ? end + 1 : end;
+        // A word direction after the street type may start the city ("St North Little Rock").
+        byPlace = place(i) || (cut > end && t[cut].length > 2);
       }
     }
     if (cut >= 0 && cut < t.length - 1) {
       streetPart = t.slice(0, cut + 1).join(' ');
       out.city = t.slice(cut + 1).join(' ');
+      // As sure as a split with commas (TNI, 2026-11-19, audit of that day: the agent confirmed
+      // 136 guessed splits and changed 5 cities): the street ends at a street type (or a unit),
+      // not a place word ("Oak Ridge Henrico"), and the city is up to three words with no street
+      // type, place word, direction or digit in it. "Main St Glen Allen" or "Elm St Bend" could
+      // end the street at either word, and "SWCARTERSVILLE" may hold a direction glued on: those
+      // stay the agent's to confirm. A city starting with St or Ste ("St Louis") is a saint.
+      const city = t.slice(cut + 1);
+      const sure = city.length <= 3 && !/^(ne|nw|se|sw)/i.test(city[0])
+        && city.every((w, k) => !/\d/.test(w) && !DIRECTIONAL.has(w.toLowerCase().replace(/\.$/, ''))
+          && (!STREET_SUFFIX.has(w.toLowerCase().replace(/\.$/, '')) || (k === 0 && city.length > 1 && saint(cut + 1))));
+      out.confident = !byPlace && sure;
     }
   }
   const u = streetPart.match(/^(.*?)[,\s]+((?:apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr)\.?\s*#?\s*[\w-]+|#\s*[\w-]+)$/i);
@@ -1254,7 +1269,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     }
     if (name.middle) info('name.middle-initial', p('middle'), `${who}: "${boxes.first}" read as ${d.first}, middle initial ${d.middle}.`);
     if (d.first && /\s/.test(d.first)) {
-      check('name.multi-word-first', p('first'), `${who}: "${d.first}" has two words. Check the license for the middle name.`);
+      warnings.push(multiWordFirst(d, who, p('first')));
     }
     if (!d.first || !d.last) check('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`);
     if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
@@ -1615,6 +1630,21 @@ const unitWho = (list, i, rows) => {
 const driverName = (d, n) => [d.first, d.last].filter(Boolean).join(' ') || `Driver ${n}`;
 const unitName = (u, label, n) => [u.year, u.make, u.model].filter((x) => x != null && x !== '').join(' ') || `${label} ${n}`;
 const chk = (code, path, msg) => ({ code, path, level: 'check', msg });
+
+// A first-name box with more than one word (`name.multi-word-first`). Two words are a compound
+// first name ("JUAN CARLOS", "MARY ANN") as often as a first and middle name, and the intake has
+// no middle-name box: a note in client details, not a check (TNI, 2026-11-19, audit of that day:
+// the agent changed the first name after 9 of 169 such checks). It is a check where the box looks
+// wrong: the last name is in it, or it has three words or more.
+/** @returns {{ code: string, path: string, level: string, msg: string }} */
+function multiWordFirst(d, who, path) {
+  const words = String(d.first).trim().split(/\s+/);
+  const bare = (w) => w.toLowerCase().replace(/[.,]/g, '');
+  const last = new Set(String(d.last ?? '').split(/[\s-]+/).map(bare).filter(Boolean));
+  if (words.some((w) => last.has(bare(w)))) return chk('name.multi-word-first', path, `${who}: the first-name box "${d.first}" has the last name in it. Check the license.`);
+  if (words.length > 2) return chk('name.multi-word-first', path, `${who}: "${d.first}" has ${words.length} words. Check the license for the middle name.`);
+  return { code: 'name.multi-word-first', path, level: 'info', msg: `${who}: "${d.first}" has two words, kept as the first name: a compound first name, or a middle name the license would show.` };
+}
 /** @type {{ match: RegExp, codes: string[], at?: (m: RegExpMatchArray) => string, run: (record: any, m: RegExpMatchArray, ctx: { year: number, rows?: object }) => object[] }[]} */
 const BOX_CHECKS = [
   { match: /^claims\.text$/, codes: ['claims.blank'], run: (r) => (r.claims?.text ? [] : [chk('claims.blank', 'claims.text', 'Claims question left blank.')]) },
@@ -1676,7 +1706,7 @@ const BOX_CHECKS = [
     if (!d) return [];
     const who = driverName(d, n);
     const checks = [];
-    if (d.first && /\s/.test(d.first)) checks.push(chk('name.multi-word-first', p('first'), `${who}: "${d.first}" has two words. Check the license for the middle name.`));
+    if (d.first && /\s/.test(d.first)) checks.push(multiWordFirst(d, who, p('first')));
     if (!d.first || !d.last) checks.push(chk('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`));
     return checks;
   } },
