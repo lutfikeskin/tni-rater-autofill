@@ -62,6 +62,7 @@ export const CARRIERS = [
   ...(LOCAL_PAGES ? [{
     id: 'test',
     name: 'Local test page',
+    product: 'commercial-auto',
     hosts: [/^(localhost|127\.0\.0\.1)$/],
     rules: [],
     // The local test page is filled by the generic label rules alone.
@@ -87,15 +88,21 @@ export function ratersSaid(raters = RATERS) {
   return `${names.length > 1 ? `${names.slice(0, -1).join(', ')} or ${names.at(-1)}` : names[0] ?? 'A rater'}.`;
 }
 
-export function carrierForUrl(url) {
+/**
+ * @param {string} url
+ * @param {{ product?: string | null, carriers?: readonly CarrierConfig[] }} [options]
+ * @returns {CarrierConfig | null}
+ */
+export function carrierForUrl(url, { product = null, carriers = CARRIERS } = {}) {
   let u;
   try { u = new URL(url); } catch { return null; }
+  const pool = product == null ? carriers : carriers.filter((c) => c.product === product);
   if (LOCAL_PAGES && /^(localhost|127\.0\.0\.1)$/.test(u.hostname)) {
     const practice = PRACTICE.find((p) => p.path.test(u.pathname));
-    const real = practice && CARRIERS.find((c) => c.id === practice.carrier);
+    const real = practice && pool.find((c) => c.id === practice.carrier);
     if (real) return { ...real, name: `${real.name} (practice)`, practice: true, autoFillUrl: null, layoutUrl: null };
   }
-  return CARRIERS.find((c) => c.hosts.some((re) => re.test(u.hostname))) ?? null;
+  return pool.find((c) => c.hosts.some((re) => re.test(u.hostname))) ?? null;
 }
 
 // Where the tab is in the carrier's quote (`quoteSteps`), for the side panel's page strip: the

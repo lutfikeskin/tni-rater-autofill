@@ -2,6 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { STAMPED, storeManifest, withoutLocalPages, LOCAL_PAGES_FILE, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance, provenancePlugin, bundledPanelFile, kitSourceFile, zipName, PACKAGED, mapsZipName, withoutMapUrl, packageOf, noticesPlugin, thirdPartyNotices, RULES_FILE, stampRules, rulesOf, rulesPlugin, carrierRulesOf, stampCarrierRules } from '../scripts/lib/package.mjs';
 import { RULE_CARRIERS, RULE_FILES, carrierRuleFiles, rulesHash } from '../src/usage.js';
@@ -177,6 +179,34 @@ test('the panel build stamps the rules fingerprint of RULE_FILES, and fails if t
   const has = (env) => config(env).plugins.flat().some((p) => p?.name === 'tni-rules');
   assert.ok(has({ command: 'build', mode: 'store' }) && has({ command: 'build', mode: 'unpacked' }));
   assert.ok(!has({ command: 'serve', mode: 'development' }));
+});
+
+test('carrierRuleFiles and carrierRulesOf include a page adapter only when the carrier declares pageAdapter', async () => {
+  const shared = RULE_FILES.filter((f) => !f.startsWith('src/carriers/'));
+  // The three shipped carriers' file lists (and therefore their fingerprints) stay unchanged.
+  for (const id of ['progressive', 'amwins', 'geico']) {
+    assert.deepEqual(carrierRuleFiles(id), [...shared, `src/carriers/${id}.js`, `src/content/carriers/${id}.js`], `${id} file list unchanged`);
+  }
+  // A carrier without pageAdapter has no adapter file; one with pageAdapter uses that path.
+  const plain = { id: 'plain', rules: [] };
+  const custom = { id: 'custom', pageAdapter: 'src/content/carriers/custom-adapter.js', rules: [] };
+  assert.deepEqual(carrierRuleFiles('plain'), [...shared, 'src/carriers/plain.js']);
+  assert.deepEqual(carrierRuleFiles(plain), [...shared, 'src/carriers/plain.js']);
+  assert.deepEqual(carrierRuleFiles(custom), [...shared, 'src/carriers/custom.js', 'src/content/carriers/custom-adapter.js']);
+  // carrierRulesOf reads only the listed files, so a carrier without pageAdapter packages without ENOENT.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tni-carrier-rules-'));
+  try {
+    for (const f of [...shared, 'src/carriers/plain.js']) {
+      const full = path.join(tmp, f);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, `// ${f}\n`);
+    }
+    const hashes = await carrierRulesOf(tmp, [plain]);
+    assert.deepEqual(Object.keys(hashes), ['plain']);
+    assert.equal(hashes.plain, await rulesHash([...shared, 'src/carriers/plain.js'].map((f) => `// ${f}\n`)));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 // Audit 2026-11-07, QA-09: the store zip carried the source maps (3.7 MB for the panel's alone) and

@@ -41,7 +41,6 @@ export const agentDefaultsOn = () => on;
 let active = null;
 /** @param {DefaultsProfile | null} profile */
 export function setActiveDefaults(profile) { active = profile ?? null; }
-export const activeDefaults = () => active;
 
 // Where an overlay that throws reports (the panel logs it as a client_error from phase 5).
 /** @type {(error: unknown) => void} */

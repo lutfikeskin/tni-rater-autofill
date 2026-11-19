@@ -24,6 +24,22 @@ test('kept: each corrected value by its path and each check by its warning, noth
   assert.equal(keptWorkOf({ record: {}, warnings, agentEdited: [], done: [] }, get), null, 'nothing to keep');
 });
 
+test('USDOT or MC edited to No keeps "No" when noDot/noMc is true; a number or an emptied box keeps itself', () => {
+  assert.deepEqual(keptWorkOf({
+    record: { applicant: { dot: null, noDot: true, mc: null, noMc: true } },
+    warnings: [], agentEdited: ['applicant.dot', 'applicant.mc'], done: [],
+  }, get, 1000).edits, [['applicant.dot', 'No'], ['applicant.mc', 'No']]);
+  // Counterexamples: a number keeps the number; an emptied box (noDot/noMc not true) keeps null.
+  assert.deepEqual(keptWorkOf({
+    record: { applicant: { dot: '7654321', noDot: null, mc: null, noMc: null } },
+    warnings: [], agentEdited: ['applicant.dot', 'applicant.mc'], done: [],
+  }, get, 1000).edits, [['applicant.dot', '7654321'], ['applicant.mc', null]]);
+  assert.deepEqual(keptWorkOf({
+    record: { applicant: { dot: null, noDot: false } },
+    warnings: [], agentEdited: ['applicant.dot'], done: [],
+  }, get, 1000).edits, [['applicant.dot', null]]);
+});
+
 test('the checks are found again on the same intake read again, whatever was added to its list', () => {
   const checks = [{ code: 'drivers.cdl', path: 'drivers[1].cdl', n: 1 }, { code: 'garaging.zip', path: 'garaging.zip', n: 0 }, { code: 'gone', path: 'x', n: 0 }];
   assert.deepEqual(checksOn(warnings, checks), [3, 2]);

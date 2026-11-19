@@ -454,7 +454,7 @@
   let page = pageKey();
   // Read guarded: a page the recorder can't read yet still gets a recorder, which says why.
   let prev = guarded(snapshot)() ?? new Map();
-  let prevMessages = guarded(messages)() ?? [];
+  let prevMessages = guarded(messages)() ?? new Set();
   // The unit lists last seen. Not taken again on rebaseline: a list a fill's own Next drew while
   // the recorder was paused is news to the panel, which adds the next unit to it.
   let shownLists = unitLists();
@@ -648,7 +648,7 @@
         const before = prev.get(key)?.v ?? '';
         if (before !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before, after: c.v, agent: true });
       }
-      if (changes.length) send({ event: 'field_changes', page, forms: unitForms(), changes });
+      if (changes.length) send({ event: 'field_changes', page, step: stepKey(), forms: unitForms(), changes });
     }
     trustedPending.clear();
     trustedImmediate.clear();

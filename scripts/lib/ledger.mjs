@@ -26,7 +26,7 @@ const STATUS = /^(PR open\b|merged\b|released in\b)/i;
  * last field and may hold dots of its own.
  */
 export function parseItemLine(line) {
-  const m = ITEM_LINE.exec(line);
+  const m = ITEM_LINE.exec(String(line ?? '').replace(/\r$/, ''));
   if (!m) return null;
   const [, box, id, rest] = m;
   const at = rest.search(/\bsignature:/i);
@@ -62,7 +62,7 @@ export function parseItemLine(line) {
 
 // The "Weekly numbers" table: its column name (W42) and each number's first value column.
 function numbersTable(body) {
-  const lines = body.split('\n');
+  const lines = String(body ?? '').split(/\r\n|\r|\n/);
   const start = lines.findIndex((l) => /^#{2,3}\s+Weekly numbers/i.test(l));
   if (start < 0) return null;
   const rows = [];
@@ -84,12 +84,12 @@ function numbersTable(body) {
  * body is the ledger, comments are history.
  */
 export function parseLedger(body, { title = '', comments = [] } = {}) {
-  const text = String(body ?? '');
+  const text = String(body ?? '').replace(/\r\n?/g, '\n');
   const items = text.split('\n').map(parseItemLine).filter(Boolean);
   const inBody = new Set(items.map((x) => x.id));
   const fromComments = new Map();
   for (const c of comments) {
-    for (const x of String(c ?? '').split('\n').map(parseItemLine).filter(Boolean)) if (!inBody.has(x.id)) fromComments.set(x.id, { ...x, inComment: true });
+    for (const x of String(c ?? '').replace(/\r\n?/g, '\n').split('\n').map(parseItemLine).filter(Boolean)) if (!inBody.has(x.id)) fromComments.set(x.id, { ...x, inComment: true });
   }
   const dates = /\((\d{4}-\d{2}-\d{2})\s*[–-]\s*(\d{4}-\d{2}-\d{2})\)/.exec(title);
   return {
@@ -318,7 +318,7 @@ export function gitReader(cwd, main = 'origin/main') {
     if (!at) return null;
     const r = run('log', '--reverse', '--ancestry-path', '--format=%H', `${c}..${main}`, '--', 'manifest.json');
     if (r.status !== 0) return null;
-    for (const h of r.stdout.split('\n').filter(Boolean)) {
+    for (const h of r.stdout.split(/\r?\n/).filter(Boolean)) {
       const v = versionAt(h);
       if (v && compareVersions(v, at) > 0) return v;
     }
@@ -546,7 +546,7 @@ export function weeklyRows(kpis, previous, { createdAt = null } = {}) {
 /** Events the period holds: received at or after `since` (as the signals report counts them). */
 export const inPeriod = (events, since) => (since ? events.filter((e) => receivedAt(e) >= new Date(since).toISOString()) : events);
 
-const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const cell = (s) => String(s ?? '').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 const n = (x, one, many = `${one}s`) => `${x} ${x === 1 ? one : many}`;
 
 function evidence(r) {

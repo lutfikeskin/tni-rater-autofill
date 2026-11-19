@@ -349,9 +349,16 @@ Locally: `RATER_DASHBOARD_TOKEN=<16+ characters> npm run server` (PowerShell: se
 ```bash
 npm run pull                         # all events -> server-data/events/
 npm run pull -- --since 2026-10-01
+npm run pull -- --allow-shrink       # overwrite a local day file that has more events than the export
 npm run review                       # then the usual review
 npm run push-logs -- some/export.json   # an agent's exported log, or an old local server's folder
 ```
+
+`npm run pull` is whole-or-nothing: a line that is not JSON or a downloaded day with fewer events
+than the local file already holds stops the pull (exit 1) before anything is written, leaving the
+local copy untouched. Every day is written to a temporary file in `server-data/events/` before the
+first rename into place. Pass `--allow-shrink` only when a shorter day is expected (for example
+after a server-side cleanup).
 
 ## Daily review
 
@@ -379,6 +386,12 @@ opens one titled "Daily review" when none is open. New means:
   and only on the default branch): redeploy it;
 - two days without any event received (test runs don't count);
 - a run that couldn't finish, because the server was down or a script broke.
+
+The workflow leaves the maintainer's test quotes out when the repository secret `RATER_TEST_LIST`
+holds the text of `reviews/test-intakes.txt` (PDF fingerprints and `agent:` lines; the file itself
+is git-ignored, and the repository is public). Without the secret its review counts them as agents'
+work and says so in the run's log ("No test-run list"). Update the secret when the list changes:
+`gh secret set RATER_TEST_LIST < reviews/test-intakes.txt`.
 
 Nothing new, no comment. Two quiet days get one comment, with the day the last event arrived, from
 the run whose window holds the moment the quiet reached 48 hours. From 2026-10-11 to 10-18 no events

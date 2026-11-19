@@ -6,7 +6,7 @@
 // client wrote it and gets a warning instead.
 
 import { stateCode } from './quote-state.js';
-import { STATES, noPriorInsurance, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
+import { STATES, clean, toMoney, otherNotes, noPriorInsurance, set, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
 import { ownerRow, ownerRowNameDiffers } from './answers/owner.js';
 
 /** @import { IntakeResult } from '../types.js' */
@@ -16,7 +16,6 @@ export const ROWS = [1, 2, 3, 4];
 // driver rows 1-4 in this order.
 export const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
-const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
 // unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
 // bare "48" is 48 miles, and "any" must not be found inside "company".
@@ -25,7 +24,6 @@ const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+
 // The other words say how far in general; an explicit mileage beside them ("anywhere within 100
 // miles", "OTR up to 500 miles") is the answer.
 const LONG_HAUL_WORDS = /\b(?:unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|any(?:where)?)\b/i;
-export const LONG_HAUL = new RegExp(`${STATES_48.source}|${LONG_HAUL_WORDS.source}`, 'i');
 export const isLongHaul = (text) => parseRadius(String(text ?? '')).kind === 'long-haul';
 
 // Other distance units need an agent conversion; never treat their number as miles.
@@ -73,12 +71,6 @@ function readMiles(s) {
   return miles > 0 ? { miles, kind: 'miles' } : { miles: null, kind: 'text' };
 }
 
-export function clean(v) {
-  if (v == null || typeof v !== 'string') return v ?? null;
-  const s = v.replace(/\s+/g, ' ').trim();
-  return s === '' || BLANK.test(s) ? null : s;
-}
-
 export function cleanMultiline(v) {
   if (typeof v !== 'string') return null;
   const lines = v.split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
@@ -98,17 +90,6 @@ export function toInt(v) {
   if (s == null) return null;
   const m = s.match(/^\D*?(\d+)\b/);
   return m ? Number(m[1]) : null;
-}
-
-// "40,000$" -> 40000, "$100K" -> 100000, "1.5M" -> 1500000
-export function toMoney(v) {
-  if (typeof v === 'number') return v;
-  const s = clean(v);
-  if (s == null) return null;
-  const m = s.replace(/[\s,$]/g, '').match(/^(\d+(?:\.\d+)?)(k|m)?(?:usd|dollars?)?$/i);
-  if (!m) return null;
-  const mult = { k: 1e3, m: 1e6 }[m[2]?.toLowerCase()] ?? 1;
-  return Math.round(Number(m[1]) * mult);
 }
 
 // Returns "MM/DD/YYYY" or null.
@@ -328,8 +309,6 @@ export const NTL_WORDS = /\b(ntl|non[\s-]*tr[ua]ck(ing)?|bob[\s-]*tail(ing)?)\b/
 // The intake's free text: the claims box and, on the form since 2026-10, the Additional Notes box.
 // Clients answer other questions and ask for coverage in either, so notes are read from both.
 export const intakeNotes = (record) => [record?.claims?.text, record?.notes?.text].filter(Boolean).join('\n') || null;
-// The same without the claims box's own yes/no answer: its other lines and the Additional Notes box.
-export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
 
 // How long the client has been with their insurer, when a line of the intake's notes says so. TNI
 // (2026-10-26, W44-29): "Prior Insurance is always assumed 1-3 years at least", so a longer time
@@ -861,7 +840,7 @@ function licenseBox(box) {
   return { license: /\d/.test(before ?? '') ? before : null, excluded: true };
 }
 
-const KNOWN_FIELDS = new Set([
+export const KNOWN_FIELDS = new Set([
   'date_of_application', 'email', 'dot_number', 'mc_number', 'mc_dot_60days', 'phone_number', 'company_name',
   'year_established', 'owner_name_1', 'owner_name_2', 'owner_drives', 'years_experience', 'garaging_address',
   'fed_state_filings', 'filings_which', 'haul_hazmat', 'hazardous_placard', 'moving_state', 'biz_class',
@@ -1013,15 +992,27 @@ function tenureChecks(record) {
   return [{ code: 'prior.tenure', path: inNotes ? 'notes.text' : 'claims.text', level: 'check', msg: `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}` }];
 }
 
+export const UNKNOWN_INTAKE_ERROR = "This PDF doesn't look like the TNI Commercial Quote Application (its form fields don't match).";
+
+/**
+ * Whether a PDF's raw AcroForm field map carries enough of the TNI Commercial Quote Application fields.
+ * @param {Record<string, string | boolean>} raw
+ * @returns {boolean}
+ */
+export function isCommercialAutoIntake(raw) {
+  if (!raw || typeof raw !== "object") return false;
+  const present = Object.keys(raw).filter((k) => KNOWN_FIELDS.has(k));
+  return present.length >= KNOWN_FIELDS.size * 0.6;
+}
+
 /**
  * @param {Record<string, string|boolean>} raw  field name -> value, from readIntakeFields()
  * @param {{ today?: Date }} [opts]
  * @returns {IntakeResult | { error: string }}
  */
 export function normalizeIntake(raw, { today = new Date() } = {}) {
-  const present = Object.keys(raw).filter((k) => KNOWN_FIELDS.has(k));
-  if (present.length < KNOWN_FIELDS.size * 0.6) {
-    return { error: "This PDF doesn't look like the TNI Commercial Quote Application (its form fields don't match)." };
+  if (!isCommercialAutoIntake(raw)) {
+    return { error: UNKNOWN_INTAKE_ERROR };
   }
 
   const warnings = [];
@@ -1058,6 +1049,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   /** @type {Record<string, string[]>} */
   const readFrom = {};
   const record = {
+    product: 'commercial-auto',
     applicant: {
       name: companyName(companyAsWritten),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),
@@ -1486,6 +1478,7 @@ export function parseEdit(kind, text) {
     case 'money': return toMoney(s) ?? s;
     case 'date': return toDate(s) ?? s;
     case 'state': return stateCode(s) ?? s.toUpperCase();
+    case 'phone': return toPhone(s) ?? s;
     default: return s;
   }
 }

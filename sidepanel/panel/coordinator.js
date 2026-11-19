@@ -627,7 +627,7 @@ async function captureLayout(job, reason) {
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     noteStopScreen(job, step, buttons);
     // The premium the page quotes, logged when it changed (src/premium.js; not awaited).
-    if (premiumHere(carrier.id, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
+    if (premiumHere(carrier, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
       read: async () => (await chrome.scripting.executeScript({ target: { tabId }, func: () => document.body?.innerText ?? '' }))[0]?.result,
       log: (e) => { if (!jobCurrent(job)) return false; usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier), ...e }); return true; } });
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads

@@ -34,14 +34,15 @@ import { companyName, companyStructure, companyStructureWarn, companyStructureNo
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
-import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
-import { HAZ_HAUL } from '../util.js';
+import { isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
+import { HAZ_HAUL, otherNotes } from '../util.js';
 import { filingsIntent } from '../answers/filings.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleValueNote, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { incidentRowNote } from '../answers/claims.js';
+import { phoneDigits, phoneNote } from '../answers/contact.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
@@ -588,6 +589,7 @@ const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
+  product: 'commercial-auto',
   // The quote is started on the agent home page (quoteState below).
   display: { logo: 'assets/raters/progressive.svg', portalUrl: 'https://www.foragentsonly.com/home/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
@@ -805,6 +807,8 @@ export const progressive = {
     { name: 'Rates', pages: ['CoveragesRates', 'ChangePaymentPlan'] },
     { name: 'Print', pages: ['PrintEmailFax', 'PrintEmailFaxConfirm'] },
   ],
+  // Where Progressive quotes its premium (src/premium.js premiumHere).
+  premiumPages: ['CoveragesRates'],
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
     // Chrome opens the PDF only for the agent's own click (see the actions above).
@@ -930,10 +934,18 @@ export const progressive = {
         name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
         source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
       { concept: 'owner.dob', tni: 'progressive.owner', q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
-      // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
-      { concept: 'business.contact', q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
-      { concept: 'business.contact', q: '2DD', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
-      { concept: 'business.contact', q: '2DF', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number (optional)', ignore: true },
+      // The intake's phone, in Progressive's three boxes (answers/contact.js), as GEICO and AmWINS
+      // get it. The first workflow left these boxes blank as optional; agents then typed the
+      // intake's own number into them on 65 of the 88 quotes of 2026-11-03 to 2026-11-17 (the audit
+      // of 2026-11-19). No phone on the intake: the agent's; one that isn't a 10-digit US number:
+      // the agent's, with a note.
+      { concept: 'business.contact', q: '2DB', source: 'derived', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code', kind: 'text', value: (r) => phoneDigits(r)?.slice(0, 3) ?? null, note: phoneNote },
+      { concept: 'business.contact', q: '2DD', source: 'derived', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix', kind: 'text', value: (r) => phoneDigits(r)?.slice(3, 6) ?? null, note: phoneNote },
+      { concept: 'business.contact', q: '2DF', source: 'derived', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number', kind: 'text', value: (r) => phoneDigits(r)?.slice(6) ?? null, note: phoneNote },
+      // Asked since 2026-11-17, required. The intake's one phone box doesn't say which kind of
+      // number it holds: the agent's.
+      { concept: 'business.contact', q: '334', source: 'fact', field: 'MailingAddressInput.PrimaryPhoneNumberType', ask: 'Is this a mobile phone number?', name: 'Mobile phone number? (the agent\'s)', kind: 'bool',
+        note: 'Whether the phone is a mobile number isn\'t on the intake: answer it yourself.' },
       // The intake's answer; blank: TNI's standard No unless they haul hazmat (hazPlacard, 2026-10-19).
       { concept: 'operations.hazmat-placard', q: '2F6', tni: 'general.hazmat-placard', source: hazPlacardSource, field: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required (standard: No when the intake leaves it blank)', kind: 'bool', value: hazPlacard, note: hazPlacardNote },
     ]),
@@ -969,7 +981,10 @@ export const progressive = {
       // isn't picked (no rule here fills its boxes): the agent's, with a note (TNI, 2026-10-28).
       { concept: 'business.address', q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
         firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
-      { concept: 'business.contact', q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
+      // The intake's email, as GEICO gets it. The first workflow left the box blank; agents then
+      // typed an email into it on 49 quotes of 2026-11-03 to 2026-11-17, the intake's own on 44
+      // (the audit of 2026-11-19).
+      { concept: 'business.contact', q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', path: 'applicant.email', name: 'Customer email' },
       { concept: 'prior.currently-insured', tni: 'progressive.currently-insured', q: '81', source: currentlyInsuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsuredAnswer, note: currentlyInsuredNote },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the

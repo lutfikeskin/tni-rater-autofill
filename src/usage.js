@@ -8,11 +8,12 @@
 //  - text typed into boxes is never logged. It is compared with the intake on this computer and
 //    only the result is kept ("matches drivers[0].dob", "same as autofill except formatting").
 
-import { toMoney, toDate } from './normalize.js';
-import { noPriorInsurance } from './util.js';
+import { toDate } from './normalize.js';
+import { toMoney, noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
 import { redactionPattern } from './redaction.js';
 import { ID_LIKE, LIMIT, PROFILE_UNITS } from './usage-schema.js';
+import { CARRIERS } from './carriers.js';
 
 
 // A fill's waits by what they were for, summed over its frames (each frame's report's `waits`):
@@ -430,17 +431,26 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/quote-state.js', 'src/states.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }
 // One carrier's own fingerprint (`carrierRules` on fill_run and fill_error; audit 2026-11-07,
-// CARR-14): the shared rule files (RULE_FILES but the carriers' modules), that carrier's module and
-// its page adapter (src/content/carriers/), which decides the field keys and matching. A change to
-// GEICO's rules leaves Progressive's and AmWINS' as they were, so a review can group quotes by the
-// carrier's mapping in force; `rules` still covers every carrier.
+// CARR-14): the shared rule files (RULE_FILES but the carriers' modules), that carrier's module,
+// and its page adapter (`pageAdapter`) when it declares one, which decides the field keys and
+// matching. A change to GEICO's rules leaves Progressive's and AmWINS' as they were, so a review
+// can group quotes by the carrier's mapping in force; `rules` still covers every carrier.
 export const RULE_CARRIERS = RULE_FILES.filter((f) => f.startsWith('src/carriers/')).map((f) => f.slice('src/carriers/'.length, -'.js'.length));
-export const carrierRuleFiles = (id) => [...RULE_FILES.filter((f) => !f.startsWith('src/carriers/')), `src/carriers/${id}.js`, `src/content/carriers/${id}.js`];
+/** @param {string | { id: string, pageAdapter?: string }} carrier @returns {string[]} */
+export const carrierRuleFiles = (carrier) => {
+  /** @type {{ id: string, pageAdapter?: string }} */
+  const config = typeof carrier === 'string' ? CARRIERS.find((c) => c.id === carrier) ?? { id: carrier } : carrier;
+  return [
+    ...RULE_FILES.filter((f) => !f.startsWith('src/carriers/')),
+    `src/carriers/${config.id}.js`,
+    ...(config.pageAdapter ? [config.pageAdapter] : []),
+  ];
+};
 
 // A fill_field event's why fields, set only when true or given, from the item's resolution (one
 // rebuilt from its fields for a report from before resolutions): `source` its method, `standard` a

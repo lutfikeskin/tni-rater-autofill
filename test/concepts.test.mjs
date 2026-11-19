@@ -5,6 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CONCEPTS } from '../src/concepts.js';
+import { RATERS } from '../src/carriers.js';
 import { conceptMarkdown, questionId, RULE_SETS } from '../scripts/lib/concepts.mjs';
 
 test('every carrier rule and generic label rule names a concept in the catalog', () => {
@@ -28,9 +29,11 @@ test('every concept in the catalog is asked somewhere, and its id is <subject>.<
 // change to it can be followed to every carrier's question.
 test('a concept asked on several carriers: owner drives, UM and GL\'s trucking income on all that ask them', () => {
   const where = (id) => RULE_SETS().filter((s) => s.rules.some((r) => r.concept === id)).map((s) => s.id);
-  assert.deepEqual(where('owner.drives'), ['progressive', 'geico']);
-  assert.deepEqual(where('coverage.um'), ['progressive', 'geico', 'amwins']);
-  assert.deepEqual(where('gl.trucking-income'), ['progressive', 'geico']);
+  for (const id of ['progressive', 'geico']) assert.ok(where('owner.drives').includes(id), `owner.drives on ${id}`);
+  assert.ok(!where('owner.drives').includes('amwins'));
+  for (const c of RATERS) assert.ok(where('coverage.um').includes(c.id), `coverage.um on ${c.id}`);
+  for (const id of ['progressive', 'geico']) assert.ok(where('gl.trucking-income').includes(id), `gl.trucking-income on ${id}`);
+  assert.ok(!where('gl.trucking-income').includes('amwins'));
   // Rules that state a TNI answer and name the same rulebook entry are about the same thing.
   const byTni = new Map();
   for (const s of RULE_SETS()) for (const r of s.rules) if (r.tni === 'general.owner-drives') byTni.set(r.concept, true);

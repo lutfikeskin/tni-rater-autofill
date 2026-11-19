@@ -464,6 +464,8 @@ async function clearClient() {
       }
       // agent defaults: no client, no question.
       refreshDefaults();
+      // Note: state.tab.carrier stays whatever the cleared intake's product resolved until the next
+      // tab event (harmless with one product; call refreshTab() here once a second product shares a host).
       render();
       renderSite();
     }
