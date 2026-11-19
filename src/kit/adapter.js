@@ -163,6 +163,7 @@ export function partsUndefined(onlyLook = false) {
   return waiting;
 }
 
+/** @type {PerformanceObserver | false | null} */
 let requestWatch = null;
 /** @type {Array<{ start: number, end: number, poll: boolean }>} */
 export const recentRequests = [];
@@ -202,20 +203,58 @@ function isOwnRequest(e) {
 }
 
 /**
- * Whether this frame sent a same-origin fetch or XHR at or after `since` (performance.now() ms):
- * checks both the observer's list and the browser's own resource buffer synchronously, so observer
- * delivery lag after a wait ends can't hide a request that already went out.
+ * Read-only beat check for the synchronous resource-buffer fallback (does not mutate `beats`):
+ * matches an already-recorded beat (its predecessor in `b.starts` is `< start`) or an undelivered
+ * next beat on a known polling address, while still letting a non-beat request between beats count.
+ * @param {string} address
+ * @param {number} start
+ * @returns {boolean}
+ */
+function isKnownBeat(address, start) {
+  const b = beats.get(address);
+  if (b?.period == null) return false;
+  let prev = null;
+  for (let i = b.starts.length - 1; i >= 0; i--) {
+    if (b.starts[i] < start) { prev = b.starts[i]; break; }
+  }
+  return prev != null && start - prev >= b.period * 0.75;
+}
+
+/**
+ * Records same-origin fetch/XHR entries into `recentRequests`, classifying periodic heartbeats.
+ * Shared by the PerformanceObserver callback and synchronous `takeRecords()` draining.
+ * @param {PerformanceEntryList | PerformanceEntry[]} entries
+ */
+function recordRequests(entries) {
+  for (const e of entries) {
+    if (!isOwnRequest(e)) continue;
+    const res = /** @type {PerformanceResourceTiming} */ (e);
+    const start = res.startTime ?? res.responseEnd;
+    recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
+    if (recentRequests.length > 200) recentRequests.shift();
+  }
+}
+
+/**
+ * Whether this frame completed a non-poll same-origin fetch or XHR started at or after `since`
+ * (`performance.now()` ms): drains `PerformanceObserver.takeRecords()` first (works even after a
+ * long-lived document fills Chromium's 250-entry resource buffer), then falls back to
+ * `performance.getEntriesByType('resource')`.
  * @param {number} since
  * @returns {boolean}
  */
 export function requestSentSince(since) {
-  if (recentRequests.some((r) => r.start >= since)) return true;
+  if (requestWatch && typeof requestWatch.takeRecords === 'function') {
+    try { recordRequests(requestWatch.takeRecords()); } catch { /* ignore */ }
+  }
+  if (recentRequests.some((r) => !r.poll && r.start >= since)) return true;
   if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
   try {
     return performance.getEntriesByType('resource').some((e) => {
       if (!isOwnRequest(e)) return false;
       const res = /** @type {PerformanceResourceTiming} */ (e);
-      return (res.startTime ?? res.responseEnd) >= since;
+      const start = res.startTime ?? res.responseEnd;
+      return start >= since && !isKnownBeat(String(res.name).split(/[?#]/)[0], start);
     });
   } catch {
     return false;
@@ -228,15 +267,7 @@ export function requestSentSince(since) {
 export function watchRequests() {
   if (requestWatch !== null) return;
   try {
-    requestWatch = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) {
-        if (!isOwnRequest(e)) continue;
-        const res = /** @type {PerformanceResourceTiming} */ (e);
-        const start = res.startTime ?? res.responseEnd;
-        recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
-        if (recentRequests.length > 200) recentRequests.shift();
-      }
-    });
+    requestWatch = new PerformanceObserver((list) => recordRequests(list.getEntries()));
     requestWatch.observe({ type: 'resource', buffered: true });
   } catch {
     requestWatch = false;

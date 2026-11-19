@@ -2395,8 +2395,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           state.report.signatureBefore = signature();
-          // Stamped before the click: Continue's own click handler can start the request and spend
-          // > 5 ms on the main thread under load before pressButton() returns (#590).
+          // Stamped before the click so any request started by pressButton() has startTime >= pressedAt
+          // regardless of click-handler duration, while pre-click requests stay < pressedAt (#590).
           const pressedAt = perfNow();
           pressButton(button);
           // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
@@ -2431,7 +2431,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               // top; recording of 2026-11-04, Snapshot Pro: no request). A Continue that goes through
               // always posts. Not reported as continued, so the panel doesn't press it again 6 s later and
               // then pause its automatic fills; the agent's answer there fills and continues as usual.
-              else if (done && currentPage() === startPage && !stepChanged() && watchingRequests() && !requestSentSince(pressedAt - 5)) {
+              else if (done && currentPage() === startPage && !stepChanged() && watchingRequests() && !requestSentSince(pressedAt)) {
                 delete state.report.advanced;
                 delete state.report.advanceKey;
                 state.report.continueRefused = text;

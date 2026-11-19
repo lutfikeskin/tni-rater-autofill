@@ -154,6 +154,7 @@
         const form = window.replay.form;
         form?.mask('Loading...');
         fetch(`${location.pathname}?continue=${Date.now()}`, { cache: 'no-store' })
+          .then((r) => r.arrayBuffer())
           .catch(() => {})
           .finally(() => { if (window.replay.form === form && !form.destroyed) form.unmask(); });
       }
