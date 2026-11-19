@@ -1497,6 +1497,68 @@ test('Progressive: a Continue the page refuses in the browser is not reported as
   assert.deepEqual(await run(true), { pressed: 1, advanced: 'Continue', refused: null, said: false });
 });
 
+// Issue #590: pressedAt must be stamped before pressButton() (a click handler that takes > 5 ms
+// after starting the request is not a refusal) and the refusal check must also read
+// performance.getEntriesByType('resource') synchronously (observer delivery lag past the 250 ms
+// settle window cannot hide a sent request). A Continue that sends no post-press same-origin
+// fetch/XHR (Snapshot Pro style) is still refused with CONTINUE_REFUSED.
+test('Progressive: a slow Continue click handler is not read as refused (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => {
+    const startTime = clock.Date.now() - t0;
+    // The page's click handler spends ~20 ms on the main thread after starting the request
+    // (ExtJS/DOM work under load) before pressButton() returns.
+    clock.advance(20);
+    observer?.fn({ getEntries: () => [{ initiatorType: 'fetch', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime, responseEnd: startTime + 50 }] });
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: 'Continue', refused: null, said: false },
+  );
+});
+
+test('Progressive: a Continue request in performance.getEntriesByType without observer delivery is not refused; no request still refuses (#590)', async () => {
+  const run = async (mode) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor() {} observe() {} };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    cont.onclick = () => {
+      const now = clock.Date.now() - t0;
+      if (mode === 'buffered') {
+        resources.push({ initiatorType: 'fetch', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime: now, responseEnd: now + 30 });
+      } else if (mode === 'noise') {
+        // Pre-press request, cross-origin fetch, and non-fetch resource must not mask a refusal.
+        resources.push(
+          { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: now - 500, responseEnd: now - 450 },
+          { initiatorType: 'fetch', name: 'https://other.example/beacon', startTime: now, responseEnd: now + 10 },
+          { initiatorType: 'img', name: 'https://synthetic.example/spinner.gif', startTime: now, responseEnd: now + 10 },
+        );
+      }
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('buffered'), { advanced: 'Continue', refused: null, said: false });
+  assert.deepEqual(await run('none'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('noise'), { advanced: null, refused: 'Continue', said: true });
+});
+
 // Review of PR #284: a fill that returns before it waits (the panel asked for another page) uses up
 // the helper's settled page too, so the fill after it isn't taken for the helper's continuation.
 test('Progressive: a fill that returns early uses up the helper\'s settled page', async () => {

@@ -147,9 +147,16 @@
     window.replay.click = function click(text, row) {
       window.replay.clicks.push({ page: window.replay.page, text, row: row ?? null, at: new Date().toISOString() });
       document.getElementById('status').textContent = `Clicked "${text}"${row ? ` (${row})` : ''}`;
-      // Continue posts the page, as the carrier's does: the fill tells a Continue the page took from
-      // one it refused (no request at all) by that post.
-      if (!row && /^continue/i.test(text)) fetch(`${location.pathname}?continue=${Date.now()}`, { cache: 'no-store' }).catch(() => {});
+      // Continue posts the page and masks the form while it runs, as the carrier's does: the fill
+      // waits for the mask to clear and tells a Continue the page took from one it refused (no
+      // request at all) by that post.
+      if (!row && /^continue/i.test(text)) {
+        const form = window.replay.form;
+        form?.mask('Loading...');
+        fetch(`${location.pathname}?continue=${Date.now()}`, { cache: 'no-store' })
+          .catch(() => {})
+          .finally(() => { if (window.replay.form === form && !form.destroyed) form.unmask(); });
+      }
       if (row && window.replay.fields.some((f) => f.showAfter === row)) window.replay.roundTrip();
       if (!row && lookupOf(text)) window.replay.lookup(lookupOf(text));
     };

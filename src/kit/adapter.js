@@ -194,6 +194,34 @@ export function isBeat(address, start) {
 
 export const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+/** @param {PerformanceEntry} e */
+function isOwnRequest(e) {
+  const res = /** @type {PerformanceResourceTiming} */ (e);
+  return (res.initiatorType === 'fetch' || res.initiatorType === 'xmlhttprequest')
+    && String(res.name).startsWith(`${location.origin}/`);
+}
+
+/**
+ * Whether this frame sent a same-origin fetch or XHR at or after `since` (performance.now() ms):
+ * checks both the observer's list and the browser's own resource buffer synchronously, so observer
+ * delivery lag after a wait ends can't hide a request that already went out.
+ * @param {number} since
+ * @returns {boolean}
+ */
+export function requestSentSince(since) {
+  if (recentRequests.some((r) => r.start >= since)) return true;
+  if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
+  try {
+    return performance.getEntriesByType('resource').some((e) => {
+      if (!isOwnRequest(e)) return false;
+      const res = /** @type {PerformanceResourceTiming} */ (e);
+      return (res.startTime ?? res.responseEnd) >= since;
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Starts observing this frame's network requests.
  */
@@ -202,12 +230,11 @@ export function watchRequests() {
   try {
     requestWatch = new PerformanceObserver((list) => {
       for (const e of list.getEntries()) {
+        if (!isOwnRequest(e)) continue;
         const res = /** @type {PerformanceResourceTiming} */ (e);
-        if ((res.initiatorType === 'fetch' || res.initiatorType === 'xmlhttprequest') && String(res.name).startsWith(`${location.origin}/`)) {
-          const start = res.startTime ?? res.responseEnd;
-          recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
-          if (recentRequests.length > 200) recentRequests.shift();
-        }
+        const start = res.startTime ?? res.responseEnd;
+        recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
+        if (recentRequests.length > 200) recentRequests.shift();
       }
     });
     requestWatch.observe({ type: 'resource', buffered: true });
