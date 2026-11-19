@@ -61,8 +61,9 @@ const usageUrl = `http://127.0.0.1:${usageServer.address().port}`;
 // can't leave either. Chrome's own side panel (Back to the side panel, below) is no page of
 // Playwright's: the store build's sent what the run had queued to TNI's server, 36 events as a new
 // install on every run (2026-11-09 to 2026-11-18). A routed address is answered before any lookup.
-const OFFLINE = '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1';
-const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, OFFLINE] });
+// And no proxy: one on this machine would do the lookup itself, past the rule.
+const OFFLINE = ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1', '--no-proxy-server'];
+const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, ...OFFLINE] });
 // Only this machine: a request to any other host is refused and fails the run (the production
 // usage server named apart). The extension's own pages, data: and blob: URLs aren't requests out.
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);

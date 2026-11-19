@@ -36,7 +36,8 @@ test('the store e2e opens the mock as AmWINS itself, from its Commercial Lines',
 // build's uploaded the run's queued events to TNI's server on every run (2026-11-09 to 2026-11-18).
 // The browser is started resolving no name but this machine's.
 test('the e2e browser resolves no name but this machine\'s, for what no route sees', () => {
-  const rules = script.match(/const OFFLINE = '--host-resolver-rules=([^']+)'/)?.[1];
-  assert.equal(rules, 'MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1');
-  assert.match(script, /launchPersistentContext\(userDir, \{[^}]*args: \[[^\]]*\bOFFLINE\]/);
+  // With no proxy either: one on this machine would look the name up itself (CodeRabbit on #564).
+  const offline = script.match(/const OFFLINE = \['--host-resolver-rules=([^']+)', '(--no-proxy-server)'\];/);
+  assert.deepEqual(offline?.slice(1), ['MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1', '--no-proxy-server']);
+  assert.match(script, /launchPersistentContext\(userDir, \{[^}]*args: \[[^\]]*\.\.\.OFFLINE\]/);
 });
