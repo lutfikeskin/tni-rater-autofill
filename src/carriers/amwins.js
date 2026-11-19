@@ -500,6 +500,7 @@ const perRow = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => {
 export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
+  product: 'commercial-auto',
   // The quote is started from Commercial Lines (its nav link on the application's pages).
   display: { logo: 'assets/raters/amwins.svg', portalUrl: 'https://myagency.amwinsadmittedplacement.com/commerciallines', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],

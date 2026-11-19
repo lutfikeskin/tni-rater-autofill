@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CARRIERS, RATERS, ratersSaid } from '../src/carriers.js';
+import { PRODUCTS } from '../src/products.js';
 
 // Audit 2026-11-07, ORG-16: adding a carrier touches about a dozen places, listed only in
 // docs/new-carrier.md's prose. The new-carrier issue template lists each as a box; this keeps the
@@ -133,4 +134,12 @@ test('every carrier with rules says how the panel shows it: a logo on disk, its 
 test('docs/new-carrier.md and the template name the carrier\'s display', () => {
   assert.match(read('docs/new-carrier.md'), /`display`/);
   assert.match(template, /`display`/);
+});
+
+test('every registered carrier declares a known product', () => {
+  const known = new Set(PRODUCTS.map((p) => p.id));
+  assert.ok(CARRIERS.length > 0);
+  for (const c of CARRIERS) {
+    assert.ok(known.has(c.product), `${c.id}: declares a product in PRODUCTS (src/products.js), got ${JSON.stringify(c.product)}`);
+  }
 });

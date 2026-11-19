@@ -21,6 +21,7 @@ import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
+import { productOf } from '../src/products.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
@@ -28,7 +29,7 @@ import { PANEL_SOURCE } from './panel-source.mjs';
 // What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
 // function in, as the panel's other imports are given there: the real words, not stubs. A context's
 // own value of a name wins.
-const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, ...context });
+const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, productOf, ...context });
 const vm = { ...nodeVm,
   createContext: (context, ...rest) => nodeVm.createContext(withMessages(context), ...rest),
   runInNewContext: (code, context, ...rest) => nodeVm.runInNewContext(code, withMessages(context), ...rest) };
@@ -2357,7 +2358,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
-    normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
+    readIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     profileTimer: null, logProfile: () => false,
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {}, fillsHeld: async () => false };
@@ -7506,7 +7507,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
       },
       pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
       profileTimer: null, logProfile: () => false,
-      readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
+      readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, readIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
       store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, reviewIntake() {}, refreshTab() {}, fillsHeld: async () => false,
@@ -7599,7 +7600,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       unitFormsStore: { get: async (id, tab) => forms.get(`${id}|${tab}`) ?? null,
         set: async (id, tab, value) => { forms.set(`${id}|${tab}`, structuredClone(value)); } },
       $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
-      normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+      readIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       profileTimer: null, logProfile: () => false,
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
@@ -10051,7 +10052,7 @@ test('a profile still waiting when another intake is loaded goes to its own quot
     aiPendingStore: { get: async () => [], set: async () => {} },
     usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log: (e) => logged.push({ ...e, session: session?.id }) },
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
-    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    readIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
     PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms, fillsHeld: async () => false,
@@ -10295,7 +10296,7 @@ test('loading another client\'s intake stops and saves the recording, redacted w
     aiPendingStore: { get: async () => [], set: async () => {} },
     usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log() {} },
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
-    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    readIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
     PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {}, fillsHeld: async () => false,
@@ -10332,7 +10333,7 @@ function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
     aiPendingStore: { get: async () => [], set: async () => {} },
     usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: 's2', intakeId }), restoreSession: (s) => { session = s; }, log: (e) => seen.order.push([e.type, state.resetting]) },
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, forgetPdf: async () => {},
-    normalizeIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
+    readIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
     store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
     platformOf: () => ({ os: null, chrome: null }), uploadNow() {}, save: async () => {}, render() {}, renderSite() {}, renderSteps() {}, refreshTab() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
     profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED', fillsHeld: async () => false, holdFills: async () => true, releaseFills: async () => {}, FILLS_HELD_NOTE: 'held',
