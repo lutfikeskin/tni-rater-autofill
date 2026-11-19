@@ -174,9 +174,15 @@ const lastRequestEnd = () => recentRequests.reduce((m, r) => (r.poll ? m : Math.
 const POLL_SLACK_MS = 40;
 /** @type {Map<string, { starts: number[], period: number | null }>} */
 const beats = new Map();
+/** @type {WeakSet<PerformanceEntry>} */
+const seenEntries = new WeakSet();
 
 /**
  * Determines whether requests at an address represent a periodic background poll heartbeat.
+ * Note: callers key `address` without its query string and this check has no upper bound on
+ * `start - prev`, so a future `serverBacked` page that polls the same pathname Continue posts to
+ * while staying on `startPage` would need this revisited (safe on Progressive today: no heartbeat
+ * on `/Express/Default.aspx`, and an accepted Continue changes `pageName`).
  * @param {string} address
  * @param {number} start
  * @returns {boolean}
@@ -203,9 +209,9 @@ function isOwnRequest(e) {
 }
 
 /**
- * Read-only beat check for the synchronous resource-buffer fallback (does not mutate `beats`):
- * matches an already-recorded beat (its predecessor in `b.starts` is `< start`) or an undelivered
- * next beat on a known polling address, while still letting a non-beat request between beats count.
+ * Read-only beat check for undelivered entries in the synchronous resource-buffer fallback (does
+ * not mutate `beats`): only called for entries not yet in `seenEntries`, matching an undelivered
+ * beat on a known polling address while still letting a non-beat request between beats count.
  * @param {string} address
  * @param {number} start
  * @returns {boolean}
@@ -227,7 +233,8 @@ function isKnownBeat(address, start) {
  */
 function recordRequests(entries) {
   for (const e of entries) {
-    if (!isOwnRequest(e)) continue;
+    if (!isOwnRequest(e) || seenEntries.has(e)) continue;
+    seenEntries.add(e);
     const res = /** @type {PerformanceResourceTiming} */ (e);
     const start = res.startTime ?? res.responseEnd;
     recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
@@ -239,7 +246,8 @@ function recordRequests(entries) {
  * Whether this frame completed a non-poll same-origin fetch or XHR started at or after `since`
  * (`performance.now()` ms): drains `PerformanceObserver.takeRecords()` first (works even after a
  * long-lived document fills Chromium's 250-entry resource buffer), then falls back to
- * `performance.getEntriesByType('resource')`.
+ * `performance.getEntriesByType('resource')` only for entries not already classified by
+ * `recordRequests()` (`seenEntries`).
  * @param {number} since
  * @returns {boolean}
  */
@@ -251,7 +259,7 @@ export function requestSentSince(since) {
   if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
   try {
     return performance.getEntriesByType('resource').some((e) => {
-      if (!isOwnRequest(e)) return false;
+      if (seenEntries.has(e) || !isOwnRequest(e)) return false;
       const res = /** @type {PerformanceResourceTiming} */ (e);
       const start = res.startTime ?? res.responseEnd;
       return start >= since && !isKnownBeat(String(res.name).split(/[?#]/)[0], start);

@@ -1671,6 +1671,45 @@ test('Progressive: a background poll during Continue settle does not mask a refu
   assert.deepEqual(await run('save-between-beats'), { advanced: 'Continue', refused: null, said: false });
 });
 
+// PR #591 round-2 review: if settle stays open across 4+ beat periods, isBeat() trims b.starts
+// to its last 4 ticks. Entries recordRequests() already classified as poll: true must not be
+// re-evaluated by the resource-buffer fallback (which would otherwise lose the pre-click tick and
+// misclassify the first post-click beat as a real request).
+test('Progressive: a refused Continue stays refused when a background beat runs across 4+ periods during settle (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  let busyUntil = 0;
+  const resources = [];
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  h.context.performance = {
+    now: () => clock.Date.now() - t0,
+    getEntriesByType: (type) => (type === 'resource' ? resources : []),
+  };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  const beatUrl = 'https://synthetic.example/Express/KeepAlive';
+  cont.onclick = () => {
+    const now = clock.Date.now() - t0;
+    const prior = [-7950, -5950, -3950, -1950].map((d) => ({ initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 }));
+    observer?.fn({ getEntries: () => prior });
+    resources.push(...prior);
+    // Keep settle open across 4 post-click beats (6.5 s > 6.05 s) with no Continue request.
+    busyUntil = clock.Date.now() + 6500;
+    for (const d of [50, 2050, 4050, 6050]) {
+      const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 };
+      setTimeout(() => { observer?.fn({ getEntries: () => [beat] }); resources.push(beat); }, d);
+    }
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: null, refused: 'Continue', said: true },
+  );
+});
+
 // Review of PR #284: a fill that returns before it waits (the panel asked for another page) uses up
 // the helper's settled page too, so the fill after it isn't taken for the helper's continuation.
 test('Progressive: a fill that returns early uses up the helper\'s settled page', async () => {
