@@ -123,7 +123,6 @@ const NOT_MAPPED = {
     'applicant.fein': 'Progressive asks the EIN on the finish flow, which is the agent\'s (AdditionalDetails is ignored)',
     'applicant.yearEstablished': 'Progressive does not ask when the business was established',
     'applicant.yearsInBusiness': 'Progressive does not ask the years in business',
-    'applicant.email': 'the optional customer email is deliberately left blank (TNI workflow)',
     'applicant.owner2': 'Progressive asks for one business owner',
     'applicant.yearsExperience': 'Progressive does not ask the years under own authority',
     'operations.movingState': 'not asked by Progressive',

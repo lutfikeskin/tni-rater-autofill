@@ -295,6 +295,21 @@ test('Progressive gets the intake\'s phone in its three boxes; one that is no US
   assert.deepEqual(none.map((s) => [s.value, s.note, s.ignore]), [[null, null, false], [null, null, false], [null, null, false]]);
 });
 
+// The audit of 2026-11-19: left blank as optional, and typed by agents on 49 quotes, the intake's own on 44.
+test('Progressive gets the intake\'s email on More About Business; none on the intake is the agent\'s', () => {
+  const email = (value) => {
+    const record = baseRecord();
+    record.applicant.email = value;
+    return byQ(buildPlan(record, progressive, {}), '77');
+  };
+  const filled = email('client@example.test');
+  assert.deepEqual([filled.field, filled.path, filled.source, filled.value, filled.ignore], ['AccountInput.Email', 'applicant.email', 'intake', 'client@example.test', false]);
+  assert.equal(filled.value, buildPlan(baseRecord(), geico).find((s) => s.field === 'GiveEmail').value, 'the same answer as GEICO\'s');
+  assert.deepEqual([email(null).value, email(null).ignore], [null, false]);
+  // The Save Quote window's own email box stays the agent's.
+  assert.equal(byQ(buildPlan(baseRecord(), progressive, {}), '2D55').ignore, true);
+});
+
 // Progressive asks it since 2026-11-17 (required). The intake has one phone box and no kind.
 test('Progressive\'s "Is this a mobile phone number?" is the agent\'s, never filled', () => {
   const step = buildPlan(baseRecord(), progressive, {}).find((s) => s.field === 'MailingAddressInput.PrimaryPhoneNumberType');
@@ -305,7 +320,7 @@ test('Progressive\'s "Is this a mobile phone number?" is the agent\'s, never fil
 
 test('Progressive preserves optional and server-owned controls', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  for (const q of ['18F', '194', '1CC', '77', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
+  for (const q of ['18F', '194', '1CC', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
     assert.equal(byQ(plan, q).ignore, true, `q${q} is preserved`);
   }
   // Maryland's own PIP list is no longer kept as Progressive set it: "$2,500 Full PIP" (TNI,

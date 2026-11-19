@@ -978,7 +978,10 @@ export const progressive = {
       // isn't picked (no rule here fills its boxes): the agent's, with a note (TNI, 2026-10-28).
       { concept: 'business.address', q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
         firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
-      { concept: 'business.contact', q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
+      // The intake's email, as GEICO gets it. The first workflow left the box blank; agents then
+      // typed an email into it on 49 quotes of 2026-11-03 to 2026-11-17, the intake's own on 44
+      // (the audit of 2026-11-19).
+      { concept: 'business.contact', q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', path: 'applicant.email', name: 'Customer email' },
       { concept: 'prior.currently-insured', tni: 'progressive.currently-insured', q: '81', source: currentlyInsuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsuredAnswer, note: currentlyInsuredNote },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
