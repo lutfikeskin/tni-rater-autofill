@@ -131,7 +131,7 @@ test('every carrier with rules says how the panel shows it: a logo on disk, its 
     assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
     assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
   }
-  const rater = (name) => ({ id: name.toLowerCase(), name, hosts: [], rules: [], useGenericRules: false });
+  const rater = (name) => ({ id: name.toLowerCase(), name, product: 'commercial-auto', hosts: [], rules: [], useGenericRules: false });
   assert.equal(ratersSaid([]), 'A rater.');
   assert.equal(ratersSaid([rater('Alpha')]), 'Alpha.');
   assert.equal(ratersSaid([rater('Alpha'), rater('Beta')]), 'Alpha or Beta.');
