@@ -9,7 +9,7 @@ import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import * as usage from '../usage-log.js';
 import { $, persistUnitForms, state } from './core.js';
 import { profileLater, save } from './intake.js';
-import { pageOf } from './usage.js';
+import { flushPendingTextChanges, pageOf } from './usage.js';
 import { intakeEdited, noteStaleFills, renderDock, renderSite, renderSteps, scheduleLayout, scrollBehavior } from './coordinator.js';
 import { refreshAnswers } from './fill.js';
 import { applyCheckChoice, claimsTextEdited, ntlAnswerEdited, ntlCargoEdited, ntlPrimaryEdited, renderAiSettings, reviewClaimsBox, reviewDriverGender } from './assistant.js';
@@ -486,6 +486,7 @@ function renderPickers() {
 
 // The agent picks driver (vehicle, trailer) `i` for the page in front.
 async function pickUnit(list, i) {
+  flushPendingTextChanges();
   // The agent says the form on the page is this one's: the form it was filled on before
   // (unitForms) no longer holds this form back.
   releaseUnitForms(list, i);

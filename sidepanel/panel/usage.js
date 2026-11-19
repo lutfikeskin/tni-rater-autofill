@@ -18,6 +18,187 @@ import { currentReportKey, stopNoteFor } from './report-model.js';
 // ---------------------------------------------------------------------------------------------
 // Usage recording (see src/usage.js for what is and isn't kept)
 
+// Free-text typing floods field_change (#587): coalesce consecutive free-text changes (plain text
+// boxes and textareas: kind 'text', neither combo nor date) on the same field into one settled
+// usage event carrying the first `before`, final `after`, and the last recorder tick's timestamp.
+// Agent-edit bookkeeping (agentKeys, answeredOnPage, settleRejectedAi, auto-fill) still runs
+// immediately on every recorder message; only the usage log write is deferred until the edit
+// settles. 4 s (~2.7 recorder ticks at 1.5 s) bridges brief pauses while reading the intake PDF
+// yet flushes promptly to storage. Any other usage event about to be logged flushes it first via
+// usage.beforeLog (preserving order before page_layout, fill_run, page_view, agent_click,
+// intake_closed, etc.), and page/step/unit/tab/intake/quote changes, fillPage start, recording
+// stop, and panel handoff/hide/close flush explicitly. Automatic follow-up fills that log nothing
+// do not split typing.
+const TEXT_SETTLE_MS = 4000;
+
+/**
+ * @typedef {object} PendingTextChange
+ * @property {number | null} tabId
+ * @property {string | null} carrier
+ * @property {string} page
+ * @property {string} pageKey
+ * @property {string | undefined} step
+ * @property {string} view
+ * @property {string | null} formsKey
+ * @property {string | null} session
+ * @property {string | null} intakeId
+ * @property {string} t
+ * @property {any} change
+ * @property {any} ctx
+ */
+/** @type {PendingTextChange | null} */
+let pendingText = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let pendingTextTimer = null;
+
+/** @param {any} c */
+function isCoalescedText(c) {
+  return c?.kind === 'text' && !c.combo && !c.date;
+}
+
+/**
+ * Canonical key for the unit forms on screen (GEICO's Vehicles / Drivers & Incidents), ignoring
+ * `blank` so typing into a blank form keeps coalescing while switching to another unit's form on
+ * the same step splits even when field keys repeat (e.g. ref:GiveFirstName).
+ * @param {any} forms
+ * @returns {string | null}
+ */
+function formsKeyOf(forms) {
+  if (!Array.isArray(forms) || !forms.length) return null;
+  const parts = forms.filter((f) => f && f.list && f.id).map((f) => `${f.list}:${f.id}`).sort();
+  return parts.length ? parts.join('|') : null;
+}
+
+/** @param {PendingTextChange} a @param {PendingTextChange} b */
+function samePendingText(a, b) {
+  return a.tabId === b.tabId
+    && a.carrier === b.carrier
+    && a.pageKey === b.pageKey
+    // A missing step on either side matches (AmWINS/GEICO ticks often alternate stepped and
+    // step-less on the same box); real step moves flush through noteStep / step_shown.
+    && (!a.step || !b.step || a.step === b.step)
+    && a.view === b.view
+    && (!a.formsKey || !b.formsKey || a.formsKey === b.formsKey)
+    && a.session === b.session
+    && a.intakeId === b.intakeId
+    && a.change.key === b.change.key
+    && !!a.change.agent === !!b.change.agent;
+}
+
+/**
+ * Whether an incoming usage.log batch should flush a pending text edit first.
+ * No-op automatic follow-up fills (auto === true with 0 filled, no clicks, no advance, no
+ * page_layout) still log fill_run when a frame has unfamiliar questions, a check hold, advanceDue
+ * or unlisted; flushing on those would split typing every ~600 ms. Everything else (page_layout,
+ * manual/opening fills, automatic fills that filled/clicked/advanced, page_view, agent_click,
+ * intake_closed, etc.) flushes first to preserve causal ordering.
+ * @param {any[]} events
+ */
+function shouldFlushBefore(events) {
+  if (!Array.isArray(events) || !events.length) return true;
+  const run = events.find((e) => e?.type === 'fill_run');
+  if (run && run.auto === true && !run.filled && !run.clicked?.length && !run.advanced
+    && events.every((e) => e?.type === 'fill_run' || e?.type === 'fill_field')) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Flushes any pending settled free-text field_change event to the usage log.
+ * When `tabId` is given, only flushes if the pending edit belongs to that tab.
+ * Returns the usage.log write promise (or a resolved promise if nothing was pending).
+ * @param {number} [tabId]
+ * @returns {Promise<void>}
+ */
+function flushPendingTextChanges(tabId) {
+  if (tabId !== undefined && pendingText?.tabId !== tabId) return Promise.resolve();
+  if (pendingTextTimer != null) {
+    clearTimeout(pendingTextTimer);
+    pendingTextTimer = null;
+  }
+  const pending = pendingText;
+  pendingText = null;
+  if (!pending) return Promise.resolve();
+  if (String(pending.change.before ?? '') === String(pending.change.after ?? '')) return Promise.resolve();
+  return usage.log({
+    carrier: pending.carrier,
+    page: pending.page,
+    view: pending.view,
+    t: pending.t,
+    session: pending.session,
+    intakeId: pending.intakeId,
+    ...fieldChangeEvent(pending.change, pending.ctx),
+  }) ?? Promise.resolve();
+}
+
+// Any other usage event about to be logged (except no-op automatic follow-ups) flushes a pending
+// text edit first, so page_layout, fill_run, page_view, agent_click, intake_closed, etc. never
+// land before the edit that preceded them.
+function registerTextChangeFlush() {
+  return usage.beforeLog?.((events) => {
+    if (shouldFlushBefore(events)) flushPendingTextChanges();
+  });
+}
+registerTextChangeFlush();
+
+/**
+ * Logs a batch of recorder field_changes: plain free-text edits coalesce into one event per settled
+ * edit, while choice/checkbox/radio/select/combo/date changes log immediately as before.
+ * @param {any[]} changes
+ * @param {{ tabId: number | null, carrier: string | null, page: string, step: string | undefined, view: string, forms?: any, session: any, ctx: any }} info
+ */
+function logFieldChanges(changes, { tabId, carrier, page, step, view, forms, session, ctx }) {
+  // Never coalesce text across an intake/session mismatch (loadFile before startSession, or a
+  // panel reopened with mismatched stored intake/session); log immediately uncoalesced as main did.
+  const sessionMismatch = !!(state.intake?.intakeId && session?.intakeId && state.intake.intakeId !== session.intakeId);
+  const pageKey = samePage(page);
+  const formsKey = formsKeyOf(forms);
+  const now = new Date().toISOString();
+  for (const c of changes) {
+    if (isCoalescedText(c) && !sessionMismatch) {
+      const filledEntry = ctx.filled?.get(c.key);
+      const hasLabel = ctx.labels?.has(c.key);
+      /** @type {PendingTextChange} */
+      const next = {
+        tabId,
+        carrier,
+        page,
+        pageKey,
+        step,
+        view,
+        formsKey,
+        session: session?.id ?? null,
+        intakeId: session?.intakeId ?? null,
+        t: now,
+        change: { ...c },
+        ctx: {
+          ...ctx,
+          filled: filledEntry ? new Map([[c.key, filledEntry]]) : new Map(),
+          labels: hasLabel ? new Map([[c.key, ctx.labels.get(c.key)]]) : new Map(),
+        },
+      };
+      if (pendingText && samePendingText(pendingText, next)) {
+        const keptStep = next.step ?? pendingText.step;
+        pendingText.change = { ...c, before: pendingText.change.before };
+        pendingText.step = keptStep;
+        pendingText.formsKey = next.formsKey ?? pendingText.formsKey;
+        pendingText.t = now;
+        pendingText.ctx = { ...next.ctx, step: keptStep };
+        if (pendingTextTimer != null) clearTimeout(pendingTextTimer);
+        pendingTextTimer = setTimeout(() => flushPendingTextChanges(), TEXT_SETTLE_MS);
+      } else {
+        flushPendingTextChanges();
+        pendingText = next;
+        pendingTextTimer = setTimeout(() => flushPendingTextChanges(), TEXT_SETTLE_MS);
+      }
+    } else {
+      flushPendingTextChanges();
+      usage.log({ carrier, page, view, ...fieldChangeEvent(c, ctx) });
+    }
+  }
+}
+
 // Progressive re-renders a page as "<Page>-Reload"; it's the same page.
 const samePage = (p) => (p ?? '').replace(/-Reload$/, '');
 // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
@@ -64,6 +245,7 @@ function onRecorderMessage(msg, sender, sendResponse) {
   // Layouts are of the quote page, the tab's top frame; a child frame names its own address.
   const layoutPage = sender.frameId ? pageOf(state.tab.url) : samePage(msg.page);
   if (msg.event === 'page_view') {
+    flushPendingTextChanges();
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     // A new page since this intake was loaded, or the first page of a tab opened since (the quote
     // Progressive opens in a new tab): this tab's layouts may be taken again. A tab that was
@@ -119,10 +301,11 @@ function onRecorderMessage(msg, sender, sendResponse) {
     // The step the changes were made on, as the recorder read it with them: the panel's own word on
     // the tab's step can come a message late, and GEICO's Vehicles is scoped per vehicle.
     const step = knownStep(state.tab.carrier, msg.step);
-    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt,
+    const session = usage.currentSession();
+    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: session?.keySalt,
       step };
     const view = viewOf(sender.tab.id, samePage(msg.page));
-    log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
+    if (!state.tab.carrier?.practice) logFieldChanges(msg.changes, { tabId: sender.tab?.id ?? null, carrier, page: msg.page, step, view, forms: msg.forms, session, ctx });
     scheduleLayout(layoutPage, 'changed');
     // The quote's state, by whoever picked it: remembered for this tab, checked against the intake.
     for (const c of msg.changes) {
@@ -185,9 +368,11 @@ function onRecorderMessage(msg, sender, sendResponse) {
     const step = knownStep(state.tab.carrier, msg.step) ?? tabStep(state.tab.carrier);
     if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && (switchOn('autoAdvance', 'auto-advance') || switchOn('autoPages', 'auto-pages'))) scheduleAutoFill(pageOf(state.tab.url));
   }
+  if (msg.event === 'step_shown') flushPendingTextChanges();
   // A button the agent clicked themselves (its text, redacted): a helper or a Continue by hand.
   // On a one-address application, the step it was on (a known step name only, as elsewhere).
   if (msg.event === 'agent_click') {
+    flushPendingTextChanges();
     const page = samePage(msg.page);
     const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
     log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
@@ -244,4 +429,4 @@ function agentHelperDone(carrier, page, step, text) {
   if (id === carrier.finishedBy && !doneBefore) noteQuoteDone();
 }
 
-export { ensureRecorder, onRecorderMessage, pageOf, samePage, tellRecorder };
+export { TEXT_SETTLE_MS, ensureRecorder, flushPendingTextChanges, onRecorderMessage, pageOf, samePage, tellRecorder };
