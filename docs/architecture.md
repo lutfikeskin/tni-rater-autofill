@@ -44,7 +44,7 @@ Each layer knows only the one below it, and a carrier's knowledge lives in that 
 
 | Layer | Holds | Where |
 | --- | --- | --- |
-| Intake | The PDF's fillable fields read and normalized into the client record | [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js) |
+| Intake | The PDF's fillable fields read, detected by form and normalized into the client record | [intake.js](../src/intake.js), [intake-forms.js](../src/intake-forms.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js) |
 | TNI rules | TNI's decisions for every carrier: the standard coverage amounts ([standards.js](../src/standards.js)), and the shared helpers that compute answers (the owner and their driver row, owner drives, no prior insurance, GL and trailer interchange requested, whether the garaging state is a given state, currently insured and the current limit, a recent model year, vehicle and trailer loan / lease, which federal filings the intake names) | [standards.js](../src/standards.js), [util.js](../src/util.js), [src/answers/](../src/answers/) (one module per subject: [classes.js](../src/answers/classes.js), [state.js](../src/answers/state.js), [vehicles.js](../src/answers/vehicles.js), [insurance.js](../src/answers/insurance.js), [owner.js](../src/answers/owner.js): the owner, their driver row and owner drives, [filings.js](../src/answers/filings.js): which federal filings, for GEICO, AmWINS and Progressive, [claims.js](../src/answers/claims.js): the note on the incident and loss rows a claims Yes opens), the rulebook's [general part](../src/ai/rulebook/general.js) |
 | Carrier mapping | Which of the carrier's questions holds which answer, in its wording and options, and what each question is about (its `concept`, one catalog for every carrier: [concepts.js](../src/concepts.js), the matrix in [concepts.md](concepts.md)); its steps, helpers and stop pages | `src/carriers/<carrier>.js`, the rulebook's carrier part |
 | Plan | The mapping resolved for one client: one step per answer, with its source | [plan.js](../src/plan.js) |
@@ -54,6 +54,17 @@ Each layer knows only the one below it, and a carrier's knowledge lives in that 
 
 A carrier's files import only the shared layers, never another carrier's. Each plan step and report item carries one resolution (answer, method, explanation, status; [intake and rules](intake-and-rules.md#resolution)), built from its source and flags and held to them by tests; the panel's review list, the AI's eligibility and the usage log read it. Next, each a change of its own: whether the old fields can go, and the client record keeps where each value came from.
 
+## Products and adding a new line of business
+
+The extension currently quotes Commercial Auto only, but four thin seams separate product identity from carrier and intake logic so a second line of business (such as Personal Auto) can be added without rewriting shared plumbing:
+
+- **Product catalog ([products.js](../src/products.js))**: lists `PRODUCTS` (today `commercial-auto`), `DEFAULT_PRODUCT`, and `productOf(record)` (which falls back to `DEFAULT_PRODUCT` for saved records from earlier builds and fixtures without a `product` field).
+- **Intake form registry ([intake-forms.js](../src/intake-forms.js))**: `INTAKE_FORMS` pairs each PDF form's `detect(raw)` predicate with its `normalize(raw, opts)` function; `readIntake(raw, opts)` detects the form and routes to its normalizer, which stamps `record.product`.
+- **Carrier product tagging ([carriers.js](../src/carriers.js), [types.js](../types.js))**: every `CarrierConfig` declares `product` (enforced by [test/new-carrier.test.mjs](../test/new-carrier.test.mjs)).
+- **Product-scoped carrier matching**: `carrierForUrl(url, { product })` filters carriers to the loaded intake's product when provided (and matches all carriers when omitted/null), so two products' configs can share a carrier's host (Progressive's hosts are `*.foragentsonly.com` and `*.progressive.com`, whatever the product; where its personal-auto quoting lives has not been captured yet). The side panel passes the loaded intake's product when resolving the active tab ([tab.js](../sidepanel/panel/tab.js)) and quote ownership ([quote-owner.js](../sidepanel/panel/quote-owner.js)).
+
+Commercial-auto-specific areas intentionally left untouched until a second product is built: record `SECTIONS` and panel display/edit labels ([schema.js](../src/schema.js)), review-mode `supportedClasses` gating ([plan.js](../src/plan.js), [classes.js](../src/answers/classes.js)), commercial answer helpers ([src/answers/](../src/answers/)), Luna's rulebook and prompt ([src/ai/](../src/ai/)), the usage event schema ([usage.js](../src/usage.js), [usage-schema.js](../src/usage-schema.js)), `clearClient` in [pdf-view.js](../sidepanel/panel/pdf-view.js) (leaves `state.tab.carrier` computed for the cleared intake's product until the next tab event rather than calling `refreshTab()`), and pre-intake `noteQuoteTab` / `noteNewTab` in [quote-owner.js](../sidepanel/panel/quote-owner.js) (resolve `quotePage` with `product: null`, matching the first carrier on a shared host).
+
 ## Design direction, not implemented guarantees
 
 Represent confirmed facts with their source and entity identity. Separate shared concepts from carrier wording, then apply explicit state/product/entity conditions and narrow combination exceptions. Conflicts or missing evidence should lead to review. An unseen combination must not become trusted merely because familiar questions matched.
@@ -62,6 +73,7 @@ Measure automatic-answer accuracy, the share automated, and whole-quote correctn
 
 ## Related code
 
+- [products.js](../src/products.js), [intake-forms.js](../src/intake-forms.js): product catalog and intake form registry.
 - [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js): extraction and record.
 - [plan.js](../src/plan.js), [carriers.js](../src/carriers.js): plans and carrier registration.
 - [src/agent-defaults/](../src/agent-defaults/): agents' own defaults in place of TNI's standard amounts ([spec](agent-defaults-spec.md)); it plugs into `planFor` and Luna's rulebook only, through their generic hooks. The panel's part, [sidepanel/panel/agent-defaults/](../sidepanel/panel/agent-defaults/), keeps the agent's profiles (Settings → Your defaults), asks each quote whose defaults it fills with, and holds filling until the agent answers. Agents' store build has none of it until TNI's managers approve it (`RELEASED_TO_AGENTS`); the rest of the panel reads it through the names it exports.

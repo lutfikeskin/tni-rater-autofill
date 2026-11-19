@@ -990,6 +990,7 @@ const named = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => (rule
 export const geico = {
   id: 'geico',
   name: 'GEICO',
+  product: 'commercial-auto',
   // The quote is started from the agent gateway.
   display: { logo: 'assets/raters/geico.gif', portalUrl: 'https://gateway2.geico.com/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)geico\.com$/],

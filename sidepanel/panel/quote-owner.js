@@ -20,6 +20,7 @@
 // (`layoutUrl`, else `autoFillUrl`; a practice page is all quote).
 // One part of the panel; sidepanel.js wires the parts together.
 import { carrierForUrl } from '../../src/carriers.js';
+import { productOf } from '../../src/products.js';
 import * as usage from '../usage-log.js';
 import { state, store } from './core.js';
 
@@ -54,7 +55,8 @@ async function restoreQuoteOwners() {
 // Whether the address is one of a carrier's quote pages (null: not a rater's).
 /** @param {string | undefined} url @returns {boolean | null} */
 function quotePage(url) {
-  const carrier = url ? carrierForUrl(url) : null;
+  const product = state.intake ? productOf(state.intake.record) : null;
+  const carrier = url ? carrierForUrl(url, { product }) : null;
   if (!carrier) return null;
   const pages = carrier.layoutUrl ?? carrier.autoFillUrl;
   return !pages || pages.test(url);

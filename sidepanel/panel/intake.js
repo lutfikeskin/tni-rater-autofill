@@ -3,7 +3,8 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import * as pdfjs from '../../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
-import { noNumberEdit, normalizeIntake, rederive } from '../../src/normalize.js';
+import { noNumberEdit, rederive } from '../../src/normalize.js';
+import { readIntake } from '../../src/intake-forms.js';
 import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
 import { get, set } from '../../src/util.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -41,7 +42,7 @@ async function loadFile(file, { reset = false } = {}) {
   if (!Object.keys(raw).length) {
     return showLoadError('No fillable fields: it looks like a scan or printed copy. Ask for the fillable TNI application.', file.name);
   }
-  const result = normalizeIntake(raw);
+  const result = readIntake(raw);
   if ('error' in result) return showLoadError(result.error, file.name);
   const summary = await intakeSummary(bytes, raw, result);
   const test = (await testIntakes.get()).includes(summary.intakeId);

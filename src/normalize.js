@@ -840,7 +840,7 @@ function licenseBox(box) {
   return { license: /\d/.test(before ?? '') ? before : null, excluded: true };
 }
 
-const KNOWN_FIELDS = new Set([
+export const KNOWN_FIELDS = new Set([
   'date_of_application', 'email', 'dot_number', 'mc_number', 'mc_dot_60days', 'phone_number', 'company_name',
   'year_established', 'owner_name_1', 'owner_name_2', 'owner_drives', 'years_experience', 'garaging_address',
   'fed_state_filings', 'filings_which', 'haul_hazmat', 'hazardous_placard', 'moving_state', 'biz_class',
@@ -992,15 +992,27 @@ function tenureChecks(record) {
   return [{ code: 'prior.tenure', path: inNotes ? 'notes.text' : 'claims.text', level: 'check', msg: `Time with insurer: "${tenure.line.slice(0, 160)}". ${then}` }];
 }
 
+export const UNKNOWN_INTAKE_ERROR = "This PDF doesn't look like the TNI Commercial Quote Application (its form fields don't match).";
+
+/**
+ * Whether a PDF's raw AcroForm field map carries enough of the TNI Commercial Quote Application fields.
+ * @param {Record<string, string | boolean>} raw
+ * @returns {boolean}
+ */
+export function isCommercialAutoIntake(raw) {
+  if (!raw || typeof raw !== "object") return false;
+  const present = Object.keys(raw).filter((k) => KNOWN_FIELDS.has(k));
+  return present.length >= KNOWN_FIELDS.size * 0.6;
+}
+
 /**
  * @param {Record<string, string|boolean>} raw  field name -> value, from readIntakeFields()
  * @param {{ today?: Date }} [opts]
  * @returns {IntakeResult | { error: string }}
  */
 export function normalizeIntake(raw, { today = new Date() } = {}) {
-  const present = Object.keys(raw).filter((k) => KNOWN_FIELDS.has(k));
-  if (present.length < KNOWN_FIELDS.size * 0.6) {
-    return { error: "This PDF doesn't look like the TNI Commercial Quote Application (its form fields don't match)." };
+  if (!isCommercialAutoIntake(raw)) {
+    return { error: UNKNOWN_INTAKE_ERROR };
   }
 
   const warnings = [];
@@ -1037,6 +1049,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   /** @type {Record<string, string[]>} */
   const readFrom = {};
   const record = {
+    product: 'commercial-auto',
     applicant: {
       name: companyName(companyAsWritten),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { CARRIERS, RATERS, ratersSaid } from '../src/carriers.js';
+import { PRODUCTS } from '../src/products.js';
 
 // Audit 2026-11-07, ORG-16: adding a carrier touches about a dozen places, listed only in
 // docs/new-carrier.md's prose. The new-carrier issue template lists each as a box; this keeps the
@@ -130,7 +131,7 @@ test('every carrier with rules says how the panel shows it: a logo on disk, its 
     assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
     assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
   }
-  const rater = (name) => ({ id: name.toLowerCase(), name, hosts: [], rules: [], useGenericRules: false });
+  const rater = (name) => ({ id: name.toLowerCase(), name, product: 'commercial-auto', hosts: [], rules: [], useGenericRules: false });
   assert.equal(ratersSaid([]), 'A rater.');
   assert.equal(ratersSaid([rater('Alpha')]), 'Alpha.');
   assert.equal(ratersSaid([rater('Alpha'), rater('Beta')]), 'Alpha or Beta.');
@@ -143,4 +144,12 @@ test('every carrier with rules says how the panel shows it: a logo on disk, its 
 test('docs/new-carrier.md and the template name the carrier\'s display', () => {
   assert.match(read('docs/new-carrier.md'), /`display`/);
   assert.match(template, /`display`/);
+});
+
+test('every registered carrier declares a known product', () => {
+  const known = new Set(PRODUCTS.map((p) => p.id));
+  assert.ok(CARRIERS.length > 0);
+  for (const c of CARRIERS) {
+    assert.ok(known.has(c.product), `${c.id}: declares a product in PRODUCTS (src/products.js), got ${JSON.stringify(c.product)}`);
+  }
 });

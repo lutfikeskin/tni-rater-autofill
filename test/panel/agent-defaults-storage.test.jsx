@@ -200,7 +200,7 @@ test('loadFile holds defaults while loading and releases the loading hold when a
       pdfjs: {},
       readIntakeFields: async () => ({ synthetic: true }),
       readIntakePlaces: async () => null,
-      normalizeIntake: () => ({ record: {}, warnings: [] }),
+      readIntake: () => ({ record: {}, warnings: [] }),
       intakeSummary: async () => ({ intakeId }),
       testIntakes: { get: async () => [] },
       stopFillFirst: async () => {},
