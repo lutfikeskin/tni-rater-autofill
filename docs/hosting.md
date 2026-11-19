@@ -387,6 +387,12 @@ opens one titled "Daily review" when none is open. New means:
 - two days without any event received (test runs don't count);
 - a run that couldn't finish, because the server was down or a script broke.
 
+The workflow leaves the maintainer's test quotes out when the repository secret `RATER_TEST_LIST`
+holds the text of `reviews/test-intakes.txt` (PDF fingerprints and `agent:` lines; the file itself
+is git-ignored, and the repository is public). Without the secret its review counts them as agents'
+work and says so in the run's log ("No test-run list"). Update the secret when the list changes:
+`gh secret set RATER_TEST_LIST < reviews/test-intakes.txt`.
+
 Nothing new, no comment. Two quiet days get one comment, with the day the last event arrived, from
 the run whose window holds the moment the quiet reached 48 hours. From 2026-10-11 to 10-18 no events
 arrived and every run stayed silent, so a week without quotes looked the same as broken uploads.

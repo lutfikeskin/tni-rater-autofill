@@ -103,6 +103,17 @@ test('daily: the heartbeat leaves test runs out, and keeps the last receipt of e
   assert.equal(lastReceipts([]).lastReceived, null);
 });
 
+// The audit of 2026-11-19: the list is git-ignored, so the workflow's review ran without one and
+// counted the maintainer's test quotes as agents' work ("No test-run list" in every run's log).
+test('daily: the workflow gives the review the test-run list when its secret is set, and never prints it', () => {
+  const workflow = fs.readFileSync(new URL('../.github/workflows/daily-review.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /RATER_TEST_LIST: \$\{\{ secrets\.RATER_TEST_LIST \}\}/);
+  assert.match(workflow, /printf '%s\\n' "\$RATER_TEST_LIST" > "\$RUNNER_TEMP\/test-intakes\.txt"/, 'written outside the checkout');
+  assert.match(workflow, /node scripts\/review\.mjs server-data --since "\$SINCE" --out "\$FILE" --summary review-summary\.json "\$\{TESTS\[@\]\}"/);
+  assert.equal((workflow.match(/RATER_TEST_LIST/g) ?? []).length, 5, 'the header, the env line, and the step that writes it: echoed nowhere else');
+  assert.doesNotMatch(workflow, /(echo|cat|tee)[^\n]*(RATER_TEST_LIST|test-intakes\.txt)/);
+});
+
 test('daily: a run on this computer says where its review and log are', () => {
   // 2026-10-20 on #50: "usage server skipped" with no reason read like a failure.
   assert.match(commentBody({ since: 's', problems: [{ text: 'x' }], server: 'skipped', serverNote: 'run on claude/x, not the default branch', review: 'r.md' }, '2026-10-20'),
