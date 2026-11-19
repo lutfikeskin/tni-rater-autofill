@@ -290,6 +290,14 @@ test('Progressive gets the intake\'s phone in its three boxes; one that is no US
   assert.deepEqual(unread.map((s) => s.value), [null, null, null]);
   assert.ok(unread.every((s) => s.note === 'The intake\'s phone isn\'t a 10-digit number: enter it yourself.'));
   assert.equal(buildPlan({ ...baseRecord(), applicant: { ...baseRecord().applicant, phone: '555-12' } }, geico).find((s) => s.field === 'GivePhoneNumber').note, unread[0].note, 'one note for every carrier');
+  // A number the agent typed in the panel is kept as the intake's are (parseEdit), and one kept as
+  // digits by an older build is still a number: no note, the parts filled (CodeRabbit on #565).
+  assert.equal(parseEdit('phone', '4025550142'), '(402) 555-0142');
+  assert.equal(parseEdit('phone', '402-555-0142'), '(402) 555-0142');
+  assert.equal(parseEdit('phone', '555-12'), '555-12', 'what isn\'t a number keeps its text, for the check');
+  const digits = parts('4025550142');
+  assert.deepEqual(digits.map((s) => [s.value, s.note]), [['402', null], ['555', null], ['0142', null]]);
+  assert.equal(buildPlan({ ...baseRecord(), applicant: { ...baseRecord().applicant, phone: '4025550142' } }, geico).find((s) => s.field === 'GivePhoneNumber').note, null, 'nor a note on GEICO');
   // No phone on the intake: nothing to type and nothing to say; the page's own boxes stay the agent's.
   const none = parts(null);
   assert.deepEqual(none.map((s) => [s.value, s.note, s.ignore]), [[null, null, false], [null, null, false], [null, null, false]]);

@@ -1486,6 +1486,7 @@ export function parseEdit(kind, text) {
     case 'money': return toMoney(s) ?? s;
     case 'date': return toDate(s) ?? s;
     case 'state': return stateCode(s) ?? s.toUpperCase();
+    case 'phone': return toPhone(s) ?? s;
     default: return s;
   }
 }
