@@ -149,11 +149,11 @@ async function loadFile(file, { reset = false } = {}) {
     render();
     refreshTab();
     reviewIntake();
-    // agent defaults: a new quote, asked again whose defaults it fills with.
-    refreshDefaults();
   } finally {
     state.resetDepth -= 1;
     state.resetting = state.resetDepth > 0;
+    // agent defaults: a new quote, asked again whose defaults it fills with (also on load failure).
+    if (!state.resetting) refreshDefaults();
   }
 }
 
