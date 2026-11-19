@@ -54,9 +54,9 @@ const drafted = live ? await proposeRules(candidates, { apiKey, max }) : null;
 if (args.includes('--json')) {
   console.log(JSON.stringify({ quotes: result.quotes, intakes: result.intakes, testRunsLeftOut: result.testRunsLeftOut, candidates,
     drafted: drafted && { ...drafted, results: drafted.results.map(({ candidate, ...r }) => ({ question: candidate, ...r })) } }, null, 2));
-  process.exit(0);
+} else {
+  const text = proposalsMarkdown(candidates, drafted, { quotes: result.quotes, intakes: result.intakes, minIntakes, testRunsLeftOut: result.testRunsLeftOut });
+  const out = opt('out', null);
+  if (out) fs.writeFileSync(out, text);
+  console.log(text);
 }
-const text = proposalsMarkdown(candidates, drafted, { quotes: result.quotes, intakes: result.intakes, minIntakes, testRunsLeftOut: result.testRunsLeftOut });
-const out = opt('out', null);
-if (out) fs.writeFileSync(out, text);
-console.log(text);

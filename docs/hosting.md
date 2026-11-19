@@ -349,9 +349,16 @@ Locally: `RATER_DASHBOARD_TOKEN=<16+ characters> npm run server` (PowerShell: se
 ```bash
 npm run pull                         # all events -> server-data/events/
 npm run pull -- --since 2026-10-01
+npm run pull -- --allow-shrink       # overwrite a local day file that has more events than the export
 npm run review                       # then the usual review
 npm run push-logs -- some/export.json   # an agent's exported log, or an old local server's folder
 ```
+
+`npm run pull` is whole-or-nothing: a line that is not JSON or a downloaded day with fewer events
+than the local file already holds stops the pull (exit 1) before anything is written, leaving the
+local copy untouched. Every day is written to a temporary file in `server-data/events/` before the
+first rename into place. Pass `--allow-shrink` only when a shorter day is expected (for example
+after a server-side cleanup).
 
 ## Daily review
 
