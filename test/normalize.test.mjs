@@ -31,9 +31,10 @@ test('business details are cleaned up', () => {
   assert.equal(record.applicant.fein, null);
 });
 
-test('garaging address without commas is split and flagged', () => {
+// The split is clear (a unit, then a one-word city): no check (TNI, 2026-11-19).
+test('garaging address without commas is split, and a clear split asks nothing', () => {
   assert.deepEqual(record.garaging, { street: '125 Maple Leaf Dr', unit: 'Apt 4', city: 'Springfield', state: 'IL', zip: '62704' });
-  assert.match(msgs, /garaging\.city: Split an address with no commas/);
+  assert.doesNotMatch(msgs, /garaging\.city: Split an address with no commas/);
 });
 
 test('drivers: license prefix removed, two-word first name flagged, short dates fixed', () => {
@@ -481,6 +482,17 @@ test('garaging address checks: a run-together city and state, no ZIP, a guessed 
   assert.deepEqual(codes('12 Elm St, Covington, KY'), ['address.no-zip']);
   assert.deepEqual(codes('12 Elm St Covington Kentucky 41011'), ['address.no-commas']);
   assert.deepEqual(codes('PO Box 12 Somewhere'), ['address.unparsed']);
+  // No commas (TNI, 2026-11-19, audit of that day): a split as clear as one with commas asks
+  // nothing; one where the street could end at another word still asks.
+  for (const clear of ['12 Elm St Covington KY 41011', '9 Oak Ave N Fort Worth TX 76102', '1234 Hwy 60 W Morehead KY 40351',
+    '880 County Rd 12 Lima OH 45801', '100 Main St St Louis MO 63101', '123 Court St Springfield OH 45501', '7 Pine Rd Apt 2 Des Moines IA 50309']) {
+    assert.deepEqual(codes(clear), [], clear);
+  }
+  for (const unsure of ['123 Main St Glen Allen VA 23060', '123 Main St Bend OR 97701', '4500 Oak Ridge Henrico VA 23228',
+    '8 Park Ave Point Pleasant NJ 08742', '107 Burnt Hickory Dr SWCARTERSVILLE GA 30120', '5 Elm St North Little Rock AR 72114',
+    '12 Elm St Lake Forest Park City WA 98155', '12 Elm St Covington 41011 KY']) {
+    assert.deepEqual(codes(unsure), ['address.no-commas'], unsure);
+  }
   const joined = normalizeIntake({ ...raw, garaging_address: '4500 Oak Ridge Rd HENRICOVA 23228' }, { today: new Date('2026-09-30') });
   assert.deepEqual([joined.record.garaging.city, joined.record.garaging.state, joined.record.garaging.zip], [null, null, null]);
   assert.match(joined.warnings.find((w) => w.code === 'address.city-state-joined').msg, /run together/);
@@ -853,12 +865,22 @@ test('a suffix or a middle initial written in a name box is kept apart from the 
   const last = one('JORDAN', 'EXAMPLO III');
   assert.deepEqual(parts(last), ['JORDAN', null, 'EXAMPLO', 'III']);
   assert.match(last.warnings.find((w) => w.code === 'name.suffix').msg, /last-name box "EXAMPLO III" read as last name EXAMPLO/);
-  // Not a suffix or an initial: left as written, and two words still ask the agent.
+  // Not a suffix or an initial: left as written, and two words are noted.
   for (const first of ['A J', 'JUAN CARLOS', 'JR', 'JUNIOR']) {
     const r = one(first);
     assert.deepEqual(parts(r), [first, null, 'EXAMPLO', null], first);
     assert.equal(codes(r).includes('name.multi-word-first'), /\s/.test(first), first);
   }
+  // Two words are a note, not a check; the box asks the agent only where it looks wrong: three
+  // words or more, or the last name in it (TNI, 2026-11-19, audit of that day).
+  const level = (first, last = 'EXAMPLO') => one(first, last).warnings.find((w) => w.code === 'name.multi-word-first')?.level ?? null;
+  assert.equal(level('JUAN CARLOS'), 'info');
+  assert.equal(level('Mary Ann'), 'info');
+  assert.equal(level('JORDAN'), null);
+  assert.equal(level('JUAN CARLOS ANDRES'), 'check');
+  assert.equal(level('JORDAN EXAMPLO'), 'check');
+  assert.equal(level('Jordan Garcia', 'Garcia-Lopez'), 'check');
+  assert.match(one('JORDAN EXAMPLO').warnings.find((w) => w.code === 'name.multi-word-first').msg, /has the last name in it/);
   // The owner box with the suffix is still this driver (the owner's date of birth is linked).
   const owned = one('SAMPLE, JR', 'EXAMPLO', { owner_drives: true, owner_name_1: 'SAMPLE EXAMPLO JR' });
   assert.ok(!owned.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
