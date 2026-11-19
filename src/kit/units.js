@@ -10,12 +10,10 @@ import { withAdapter } from './adapter.js';
 
 /** @type {any} */
 let knownUnitMarkers = null;
-export const getKnownUnitMarkers = () => knownUnitMarkers;
 export const setKnownUnitMarkers = (markers) => { knownUnitMarkers = markers; };
 
 /** @type {string[]} */
 const knownUnitLists = [];
-export const getKnownUnitLists = () => knownUnitLists;
 
 /** @type {any} */
 let fillUnits = null;

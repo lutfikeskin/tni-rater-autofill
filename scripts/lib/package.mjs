@@ -171,8 +171,11 @@ export function stampCarrierRules(text, hashes) {
   }
   return text.replace(CARRIER_RULES_PLACEHOLDER, `const CARRIER_RULES = ${JSON.stringify(hashes)};`);
 }
-export const carrierRulesOf = async (root) => Object.fromEntries(await Promise.all(RULE_CARRIERS.map(async (id) =>
-  [id, await rulesHash(carrierRuleFiles(id).map((f) => fs.readFileSync(path.join(root, f), 'utf8')))])));
+/** @param {string} root @param {(string | { id: string, pageAdapter?: string })[]} [carriers] */
+export const carrierRulesOf = async (root, carriers = RULE_CARRIERS) => Object.fromEntries(await Promise.all(carriers.map(async (carrier) => {
+  const id = typeof carrier === 'string' ? carrier : carrier.id;
+  return [id, await rulesHash(carrierRuleFiles(carrier).map((f) => fs.readFileSync(path.join(root, f), 'utf8')))];
+})));
 export function rulesPlugin(root) {
   let stamped = false;
   return {

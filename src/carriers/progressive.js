@@ -34,8 +34,8 @@ import { companyName, companyStructure, companyStructureWarn, companyStructureNo
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
-import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
-import { HAZ_HAUL } from '../util.js';
+import { isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
+import { HAZ_HAUL, otherNotes } from '../util.js';
 import { filingsIntent } from '../answers/filings.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
@@ -805,6 +805,8 @@ export const progressive = {
     { name: 'Rates', pages: ['CoveragesRates', 'ChangePaymentPlan'] },
     { name: 'Print', pages: ['PrintEmailFax', 'PrintEmailFaxConfirm'] },
   ],
+  // Where Progressive quotes its premium (src/premium.js premiumHere).
+  premiumPages: ['CoveragesRates'],
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
     // Chrome opens the PDF only for the agent's own click (see the actions above).

@@ -3,15 +3,16 @@
 
 import { oneLine, squash, loose } from "./text.js";
 import {
-  adapter, currentPage, stepKey, stepIs, stopStepOn,
-  addStopSteps, pageAt, pageBusy, stepBars, perfNow, recentRequests, setComponentPrefix, watchRequests, watchingRequests, settle,
-  pause, stopWaitsWhen, INTERRUPTED, ratesStale, premiumReady, rated,
+  adapter, currentPage,
+  pageAt, pageBusy, perfNow, recentRequests, setComponentPrefix, watchRequests, watchingRequests, settle,
+  pause, stopWaitsWhen, INTERRUPTED, ratesStale, premiumReady,
 } from "./adapter.js";
 import {
   deepQueryAll, buttonText, collectControls, fieldKey, optionsOf,
   describe, hasValue, selectedText, invalidControl, shownNow,
   safeMatches, shownControl, otherStep, legendWords, REVIEW_LISTS, setNativeValue, setHiddenOk,
   getControlReads, keyIndex, controlOf, hiddenKeys,
+  stepKey, stepIs, stopStepOn, addStopSteps, stepBars, rated, receipt, signature,
 } from "./dom.js";
 import {
   COVERED, COVERED_HELPER, closedSection,
@@ -21,7 +22,6 @@ import { mark, clear } from "./marks.js";
 import { makePager, setFillUnits, getFillUnits, setKnownUnitMarkers, unitFormsNow } from "./units.js";
 import { guardEdits, EDIT_HALT, STOP_HALT, STOP_STEP_HALT, STEP_UNREAD_HALT } from "./guard.js";
 import { kitTrace } from "./trace.js";
-import { receipt, signature } from "./capture.js";
 import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
   heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, looseMatch, looseNote,

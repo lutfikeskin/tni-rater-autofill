@@ -398,3 +398,56 @@ test('sheetModel keeps a quote filled with the agent\'s own default apart from T
   assert.equal(mixed.questions[0].group, 'standard');
   assert.deepEqual(mixed.questions[0].proposal, { answer: null });
 });
+
+test('answer-key-sheet, benchmark and weekly-signals --key honor agent: lines, including earlier quotes on that install, while intake_marked still wins', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'answer-key-agents-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const sample = fs.readFileSync(path.join(root, 'test', 'fixtures', 'sample-intake.pdf'));
+  const intakes = path.join(dir, 'intakes');
+  fs.mkdirSync(intakes);
+  const ids = {};
+  for (const name of ['mine-before', 'mine', 'kept', 'agent']) {
+    const bytes = Buffer.concat([sample, Buffer.from(`\n% ${name}\n`)]);
+    fs.writeFileSync(path.join(intakes, `${name}.pdf`), bytes);
+    ids[name] = sha(bytes);
+  }
+  const meta = {
+    'mine-before': { install: 'laptop', agent: null },
+    mine: { install: 'laptop', agent: 'AD' },
+    kept: { install: 'laptop', agent: 'AD' },
+    agent: { install: 'desk', agent: 'JC' },
+  };
+  const events = [];
+  let at = Date.parse('2026-10-05T12:00:00Z');
+  for (const [session, intakeId] of Object.entries(ids)) {
+    const e = (x) => events.push({ id: `${session}${events.length}`, t: new Date(at += 1000).toISOString(), receivedAt: new Date(at).toISOString(), session, intakeId, ...meta[session], carrier: 'progressive', ...x });
+    e({ type: 'intake_loaded', carrier: undefined, state: 'MD', businessClass: 'Expediter' });
+    e({ type: 'fill_field', page: 'AddVehicle', view: 't1:v0', q: '2CCC', key: 'ref:RiskInput.CompCollIndicator', label: COMP, controlKind: 'radio', result: 'filled', path: 'progressive.q2CCC', shown: 'Yes' });
+  }
+  events.push({ id: 'kept-unmark', t: new Date(at += 1000).toISOString(), receivedAt: new Date(at).toISOString(), session: 'kept', intakeId: ids.kept, install: 'laptop', agent: 'AD', type: 'intake_marked', test: false });
+  const data = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(data, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'agent:AD\n');
+  const keyFile = path.join(dir, 'key.json');
+  fs.writeFileSync(keyFile, JSON.stringify({ kind: 'tni-answer-key', version: 1, questions: { [COMP_ID]: { answer: { value: 'Yes' }, ...by } }, quotes: Object.fromEntries(Object.values(ids).map((id) => [id, {}])) }));
+  const run = (script, ...args) => spawnSync(process.execPath, [path.join(root, 'scripts', script), data, '--intakes', intakes, '--tests', list, ...args], { cwd: dir, encoding: 'utf8' });
+
+  const sheetOut = path.join(dir, 'sheet.html');
+  const sheetRes = run('answer-key-sheet.mjs', '--out', sheetOut);
+  assert.equal(sheetRes.status, 0, sheetRes.stderr);
+  const model = JSON.parse(/<script type="application\/json" id="model">([\s\S]*?)<\/script>/.exec(fs.readFileSync(sheetOut, 'utf8'))[1]);
+  assert.deepEqual(model.intakes.map((i) => Object.keys(ids).find((k) => ids[k] === i.id)).sort(), ['agent', 'kept']);
+  assert.match(sheetRes.stdout, /\(2 test-run sessions left out;/);
+
+  const benchOut = path.join(dir, 'bench.md');
+  const benchRes = run('benchmark.mjs', '--key', keyFile, '--out', benchOut);
+  assert.equal(benchRes.status, 0, benchRes.stderr);
+  const benchMd = fs.readFileSync(benchOut, 'utf8');
+  assert.match(benchMd, /4 intakes keyed, 2 with recorded quotes here; test runs left out \(2 test-run sessions\)/);
+
+  const sigRes = run('weekly-signals.mjs', '--all', '--key', keyFile, '--json');
+  assert.equal(sigRes.status, 0, sigRes.stderr);
+  const sig = JSON.parse(sigRes.stdout);
+  assert.deepEqual([sig.quotes, sig.kpis.testRunsLeftOut, sig.kpis.answerKey.quotes], [2, 2, 2]);
+});
