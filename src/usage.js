@@ -8,8 +8,8 @@
 //  - text typed into boxes is never logged. It is compared with the intake on this computer and
 //    only the result is kept ("matches drivers[0].dob", "same as autofill except formatting").
 
-import { toMoney, toDate } from './normalize.js';
-import { noPriorInsurance } from './util.js';
+import { toDate } from './normalize.js';
+import { toMoney, noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
 import { redactionPattern } from './redaction.js';
 import { ID_LIKE, LIMIT, PROFILE_UNITS } from './usage-schema.js';

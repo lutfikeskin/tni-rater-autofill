@@ -1,10 +1,9 @@
 // @ts-check
 // Carrier page adapter (__raterAdapter), page identity, lifecycle, AJAX/request monitoring, and settling.
 
-import { oneLine, squash, sleep } from './text.js';
+import { oneLine, sleep } from './text.js';
 import { RATES_STALE } from '../rates.js';
 import { kitTrace, isTracing } from './trace.js';
-import { deepQueryAll, isVisible } from './dom.js';
 
 /** @import { PageAdapter, PageAdapterKit, PageAdapterShared } from '../../types.js' */
 
@@ -390,78 +389,3 @@ export function premiumReady() {
     || /\bquote\s+\$\s*[1-9][\d,]*\.\d{2}\s+due today\s+\$\s*[\d,]+\.\d{2}\s+total\b/i.test(text);
 }
 
-/**
- * Verifies whether a rating action has produced a verified premium.
- * @param {any} [a]
- * @returns {boolean}
- */
-export function rated(a) {
-  return premiumReady() && (!a?.ratedBy || deepQueryAll(document, a.ratedBy).some((el) => el.getClientRects().length));
-}
-
-/**
- * Returns step progress bar elements on screen.
- * @returns {Element[]}
- */
-export const stepBars = () => {
-  const own = adapter().selectors?.stepBar ?? [];
-  return own.length ? [...(document.querySelectorAll?.(own.join(', ')) ?? [])] : [];
-};
-
-/**
- * The bar's one part under way (0 < value < 100), by its words; '' when none or several are.
- * @returns {string}
- */
-export function barStep() {
-  const now = stepBars().filter((b) => { const v = Number(b.getAttribute('value')); return v > 0 && v < 100; });
-  return now.length === 1 ? oneLine(now[0].textContent) : '';
-}
-
-/**
- * Which step of a one-address application is on screen.
- * @returns {string}
- */
-export function stepKey() {
-  if (stepBars().length) {
-    const bar = barStep();
-    return squash(bar) && squash(document.title).includes(squash(bar)) ? bar : '';
-  }
-  return deepQueryAll(document, 'h1, h2, h3').filter(isVisible).map((h) => oneLine(h.textContent)).filter(Boolean).slice(0, 4).join(' / ');
-}
-
-/**
- * Whether the step on screen is one of names.
- * @param {string | string[]} names
- * @param {string} [key]
- * @returns {boolean}
- */
-export function stepIs(names, key = stepKey()) {
-  const parts = String(key ?? '').split(' / ').map(squash).filter(Boolean);
-  return [].concat(names ?? []).some((n) => !!squash(n) && parts.includes(squash(n)));
-}
-
-/** @type {string[]} */
-let knownStopSteps = [];
-
-export const getKnownStopSteps = () => knownStopSteps;
-
-/**
- * Adds stop steps to the known stop steps set.
- * @param {string[]} steps
- */
-export function addStopSteps(steps) {
-  if (steps?.length) knownStopSteps = [...new Set([...knownStopSteps, ...steps])];
-}
-
-/**
- * The step of stopSteps on screen, or ''.
- * @param {string[]} stopSteps
- * @returns {string}
- */
-export function stopStepOn(stopSteps) {
-  if (!stopSteps?.length) return '';
-  const bar = barStep();
-  const key = stepKey();
-  const title = squash(document.title);
-  return stopSteps.find((n) => stepIs([n], bar) || stepIs([n], key) || (!!squash(n) && title.includes(squash(n)))) ?? '';
-}

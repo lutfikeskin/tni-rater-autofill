@@ -2,7 +2,7 @@
 // Shadow-DOM traversal, form control harvesting, label resolution, geometry, and native DOM getters/setters.
 
 import { oneLine, squash, humanize, isPlaceholderOption } from './text.js';
-import { adapter, closestOwn, withAdapter, fieldRef, dataName } from './adapter.js';
+import { adapter, closestOwn, withAdapter, fieldRef, dataName, premiumReady } from './adapter.js';
 
 /**
  * @typedef {object} PageControlOption
@@ -491,4 +491,114 @@ export function cssPath(el) {
     parts.unshift(part);
   }
   return parts.join(' > ');
+}
+
+/**
+ * Verifies whether a rating action has produced a verified premium.
+ * @param {any} [a]
+ * @returns {boolean}
+ */
+export function rated(a) {
+  return premiumReady() && (!a?.ratedBy || deepQueryAll(document, a.ratedBy).some((el) => el.getClientRects().length));
+}
+
+/**
+ * Returns step progress bar elements on screen.
+ * @returns {Element[]}
+ */
+export const stepBars = () => {
+  const own = adapter().selectors?.stepBar ?? [];
+  return own.length ? [...(document.querySelectorAll?.(own.join(', ')) ?? [])] : [];
+};
+
+/**
+ * The bar's one part under way (0 < value < 100), by its words; '' when none or several are.
+ * @returns {string}
+ */
+export function barStep() {
+  const now = stepBars().filter((b) => { const v = Number(b.getAttribute('value')); return v > 0 && v < 100; });
+  return now.length === 1 ? oneLine(now[0].textContent) : '';
+}
+
+/**
+ * Which step of a one-address application is on screen.
+ * @returns {string}
+ */
+export function stepKey() {
+  if (stepBars().length) {
+    const bar = barStep();
+    return squash(bar) && squash(document.title).includes(squash(bar)) ? bar : '';
+  }
+  return deepQueryAll(document, 'h1, h2, h3').filter(isVisible).map((h) => oneLine(h.textContent)).filter(Boolean).slice(0, 4).join(' / ');
+}
+
+/**
+ * Whether the step on screen is one of names.
+ * @param {string | string[]} names
+ * @param {string} [key]
+ * @returns {boolean}
+ */
+export function stepIs(names, key = stepKey()) {
+  const parts = String(key ?? '').split(' / ').map(squash).filter(Boolean);
+  return [].concat(names ?? []).some((n) => !!squash(n) && parts.includes(squash(n)));
+}
+
+/** @type {string[]} */
+let knownStopSteps = [];
+
+export const getKnownStopSteps = () => knownStopSteps;
+
+/**
+ * Adds stop steps to the known stop steps set.
+ * @param {string[]} steps
+ */
+export function addStopSteps(steps) {
+  if (steps?.length) knownStopSteps = [...new Set([...knownStopSteps, ...steps])];
+}
+
+/**
+ * The step of stopSteps on screen, or ''.
+ * @param {string[]} stopSteps
+ * @returns {string}
+ */
+export function stopStepOn(stopSteps) {
+  if (!stopSteps?.length) return '';
+  const bar = barStep();
+  const key = stepKey();
+  const title = squash(document.title);
+  return stopSteps.find((n) => stepIs([n], bar) || stepIs([n], key) || (!!squash(n) && title.includes(squash(n)))) ?? '';
+}
+
+/**
+ * Computes a 53-bit cyrb53 fingerprint receipt of visible control states in the top frame.
+ * @returns {string | null}
+ */
+export function receipt() {
+  if (window !== window.top) return null;
+  const fillHidden = getHiddenOk();
+  let controls;
+  try {
+    setHiddenOk([]);
+    controls = collectControls();
+  } finally {
+    setHiddenOk(fillHidden);
+  }
+  const text = controls.filter((c) => !otherStep(c.el)).map((c) => `${fieldKey(c)}\u0001${c.label ?? ''}\u0001${shownNow(c)}`).join('\u0002');
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return `r1-${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+}
+
+/**
+ * Builds a string signature of all visible controls on screen.
+ * @returns {string}
+ */
+export function signature() {
+  return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
 }
