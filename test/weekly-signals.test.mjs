@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { NO_TEST_LIST, RESTRICTED, isRestricted, markdown, mask, readTestList, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
+import { NO_TEST_LIST, RESTRICTED, isRestricted, learnerTestRuns, markdown, mask, readTestList, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
 // Two quotes on two builds: what each left, held and reported.
 function week() {
@@ -507,4 +507,41 @@ test('testSessionsOf: the maintainer\'s initials make every quote on their compu
   const tests = testSessionsOf(events, [], { agents: ['AD', 'AYAZ'] });
   assert.deepEqual([...tests].sort(), ['mine', 'mine-before', 'pilot'], 'the latest mark in the panel still wins');
   assert.deepEqual([...testSessionsOf(events)], [], 'no initials, no change');
+});
+
+test('signals, learnerTestRuns and weekly-signals honor agent: lines, including earlier quotes on that install, while intake_marked still wins', (t) => {
+  const at = '2026-10-06T12:00:00Z';
+  const quote = (session, install, agent, extra = {}) => [
+    { id: `${session}1`, t: at, receivedAt: at, session, install, agent, type: 'intake_loaded', intakeId: `${session}0000000`, ...extra },
+    { id: `${session}2`, t: at, receivedAt: at, session, install, agent, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
+  ];
+  const events = [
+    ...quote('mine-before', 'laptop', null),
+    ...quote('mine', 'laptop', 'AD'),
+    ...quote('kept', 'laptop', 'AD'),
+    { id: 'kept3', t: at, receivedAt: at, session: 'kept', install: 'laptop', agent: 'AD', type: 'intake_marked', test: false },
+    ...quote('agent', 'desk', 'JC'),
+  ];
+  // Default (no agents) is unchanged.
+  const plain = signals(events, { since: '2026-10-06' });
+  assert.deepEqual([plain.quotes, plain.kpis.testRunsLeftOut], [4, 0]);
+  assert.deepEqual([...learnerTestRuns(events)], []);
+  // With agent: initials, both maintainer quotes leave (including the one before initials were typed); the unmarked one stays.
+  const filtered = signals(events, { since: '2026-10-06', testAgents: ['AD'] });
+  assert.deepEqual([filtered.quotes, filtered.kpis.testRunsLeftOut], [2, 2]);
+  assert.deepEqual([...learnerTestRuns(events, [], { agents: ['AD'] })].sort(), ['mine', 'mine-before']);
+  // A capped slice lacking intake_loaded still leaves out the maintainer install via learnerTestRuns.
+  const sliced = events.filter((e) => !(e.session === 'mine-before' && e.type === 'intake_loaded'));
+  assert.deepEqual([...learnerTestRuns(sliced, [], { agents: ['AD'] })].sort(), ['mine', 'mine-before']);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signals-agents-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(log, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'agent:AD\n');
+  const r = spawnSync(process.execPath, [path.join(repo, 'scripts', 'weekly-signals.mjs'), log, '--all', '--tests', list, '--json'], { encoding: 'utf8', cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual([out.quotes, out.kpis.testRunsLeftOut], [2, 2]);
 });

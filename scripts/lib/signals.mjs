@@ -101,14 +101,19 @@ export function readTestList({ tests = null, root = REPO } = {}) {
 // install that ever sent one of those initials, so a quote sent before they were typed in counts
 // too), and the agent's latest mark in the panel (intake_marked: marked, or unmarked after).
 // Shared with the review (scripts/review.mjs).
+const maintainerMatcher = (events, agents) => {
+  const own = new Set([...agents].map((a) => String(a).trim().toUpperCase()).filter(Boolean));
+  if (!own.size) return () => false;
+  const installs = new Set(events.filter((e) => e.install && own.has(String(e.agent ?? '').toUpperCase())).map((e) => e.install));
+  return (e) => own.has(String(e.agent ?? '').toUpperCase()) || (!!e.install && installs.has(e.install));
+};
+
 export function testSessionsOf(all, testIntakes = [], { agents = [] } = {}) {
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
   const bad = badFingerprints(listed);
   if (bad.length) throw new Error(tooShort(bad));
   const tests = new Set(listed);
-  const own = new Set([...agents].map((a) => String(a).trim().toUpperCase()).filter(Boolean));
-  const installs = new Set(all.filter((e) => e.install && own.has(String(e.agent ?? '').toUpperCase())).map((e) => e.install));
-  const maintainers = (e) => own.has(String(e.agent ?? '').toUpperCase()) || (!!e.install && installs.has(e.install));
+  const maintainers = maintainerMatcher(all, agents);
   const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && (isTest(e, tests) || maintainers(e))).map((e) => e.session));
   const marks = new Map();
   for (const e of all) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
@@ -118,17 +123,18 @@ export function testSessionsOf(all, testIntakes = [], { agents = [] } = {}) {
 
 // The test runs the learner's reports leave out (learn-rules, rule-proposals). A capped export or a
 // slice of days can lack a quote's intake_loaded, which testSessionsOf reads, while its other
-// events still carry the intake's fingerprint (learn() counts support by it): a listed fingerprint
-// is matched on those too, unless the agent's latest mark in the panel says the quote is no test
+// events still carry the intake's fingerprint (learn() counts support by it) or install/initials:
+// those are matched too, unless the agent's latest mark in the panel says the quote is no test
 // (CodeRabbit on PR #369).
-export function learnerTestRuns(events, testIntakes = []) {
-  const tests = testSessionsOf(events, testIntakes);
+export function learnerTestRuns(events, testIntakes = [], { agents = [] } = {}) {
+  const tests = testSessionsOf(events, testIntakes, { agents });
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  const maintainers = maintainerMatcher(events, agents);
   const marks = new Map();
   for (const e of events) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
   for (const e of events) {
-    if (!e.session || !e.intakeId || marks.get(e.session) === false) continue;
-    if (listed.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) tests.add(e.session);
+    if (!e.session || marks.get(e.session) === false) continue;
+    if ((e.intakeId && listed.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) || maintainers(e)) tests.add(e.session);
   }
   return tests;
 }
@@ -169,15 +175,16 @@ export function quoteOutcomes(events, quotes) {
 
 /**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
- * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
+ * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, testAgents?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
  *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests;
+ *   testAgents: maintainer initials whose installs' quotes are tests (readTestList().agents);
  *   answerKey: today's rules scored against TNI's answer key (answer-key.mjs scoreKey: `total`,
  *   `decided`, `quotes`, `entries`, `proposed`), when one is configured
  */
-export function signals(all, { since = null, top: n = 12, testIntakes = [], answerKey = null } = {}) {
+export function signals(all, { since = null, top: n = 12, testIntakes = [], testAgents = [], answerKey = null } = {}) {
   // An unparsable `since` means no period, not an error.
   const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : null;
-  const testSessions = testSessionsOf(all, testIntakes);
+  const testSessions = testSessionsOf(all, testIntakes, { agents: testAgents });
   const periodAll = from ? all.filter((e) => receivedAt(e) >= from) : all;
   // Test runs are left out of everything below, and counted.
   const events = periodAll.filter((e) => !testSessions.has(e.session));

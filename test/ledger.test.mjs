@@ -598,3 +598,37 @@ test('the ledger reads the test-run list as the review does, and says when it ha
   assert.equal(fromCrlf.weekly.prevQuotes, 35);
   assert.deepEqual(fromCrlf.items.map((x) => [x.id, x.status]), [['W42-03', 'ticked']]);
 });
+
+test('the ledger honors agent: lines in --tests, including earlier quotes on that install, while intake_marked still wins', (t) => {
+  if (spawnSync('git', ['--version']).status !== 0) { t.skip('git is not available here'); return; }
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-agents-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const a of [['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'empty']]) gitIn(dir)(...a);
+  const sha = gitIn(dir)('rev-parse', 'HEAD');
+  const at = '2026-10-14T12:00:00Z';
+  const quote = (session, install, agent) => [
+    { id: `${session}1`, t: at, receivedAt: at, session, install, agent, commit: sha, type: 'intake_loaded', intakeId: `${session}0000000` },
+    { id: `${session}2`, t: at, receivedAt: at, session, install, agent, commit: sha, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
+  ];
+  const events = [
+    ...quote('mine-before', 'laptop', null),
+    { id: 'mb3', t: at, receivedAt: at, session: 'mine-before', install: 'laptop', agent: null, commit: sha, carrier: 'progressive', type: 'fill_field', page: 'AddVehicle', result: 'failed', code: 'option.no-match' },
+    ...quote('mine', 'laptop', 'AD'),
+    ...quote('kept', 'laptop', 'AD'),
+    { id: 'kept3', t: at, receivedAt: at, session: 'kept', install: 'laptop', agent: 'AD', commit: sha, type: 'intake_marked', test: false },
+    ...quote('agent', 'desk', 'JC'),
+  ];
+  const data = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(data, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'agent:AD\n');
+  const body = path.join(dir, 'ledger.md');
+  fs.writeFileSync(body, `# Weekly review W42 (2026-10-06 – 2026-10-13)\n\n## Weekly numbers\n\n| Number | W42 |\n| --- | --- |\n| Quotes (any carrier · per carrier) | 35 · 42 |\n\n- [ ] W42-01 · S2 · Fix · Bad option · approved · merged ${sha.slice(0, 7)} · signature: \`symptom fill_field page=AddVehicle result=failed code=option.no-match\`\n`);
+  const r = spawnSync(process.execPath, [path.join(root, 'scripts', 'ledger.mjs'), data, '--ledger', body, '--main', 'HEAD', '--tests', list, '--json'], { cwd: dir, encoding: 'utf8', env: gitEnv() });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual([out.quotes, out.testRunsLeftOut], [2, 2], 'weekly numbers leave out both maintainer quotes and keep the unmarked one');
+  assert.equal(out.items[0].patterns[0].testOnly, true, 'the symptom on mine-before is a test run, not an agent quote');
+  assert.equal(out.items[0].patterns[0].tests, 1);
+});

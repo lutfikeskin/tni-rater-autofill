@@ -41,7 +41,7 @@ try { testList = readTestList({ tests: opt('tests', null) }); } catch (err) { co
 if (testList.warning) console.error(`Warning: ${testList.warning}`);
 
 const events = loadEvents(inputs);
-const tests = learnerTestRuns(events, testList.intakes);
+const tests = learnerTestRuns(events, testList.intakes, { agents: testList.agents });
 const rulesOpt = opt('rules');
 if (args.includes('--rules') && (!rulesOpt || rulesOpt.startsWith('--'))) {
   console.error('--rules needs a fingerprint, or all.');
