@@ -56,7 +56,7 @@ const gh = (...a) => {
     } catch (err) {
       if (err.code === 'ENOENT') fail('gh is not installed (https://cli.github.com), or not on PATH.');
       if (attempt < 2) continue;
-      throw new Error(`gh ${a.slice(0, 2).join(' ')}: ${String(err.stderr || err.message).trim().split('\n')[0]}`);
+      throw new Error(`gh ${a.slice(0, 2).join(' ')}: ${String(err.stderr || err.message).trim().split(/\r?\n/)[0]}`);
     }
   }
 };
@@ -70,7 +70,7 @@ const ledgerOpt = opt('ledger');
 let issue;
 if (ledgerOpt && !/^#?\d+$/.test(ledgerOpt)) {
   if (!fs.existsSync(ledgerOpt)) fail(`--ledger ${ledgerOpt}: no such file (or give the issue number).`);
-  const body = fs.readFileSync(ledgerOpt, 'utf8');
+  const body = fs.readFileSync(ledgerOpt, 'utf8').replace(/\r\n?/g, '\n');
   issue = { number: null, title: /^#\s+(.+)$/m.exec(body)?.[1].trim() ?? path.basename(ledgerOpt), body, comments: [], createdAt: null };
 } else {
   let number = ledgerOpt?.replace('#', '');

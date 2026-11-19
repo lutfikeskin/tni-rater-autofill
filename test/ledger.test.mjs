@@ -91,6 +91,18 @@ test('the ledger gives its period, weekly numbers and items; comment items only 
   assert.deepEqual(l.items.map((x) => [x.id, x.severity, !!x.inComment]), [['W42-01', 'S2', false], ['W42-02', 'S2', false], ['W43-01', 'S3', true]]);
 });
 
+test('the ledger parses CRLF line endings the same as LF', () => {
+  const title = 'Weekly review W42 (2026-10-06 – 2026-10-13)';
+  const body = `${BODY}\n- [x] W42-03 · S3 · Fix · Closed item · approved · PR #78 · signature: \`expect agent_click\`\n`;
+  const comment = '## Spot review\n\n- [ ] W42-02 · S1 · Fix · changed in a comment\n- [ ] W43-01 · S3 · Fix · New item · approved\n';
+  const lf = parseLedger(body, { title, comments: [comment] });
+  const crlf = parseLedger(body.replace(/\n/g, '\r\n'), { title, comments: [comment.replace(/\n/g, '\r\n')] });
+  assert.deepEqual(crlf, lf);
+  assert.equal(crlf.items.length, 4);
+  assert.equal(crlf.items.find((x) => x.id === 'W42-03').ticked, true);
+  assert.deepEqual(parseItemLine('- [x] W42-03 · S3 · Fix · Closed item · approved\r'), parseItemLine('- [x] W42-03 · S3 · Fix · Closed item · approved'));
+});
+
 // ---------- signatures ----------
 
 test('a structured signature names kind, event, conditions and scenario; free text only names events', () => {
@@ -576,4 +588,13 @@ test('the ledger reads the test-run list as the review does, and says when it ha
     assert.match(r.stderr, /needs a value|no such file|at least 8 hex/);
   }
   assert.ok(!fs.existsSync(path.join(dir, 'bad.md')), 'no report written from a bad list');
+
+  // A saved --ledger file with CRLF line endings gives its title, period, numbers and items.
+  const crlfBody = path.join(dir, 'ledger-crlf.md');
+  fs.writeFileSync(crlfBody, '# Weekly review W42 (2026-10-06 – 2026-10-13)\r\n\r\n## Weekly numbers\r\n\r\n| Number | W42 |\r\n| --- | --- |\r\n| Quotes (any carrier · per carrier) | 35 · 42 |\r\n\r\n- [x] W42-03 · S3 · Fix · Closed item · approved\r\n');
+  const fromCrlf = json(spawnSync(process.execPath, [path.join(root, 'scripts', 'ledger.mjs'), data, '--ledger', crlfBody, '--main', 'HEAD', '--tests', list, '--json'], { cwd: dir, encoding: 'utf8', env: gitEnv() }));
+  assert.equal(fromCrlf.ledger.title, 'Weekly review W42 (2026-10-06 – 2026-10-13)');
+  assert.deepEqual(fromCrlf.ledger.period, { from: '2026-10-06', to: '2026-10-13' });
+  assert.equal(fromCrlf.weekly.prevQuotes, 35);
+  assert.deepEqual(fromCrlf.items.map((x) => [x.id, x.status]), [['W42-03', 'ticked']]);
 });

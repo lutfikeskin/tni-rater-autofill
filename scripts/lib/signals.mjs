@@ -86,7 +86,7 @@ export function readTestList({ tests = null, root = REPO } = {}) {
   if (tests && !fs.existsSync(tests)) throw new Error(`--tests ${tests}: no such file.`);
   const fallback = path.join(root, 'reviews', 'test-intakes.txt');
   const file = tests || (fs.existsSync(fallback) ? fallback : null);
-  const lines = file ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
+  const lines = file ? fs.readFileSync(file, 'utf8').split(/\r\n|\r|\n/).map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
   const agents = [...new Set(lines.filter((l) => l.startsWith(AGENT_LINE)).map((l) => l.slice(AGENT_LINE.length).trim().toUpperCase()))];
   if (agents.includes('')) throw new Error(`${file}: an ${AGENT_LINE} line needs the initials after it.`);
   const listed = lines.filter((l) => !l.startsWith(AGENT_LINE));

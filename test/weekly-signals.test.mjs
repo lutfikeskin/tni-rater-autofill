@@ -346,11 +346,14 @@ test('readTestList: the repository\'s list or --tests, plus fixture PDFs, checke
     assert.throws(() => readTestList({ tests: path.join(root, 'missing.txt'), root }), /no such file/);
     fs.writeFileSync(other, 'abc\n');
     assert.throws(() => readTestList({ tests: other, root }), /at least 8 hex/);
-    // agent: lines name the maintainer's initials, apart from the fingerprints.
-    fs.writeFileSync(other, 'cafebabe\nagent:ad  # mine\nAGENT: Ayaz\nagent:AD\n');
+    // agent: lines name the maintainer's initials, apart from the fingerprints; CRLF parses the same.
+    const ownText = 'cafebabe\nagent:ad  # mine\nAGENT: Ayaz\nagent:AD\n';
+    fs.writeFileSync(other, ownText);
     const own = readTestList({ tests: other, root });
     assert.deepEqual(own.agents, ['AD', 'AYAZ']);
     assert.deepEqual(own.intakes.filter((x) => x.length < 64), ['cafebabe']);
+    fs.writeFileSync(other, ownText.replace(/\n/g, '\r\n'));
+    assert.deepEqual(readTestList({ tests: other, root }), own);
     fs.writeFileSync(other, 'agent:\n');
     assert.throws(() => readTestList({ tests: other, root }), /needs the initials/);
   } finally {
