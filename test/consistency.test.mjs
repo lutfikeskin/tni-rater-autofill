@@ -248,7 +248,17 @@ test('manifest and package versions match', () => {
 test('committed fixtures and captures hold no client data', () => {
   // captures/ may hold only ignored generated layouts, so a fresh checkout has none.
   const captures = fs.existsSync(path.join(root, 'captures')) ? walk('captures').filter((f) => !f.includes('generated')) : [];
-  const files = [...walk('test/fixtures'), ...captures].filter((f) => /\.(json|html|js|md)$/.test(f));
+  const aiEval = walk('test/ai-eval').filter((f) => /\.(json|md)$/.test(f));
+  assert.ok(aiEval.length > 0, 'expected JSON or MD files under test/ai-eval/');
+  // Not scanned: the sample intake PDFs under test/fixtures and test/bakeoff/. Their made-up client
+  // (a 17-character VIN, a 555 phone outside 555-01xx, an email on a .test domain other than
+  // example.test) reads as a real one to findPii, which can't tell them apart: they are kept
+  // synthetic by hand.
+  const files = [
+    ...walk('test/fixtures').filter((f) => /\.(json|html|js|md)$/.test(f)),
+    ...aiEval,
+    ...captures.filter((f) => /\.(json|html|js|md)$/.test(f)),
+  ];
   for (const f of files) {
     const hits = findPii(read(f));
     assert.deepEqual(hits.slice(0, 5), [], `${f} looks like it holds client data`);

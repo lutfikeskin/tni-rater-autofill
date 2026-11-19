@@ -60,6 +60,14 @@ jobs:
             if (!$ready) { throw 'Replay server did not become ready' }
             npm run e2e:extension
             if ($LASTEXITCODE -ne 0) { throw 'Packaged extension check failed' }
+            try {
+              $env:E2E_EXT_DIR = Join-Path $env:RUNNER_TEMP 'rater-store-package'
+              $env:E2E_CHANNEL = 'store'
+              npm run e2e:extension
+              if ($LASTEXITCODE -ne 0) { throw 'Store ZIP extension check failed' }
+            } finally {
+              Remove-Item Env:E2E_EXT_DIR, Env:E2E_CHANNEL -ErrorAction SilentlyContinue
+            }
           } finally {
             if (!$server.HasExited) { Stop-Process -Id $server.Id }
           }
