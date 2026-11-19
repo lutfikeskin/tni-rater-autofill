@@ -23,6 +23,25 @@ export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(
 // NEVER_ADVANCE), signing, paying and discarding a form among them. "Save & Continue" is not one, as
 // in pagekit, which reads it as Continue.
 export const RESTRICTED = NEVER_ADVANCE;
+// Minimum support for "Typed from the intake, unanswered by a fill": at least 3 quotes and at least
+// 20% of the quotes that reached the page (or step) in the period, so one-off edits stay out while
+// recurring ignored or unmapped intake boxes surface.
+export const TYPED_FROM_INTAKE_MIN_QUOTES = 3;
+export const TYPED_FROM_INTAKE_MIN_SHARE = 0.2;
+const TYPED_FROM_INTAKE_MAX_ROWS = 15;
+const FILL_ANSWERED = new Set(['filled', 'kept']);
+const fillAnswered = (e) => e.type === 'fill_field' && FILL_ANSWERED.has(e.result);
+const CHOICE_KINDS = new Set(['select', 'radio', 'checkbox', 'combo']);
+const isTypedKind = (kind) => !!kind && !CHOICE_KINDS.has(kind);
+const pageOf = (e) => `${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
+const pageKey = (e) => `${e.carrier}|${pageOf(e)}`;
+const questionOf = (e) => (e.q ? `q:${e.q}` : e.label ? `label:${mask(e.label)}` : null);
+const normalizeIntakePath = (p) => String(p).replace(/:part$/, '').replace(/\[\d+\]/g, '[]');
+const agentId = (e) => {
+  const initials = String(e.agent ?? '').trim().toUpperCase();
+  if (initials) return `agent:${initials}`;
+  return e.install ? `install:${e.install}` : null;
+};
 // The retry tally's lines (below) name a page, not a button: never a restricted action themselves.
 const RETRIED = 'Continue clicked again on ';
 const clickedAction = (action) => !action.startsWith(RETRIED) && isRestricted(action);
@@ -86,7 +105,7 @@ export function readTestList({ tests = null, root = REPO } = {}) {
   if (tests && !fs.existsSync(tests)) throw new Error(`--tests ${tests}: no such file.`);
   const fallback = path.join(root, 'reviews', 'test-intakes.txt');
   const file = tests || (fs.existsSync(fallback) ? fallback : null);
-  const lines = file ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
+  const lines = file ? fs.readFileSync(file, 'utf8').split(/\r\n|\r|\n/).map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
   const agents = [...new Set(lines.filter((l) => l.startsWith(AGENT_LINE)).map((l) => l.slice(AGENT_LINE.length).trim().toUpperCase()))];
   if (agents.includes('')) throw new Error(`${file}: an ${AGENT_LINE} line needs the initials after it.`);
   const listed = lines.filter((l) => !l.startsWith(AGENT_LINE));
@@ -101,14 +120,19 @@ export function readTestList({ tests = null, root = REPO } = {}) {
 // install that ever sent one of those initials, so a quote sent before they were typed in counts
 // too), and the agent's latest mark in the panel (intake_marked: marked, or unmarked after).
 // Shared with the review (scripts/review.mjs).
+const maintainerMatcher = (events, agents) => {
+  const own = new Set([...agents].map((a) => String(a).trim().toUpperCase()).filter(Boolean));
+  if (!own.size) return () => false;
+  const installs = new Set(events.filter((e) => e.install && own.has(String(e.agent ?? '').toUpperCase())).map((e) => e.install));
+  return (e) => own.has(String(e.agent ?? '').toUpperCase()) || (!!e.install && installs.has(e.install));
+};
+
 export function testSessionsOf(all, testIntakes = [], { agents = [] } = {}) {
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
   const bad = badFingerprints(listed);
   if (bad.length) throw new Error(tooShort(bad));
   const tests = new Set(listed);
-  const own = new Set([...agents].map((a) => String(a).trim().toUpperCase()).filter(Boolean));
-  const installs = new Set(all.filter((e) => e.install && own.has(String(e.agent ?? '').toUpperCase())).map((e) => e.install));
-  const maintainers = (e) => own.has(String(e.agent ?? '').toUpperCase()) || (!!e.install && installs.has(e.install));
+  const maintainers = maintainerMatcher(all, agents);
   const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && (isTest(e, tests) || maintainers(e))).map((e) => e.session));
   const marks = new Map();
   for (const e of all) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
@@ -118,17 +142,18 @@ export function testSessionsOf(all, testIntakes = [], { agents = [] } = {}) {
 
 // The test runs the learner's reports leave out (learn-rules, rule-proposals). A capped export or a
 // slice of days can lack a quote's intake_loaded, which testSessionsOf reads, while its other
-// events still carry the intake's fingerprint (learn() counts support by it): a listed fingerprint
-// is matched on those too, unless the agent's latest mark in the panel says the quote is no test
+// events still carry the intake's fingerprint (learn() counts support by it) or install/initials:
+// those are matched too, unless the agent's latest mark in the panel says the quote is no test
 // (CodeRabbit on PR #369).
-export function learnerTestRuns(events, testIntakes = []) {
-  const tests = testSessionsOf(events, testIntakes);
+export function learnerTestRuns(events, testIntakes = [], { agents = [] } = {}) {
+  const tests = testSessionsOf(events, testIntakes, { agents });
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  const maintainers = maintainerMatcher(events, agents);
   const marks = new Map();
   for (const e of events) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
   for (const e of events) {
-    if (!e.session || !e.intakeId || marks.get(e.session) === false) continue;
-    if (listed.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) tests.add(e.session);
+    if (!e.session || marks.get(e.session) === false) continue;
+    if ((e.intakeId && listed.some((id) => String(e.intakeId).toLowerCase().startsWith(id))) || maintainers(e)) tests.add(e.session);
   }
   return tests;
 }
@@ -151,7 +176,7 @@ export function quoteOutcomes(events, quotes) {
     const t = Date.parse(e.t);
     q.first = Math.min(q.first, t);
     q.last = Math.max(q.last, t);
-    const page = `${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
+    const page = pageOf(e);
     if (['page_view', 'fill_run', 'page_layout', 'fill_field', 'field_change'].includes(e.type)) q.lastPage = page;
     if (e.type === 'fill_run') q.seenWork = true;
     // Only after this quote's own fill: the page the panel opens on may be the previous client's
@@ -169,15 +194,16 @@ export function quoteOutcomes(events, quotes) {
 
 /**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
- * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
+ * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, testAgents?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
  *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests;
+ *   testAgents: maintainer initials whose installs' quotes are tests (readTestList().agents);
  *   answerKey: today's rules scored against TNI's answer key (answer-key.mjs scoreKey: `total`,
  *   `decided`, `quotes`, `entries`, `proposed`), when one is configured
  */
-export function signals(all, { since = null, top: n = 12, testIntakes = [], answerKey = null } = {}) {
+export function signals(all, { since = null, top: n = 12, testIntakes = [], testAgents = [], answerKey = null } = {}) {
   // An unparsable `since` means no period, not an error.
   const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : null;
-  const testSessions = testSessionsOf(all, testIntakes);
+  const testSessions = testSessionsOf(all, testIntakes, { agents: testAgents });
   const periodAll = from ? all.filter((e) => receivedAt(e) >= from) : all;
   // Test runs are left out of everything below, and counted.
   const events = periodAll.filter((e) => !testSessions.has(e.session));
@@ -206,7 +232,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const reached = new Map();
   for (const e of events) {
     if (!inPeriod.has(e.session) || !e.carrier || !e.page || !['page_view', 'fill_run', 'page_layout', 'fill_field'].includes(e.type)) continue;
-    const k = `${e.carrier}|${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
+    const k = pageKey(e);
     const s = reached.get(k) ?? new Map();
     if (!s.has(e.session)) s.set(e.session, Date.parse(e.t));
     reached.set(k, s);
@@ -241,7 +267,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   const failed = new Map();
   const failedCodes = new Map();
   for (const e of events) {
-    if (e.type !== 'fill_field' || ['filled', 'kept'].includes(e.result)) continue;
+    if (e.type !== 'fill_field' || FILL_ANSWERED.has(e.result)) continue;
     const once = `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}|${e.label ?? ''}`;
     const r = left.get(e.result) ?? new Set();
     if (r.has(once)) continue;
@@ -257,6 +283,62 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
       tally(failedCodes, e.code ?? `no code: ${mask(e.reason)}`);
     }
   }
+
+  // Typed from the intake on questions no fill answered: catches ignored or unmapped boxes where
+  // agents keep typing a value the intake already holds. Each quote counts once per question and
+  // once per matched intake path (paths only, never values).
+  const filledQuestions = new Set();
+  for (const e of events) {
+    if (!fillAnswered(e) || !e.carrier || !e.page) continue;
+    const q = questionOf(e);
+    if (q) filledQuestions.add(`${e.session}|${pageKey(e)}|${q}`);
+  }
+  const typedMap = new Map();
+  for (const e of events) {
+    if (e.type !== 'field_change' || e.by !== 'agent' || e.autofilled || !isTypedKind(e.kind)) continue;
+    if (!Array.isArray(e.matchesIntake) || !e.matchesIntake.length) continue;
+    if (!inPeriod.has(e.session) || !e.carrier || !e.page) continue;
+    const q = questionOf(e);
+    if (!q) continue;
+    const pk = pageKey(e);
+    if (filledQuestions.has(`${e.session}|${pk}|${q}`)) continue;
+    const k = `${pk}|${q}`;
+    let row = typedMap.get(k);
+    if (!row) {
+      row = { carrier: e.carrier, page: pageOf(e), pageKey: pk, question: q, label: e.label ? mask(e.label) : q, quotes: new Set(), agents: new Set(), paths: new Map() };
+      typedMap.set(k, row);
+    } else if (row.label === row.question && e.label) {
+      row.label = mask(e.label);
+    }
+    row.quotes.add(e.session);
+    const ag = agentId(e);
+    if (ag) row.agents.add(ag);
+    for (const raw of e.matchesIntake) {
+      const p = normalizeIntakePath(raw);
+      (row.paths.get(p) ?? row.paths.set(p, new Set()).get(p)).add(e.session);
+    }
+  }
+  const typedFromIntake = [...typedMap.values()]
+    .map((r) => {
+      const count = r.quotes.size;
+      const reachedQuotes = reached.get(r.pageKey)?.size ?? 0;
+      const share = reachedQuotes ? count / reachedQuotes : 0;
+      return {
+        carrier: r.carrier,
+        page: r.page,
+        question: r.question,
+        label: r.label,
+        quotes: count,
+        reached: reachedQuotes,
+        percent: reachedQuotes ? Math.round(share * 100) : 0,
+        paths: [...r.paths.entries()].map(([p, s]) => [p, s.size]).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])),
+        agents: r.agents.size,
+        _share: share,
+      };
+    })
+    .filter((r) => r.quotes >= TYPED_FROM_INTAKE_MIN_QUOTES && r._share >= TYPED_FROM_INTAKE_MIN_SHARE)
+    .sort((a, b) => b.quotes - a.quotes || b._share - a._share || a.carrier.localeCompare(b.carrier) || a.page.localeCompare(b.page) || a.label.localeCompare(b.label))
+    .map(({ _share, ...r }) => r);
 
   // What held Continue (fill_run blockerList), per quote.
   const blockers = new Map();
@@ -393,7 +475,6 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   // view (before 2026-11-07) matches a change in any view of its page (CodeRabbit on PR #413).
   // A question without a code (AmWINS, GEICO) by its label, masked as the report masks it: both
   // events log it redacted the same way, and neither logs the control's key (CodeRabbit on PR #413).
-  const questionOf = (e) => (e.q ? `q:${e.q}` : e.label ? `label:${mask(e.label)}` : null);
   const aiOnce = (e, view = e.view ?? '') => `${e.session}|${e.page}|${view}|${questionOf(e)}`;
   const putIn = new Map();
   for (const e of aiDecisions.filter((x) => (x.decision === 'accepted' || x.decision === 'auto') && questionOf(x))) {
@@ -500,6 +581,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     outcomes,
     funnel: Object.fromEntries([...funnel].map(([c, list]) => [c, { quotes: list.quotes, pages: list.pages.slice(0, 25) }])),
     left: Object.fromEntries([...left].map(([result, s]) => [result, { answers: s.size, top: top(leftQuestions.get(result), n) }])),
+    typedFromIntake,
     failed: top(failed, n),
     failedCodes: top(failedCodes, n),
     blockers: [...blockers].map(([b, s]) => [b, s.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
@@ -574,6 +656,18 @@ export function markdown(s, { noTestList = false } = {}) {
   }
   L.push('## Left to the agent', '', 'Each question counted once per quote, page and unit. unfamiliar: no rule; leftRequired: required and unanswered; noData: the intake has no answer; failed: the fill could not set it.', '');
   for (const [result, x] of Object.entries(s.left)) L.push(`**${result}**: ${x.answers}`, '', ...list(x.top), '');
+  L.push('## Typed from the intake, unanswered by a fill', '', `Questions no fill answered where agents typed an answer matching the intake, in at least ${TYPED_FROM_INTAKE_MIN_QUOTES} quotes and at least ${Math.round(TYPED_FROM_INTAKE_MIN_SHARE * 100)}% of quotes reaching the page or step. The rule ignores or has no rule for a question whose answer the intake holds; propose mapping it from the path shown, as a Decide item when a TNI workflow says to leave it blank.`, '');
+  if (!s.typedFromIntake?.length) {
+    L.push('None.', '');
+  } else {
+    const cell = (v) => String(v ?? '').replace(/\|/g, '\\|');
+    L.push('| Carrier | Page | Question | Quotes | Reached | Intake paths | Agents |', '| --- | --- | --- | --- | --- | --- | --- |');
+    for (const r of s.typedFromIntake.slice(0, TYPED_FROM_INTAKE_MAX_ROWS)) {
+      L.push(`| ${cell(r.carrier)} | ${cell(r.page)} | ${cell(r.label)} | ${r.quotes} (${r.percent}%) | ${r.reached} | ${cell(r.paths.map(([p, c]) => `${p} (${c})`).join(', '))} | ${r.agents} |`);
+    }
+    if (s.typedFromIntake.length > TYPED_FROM_INTAKE_MAX_ROWS) L.push('', `${s.typedFromIntake.length - TYPED_FROM_INTAKE_MAX_ROWS} more not shown.`);
+    L.push('');
+  }
   L.push('## Fill failures by reason', '', 'Each question once per quote, page and unit, by why it failed (its code; `kit.exception` is an error of the kit itself, a defect rather than a refusal; a build before codes by its text).', '', ...list(s.failedCodes), '', ...list(s.failed), '');
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');

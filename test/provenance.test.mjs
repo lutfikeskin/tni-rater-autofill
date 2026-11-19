@@ -9,13 +9,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildPlan, supportedClass, reviewWarn, SOURCES, AGENT_SOURCES } from '../src/plan.js';
 import { SECTIONS } from '../src/schema.js';
+import { RATERS } from '../src/carriers.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 
 // Every carrier with rules; those with TNI standards (docs/intake-and-rules.md).
-const RULE_CARRIERS = [progressive, amwins, geico];
-const STANDARD_CARRIERS = [progressive, amwins, geico];
+const RULE_CARRIERS = RATERS;
+const STANDARD_CARRIERS = RATERS;
 
 // An expediter with everything the intake can give (the shape of test/progressive.test.mjs).
 const expediter = () => ({
@@ -111,11 +112,7 @@ test('an intake-only rule reads the intake (source intake) and nothing else', ()
 // (`.leaf` / `?.leaf`, comments stripped). The rest is listed, each with its reason, so a new
 // intake field no rule reads (equipVehicle until 2026-10-09) can't go unnoticed.
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
-const SOURCE = {
-  progressive: stripComments(fs.readFileSync(new URL('../src/carriers/progressive.js', import.meta.url), 'utf8')),
-  amwins: stripComments(fs.readFileSync(new URL('../src/carriers/amwins.js', import.meta.url), 'utf8')),
-  geico: stripComments(fs.readFileSync(new URL('../src/carriers/geico.js', import.meta.url), 'utf8')),
-};
+const SOURCE = Object.fromEntries(RULE_CARRIERS.map((c) => [c.id, stripComments(fs.readFileSync(new URL(`../src/carriers/${c.id}.js`, import.meta.url), 'utf8'))]));
 // Not mapped on purpose, with the reason.
 const NOT_MAPPED = {
   progressive: {
@@ -225,8 +222,8 @@ test('every intake field is consumed by each carrier, or its absence is explaine
       const leaf = path.split('.').at(-1);
       return new RegExp(`\\??\\.${leaf}\\b`).test(SOURCE[carrier.id]);
     };
-    const notMapped = NOT_MAPPED[carrier.id];
-    const indirect = READ_INDIRECTLY[carrier.id];
+    const notMapped = NOT_MAPPED[carrier.id] ?? {};
+    const indirect = READ_INDIRECTLY[carrier.id] ?? {};
     for (const path of paths) {
       const listed = path in notMapped || path in indirect;
       if (consumed(path)) assert.ok(!(path in notMapped), `${carrier.id}: ${path} is consumed; drop it from NOT_MAPPED`);

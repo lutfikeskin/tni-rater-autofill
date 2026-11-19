@@ -7,12 +7,12 @@
 /** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
 import { kitTrace, setTracing, isTracing, traceReset, traceTail } from './trace.js';
-import { adapter, pageBusy, perfNow, stepKey, stopStepOn, settle, getKnownStopSteps, tallyWaits, waitsTallied } from './adapter.js';
-import { collectControls, fieldKey, describe, invalidControl } from './dom.js';
+import { adapter, pageBusy, perfNow, settle, tallyWaits, waitsTallied } from './adapter.js';
+import { collectControls, fieldKey, describe, invalidControl, stepKey, stopStepOn, getKnownStopSteps, receipt, signature } from './dom.js';
 import { mark, clear, markKey, reveal, aiBanner } from './marks.js';
 import { listed, unitList, unitListsNow, unitFormsNow } from './units.js';
 import { guardEdits, answerEdits, getAnswerEditSession, watchTyping, STOP_STEP_HALT, EDIT_HALT_ANSWERS } from './guard.js';
-import { capture, receipt, readBack, present, signature, decisionSnapshot } from './capture.js';
+import { capture, readBack, present, decisionSnapshot } from './capture.js';
 import { apply, agreesWith } from './apply.js';
 import { fill, progress, stop, stopRun } from './cursor.js';
 

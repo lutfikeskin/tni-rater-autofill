@@ -43,7 +43,7 @@ for (const p of inputs) if (!fs.existsSync(p)) fail(`No usage data at ${p}. Run 
 // Without one, the maintainer's test quotes count as agents' work: said on stderr and in the report.
 let testList;
 try { testList = readTestList({ tests: opt('tests') }); } catch (err) { fail(err.message); }
-const { intakes: testIntakes, warning: noTestList } = testList;
+const { intakes: testIntakes, agents: testAgents, warning: noTestList } = testList;
 if (noTestList) console.error(`Warning: ${noTestList}`);
 
 const repo = opt('repo');
@@ -56,7 +56,7 @@ const gh = (...a) => {
     } catch (err) {
       if (err.code === 'ENOENT') fail('gh is not installed (https://cli.github.com), or not on PATH.');
       if (attempt < 2) continue;
-      throw new Error(`gh ${a.slice(0, 2).join(' ')}: ${String(err.stderr || err.message).trim().split('\n')[0]}`);
+      throw new Error(`gh ${a.slice(0, 2).join(' ')}: ${String(err.stderr || err.message).trim().split(/\r?\n/)[0]}`);
     }
   }
 };
@@ -70,7 +70,7 @@ const ledgerOpt = opt('ledger');
 let issue;
 if (ledgerOpt && !/^#?\d+$/.test(ledgerOpt)) {
   if (!fs.existsSync(ledgerOpt)) fail(`--ledger ${ledgerOpt}: no such file (or give the issue number).`);
-  const body = fs.readFileSync(ledgerOpt, 'utf8');
+  const body = fs.readFileSync(ledgerOpt, 'utf8').replace(/\r\n?/g, '\n');
   issue = { number: null, title: /^#\s+(.+)$/m.exec(body)?.[1].trim() ?? path.basename(ledgerOpt), body, comments: [], createdAt: null };
 } else {
   let number = ledgerOpt?.replace('#', '');
@@ -107,7 +107,7 @@ if (!since) fail('No period: pass --since <date> (or --last <n>); the ledger tit
 if (Number.isNaN(Date.parse(since))) fail(`--since ${since} is not a date.`);
 since = new Date(since).toISOString();
 
-const testSessions = testSessionsOf(all, testIntakes);
+const testSessions = testSessionsOf(all, testIntakes, { agents: testAgents });
 const period = inPeriod(all, since);
 
 // git: the main branch the fixes merged into, as this clone knows it.
@@ -191,7 +191,7 @@ const buildRows = [...builds.values()].map((b) => {
 const free = ledger.items.filter((x) => x.signature && !x.signature.structured).map((x) => x.id);
 if (free.length) notes.push(`Free-text signatures, checked by hand (${free.join(', ')}): write them as \`expect …\` or \`symptom …\` to have them judged.`);
 for (const x of ledger.items.filter((i) => i.signature?.error)) notes.push(`${x.id}: signature not read: ${x.signature.error}.`);
-const kpis = signals(all, { since, testIntakes }).kpis;
+const kpis = signals(all, { since, testIntakes, testAgents }).kpis;
 const result = {
   ledger: { number: issue.number, title: ledger.title, week: ledger.week, period: ledger.period, createdAt: issue.createdAt },
   since,
@@ -205,10 +205,10 @@ const result = {
 };
 if (args.includes('--json')) {
   console.log(JSON.stringify(result, null, 1));
-  process.exit(0);
+} else {
+  const out = opt('out') ?? path.join('reviews', `ledger-${new Date().toISOString().slice(0, 10)}.md`);
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, markdown(result));
+  const count = (s) => items.filter((x) => x.status === s).length;
+  console.log(`${out}  (${items.length} items: ${count('verified')} verified, ${count('recurred')} recurred, ${count('not exercised')} not exercised, ${count('still open')} still open; ${kpis.quotes} quotes)`);
 }
-const out = opt('out') ?? path.join('reviews', `ledger-${new Date().toISOString().slice(0, 10)}.md`);
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, markdown(result));
-const count = (s) => items.filter((x) => x.status === s).length;
-console.log(`${out}  (${items.length} items: ${count('verified')} verified, ${count('recurred')} recurred, ${count('not exercised')} not exercised, ${count('still open')} still open; ${kpis.quotes} quotes)`);
