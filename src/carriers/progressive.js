@@ -943,9 +943,9 @@ export const progressive = {
       { concept: 'business.contact', q: '2DD', source: 'derived', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix', kind: 'text', value: (r) => phoneDigits(r)?.slice(3, 6) ?? null, note: phoneNote },
       { concept: 'business.contact', q: '2DF', source: 'derived', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number', kind: 'text', value: (r) => phoneDigits(r)?.slice(6) ?? null, note: phoneNote },
       // Asked since 2026-11-17, required. The intake's one phone box doesn't say which kind of
-      // number it holds: the agent's.
-      { concept: 'business.contact', q: '334', source: 'fact', field: 'MailingAddressInput.PrimaryPhoneNumberType', ask: 'Is this a mobile phone number?', name: 'Mobile phone number? (the agent\'s)', kind: 'bool',
-        note: 'Whether the phone is a mobile number isn\'t on the intake: answer it yourself.' },
+      // number it holds; TNI's standard is Yes (TNI, 2026-11-19: agents answered Yes on 8 of 8
+      // quotes, audit of 2026-11-19).
+      { concept: 'business.contact', q: '334', tni: 'progressive.mobile-phone', source: 'standard', field: 'MailingAddressInput.PrimaryPhoneNumberType', ask: 'Is this a mobile phone number?', name: 'Mobile phone number (standard: Yes)', kind: 'bool', value: () => true },
       // The intake's answer; blank: TNI's standard No unless they haul hazmat (hazPlacard, 2026-10-19).
       { concept: 'operations.hazmat-placard', q: '2F6', tni: 'general.hazmat-placard', source: hazPlacardSource, field: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required (standard: No when the intake leaves it blank)', kind: 'bool', value: hazPlacard, note: hazPlacardNote },
     ]),

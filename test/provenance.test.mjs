@@ -134,7 +134,6 @@ const NOT_MAPPED = {
     'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
     'applicant.fein': 'not asked on the Business Auto application',
-    'applicant.email': 'the contact email box is the agency\'s / left as the page has it',
     'applicant.owner2': 'AmWINS asks for one owner',
     'drivers[].suffix': 'the AmWINS driver section has no suffix box (left out of the name boxes)',
     'operations.personalUse': 'not asked; usage is For Hire (derived) or the agent\'s',

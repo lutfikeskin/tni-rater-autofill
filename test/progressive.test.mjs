@@ -318,12 +318,12 @@ test('Progressive gets the intake\'s email on More About Business; none on the i
   assert.equal(byQ(buildPlan(baseRecord(), progressive, {}), '2D55').ignore, true);
 });
 
-// Progressive asks it since 2026-11-17 (required). The intake has one phone box and no kind.
-test('Progressive\'s "Is this a mobile phone number?" is the agent\'s, never filled', () => {
+// Progressive asks it since 2026-11-17 (required). The intake has one phone box and no kind:
+// TNI's standard is Yes (TNI, 2026-11-19).
+test('Progressive\'s "Is this a mobile phone number?" is TNI\'s standard Yes', () => {
   const step = buildPlan(baseRecord(), progressive, {}).find((s) => s.field === 'MailingAddressInput.PrimaryPhoneNumberType');
-  assert.deepEqual([step.source, step.value, step.manualOnly, step.ignore], ['fact', null, true, false]);
+  assert.deepEqual([step.source, step.value, step.ignore, step.tni], ['standard', true, false, 'progressive.mobile-phone']);
   assert.deepEqual(step.ask, ['Is this a mobile phone number?']);
-  assert.match(step.note, /isn't on the intake/);
 });
 
 test('Progressive preserves optional and server-owned controls', () => {
@@ -790,6 +790,14 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   const named = (re) => plan.filter((x) => re.test(x.name ?? ''));
   assert.equal(sel('#inspectionContactOfficePhone').value, '4025550100', 'Contact Information is the client');
   assert.ok(sel('#inspectionContactName').value);
+  // The inspection contact's email is the intake's (TNI, 2026-11-19); none on the intake is the agent's.
+  record.applicant.email = 'client@example.test';
+  const email = buildPlan(record, amwins, {}).find((x) => x.selector === '#inspectionContactEmail');
+  assert.deepEqual([email.value, email.source, email.ignore], ['client@example.test', 'intake', false]);
+  record.applicant.email = null;
+  const none = buildPlan(record, amwins, {}).find((x) => x.selector === '#inspectionContactEmail');
+  assert.deepEqual([none.value, none.ignore], [null, false]);
+  assert.equal(sel('#inspectionContactMobilePhone').ignore, true, 'the mobile phone stays as the page has it');
   assert.equal(named(/^Garage (street|city|state|ZIP)$/).length, 4);
   assert.equal(named(/^Garage city$/)[0].value, record.garaging.city);
   const exclusions = named(/^Exclude /);
