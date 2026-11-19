@@ -2990,6 +2990,7 @@ test('USDOT or MC typed as No survives kept-work restore with its "No" note and 
   const restoredNum = load('dot-num-over-no', { dot_number: 'No' });
   await context.restoreKeptWork(restoredNum);
   assert.deepEqual([restoredNum.record.applicant.dot, restoredNum.record.applicant.noDot], ['7654321', null]);
+  assert.match(restoredNum.warnings.find((w) => w.code === 'dot.none')?.msg ?? '', /^No longer applies after your edit:/);
   assert.equal(progressiveDot(restoredNum.record), 'Yes - the customer has a USDOT number');
 
   // 4. Counterexample: emptying the USDOT box when the PDF had a number leaves noDot null and adds no note.
@@ -3017,6 +3018,96 @@ test('USDOT or MC typed as No survives kept-work restore with its "No" note and 
   await context.restoreKeptWork(legacyRestored);
   assert.deepEqual([legacyRestored.record.applicant.dot, legacyRestored.record.applicant.noDot], [null, true]);
   assert.equal(legacyRestored.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.');
+});
+
+// restoreKeptWork must pass intake to rederive (as agentEdit does) so fixed checks (id.invalid,
+// phone.invalid, dob.invalid, claims.blank, etc.) retire to info instead of staying open after a
+// browser restart, and derived warnings (like prior.carrier-is-quoted) are raised again.
+test('a correction brought back after a restart settles its intake checks and re-raises derived warnings as agentEdit does', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); },
+    remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = {
+    keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf,
+    get: getPath, set: setPath, noNumberEdit, rederive, checkHolds, quotedCarrierPolicy,
+    state: { tab: { carrier: { id: 'progressive' } } },
+    JSON, Date, structuredClone, keptHeld: new Set(),
+  };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork', 'changedFromRead', 'followChecks', 'checkShown', 'firstView'].map(extractFunction).join('\n'), context);
+
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { readIntakeFields } = await import('../src/intake.js');
+  const sampleRaw = await readIntakeFields(pdfjs, new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url))));
+  const rawWithChecks = {
+    ...sampleRaw,
+    garaging_address: '125 Maple Leaf Dr, Springfield, IL 62704',
+    phone_number: '555-123',
+    dot_number: 'pending',
+    mc_number: '',
+    mc_dot_60days: '',
+    drv_first_1: 'Jordan',
+    drv_dob_1: '13/45/1980',
+    drv_dob_2: '07/09/1995',
+    drv_cdl_yr_1: '',
+    veh_vin_2: '1FTBR3X87MKA12345',
+    veh_ownership: 'Owned',
+    ins_type_1: 'Commercial Auto', ins_carrier_1: 'Travelers', ins_limit_1: '$1M CSL', ins_exp_1: '10/31/2026',
+    claims_details: '',
+  };
+  const load = () => {
+    const res = normalizeIntake(rawWithChecks, { today: new Date('2026-09-30') });
+    return { ...res, intakeId: 'checks-1', done: [], agentEdited: [], intakeRecord: structuredClone(res.record) };
+  };
+
+  // Sanity check: the fresh PDF opens with all four checks active.
+  const initial = load();
+  for (const code of ['id.invalid', 'phone.invalid', 'dob.invalid', 'claims.blank']) {
+    assert.equal(initial.warnings.find((w) => w.code === code)?.level, 'check', `fresh PDF should have ${code}`);
+  }
+  assert.equal(initial.warnings.find((w) => w.code === 'prior.carrier-is-quoted'), undefined);
+
+  // Simulate live agentEdit fixing all four checks and editing prior carrier to Progressive,
+  // then marking the resulting prior.carrier-is-quoted alert done.
+  const live = load();
+  const liveEdits = [
+    ['applicant.dot', '1234567'],
+    ['applicant.phone', '305-555-1234'],
+    ['drivers[0].dob', '04/12/1980'],
+    ['claims.text', 'No claims'],
+    ['priorInsurance[0].carrier', 'Progressive'],
+  ];
+  const edited = new Set();
+  for (const [path, value] of liveEdits) {
+    setPath(live.record, path, value);
+    noNumberEdit(live, path);
+    edited.add(path);
+    live.agentEdited = [...edited];
+    context.followChecks(live, path, value);
+    rederive(live.record, path, { keep: edited, intake: live });
+  }
+  const quotedIdx = live.warnings.findIndex((w) => w.code === 'prior.carrier-is-quoted');
+  assert.ok(quotedIdx >= 0, 'live edit raises prior.carrier-is-quoted');
+  live.done = [...new Set([...live.done, quotedIdx])];
+
+  // Keep work and restore on a fresh PDF after a simulated browser restart.
+  await context.keepKeptWork(live);
+  const restored = load();
+  await context.restoreKeptWork(restored);
+
+  for (const code of ['id.invalid', 'phone.invalid', 'dob.invalid', 'claims.blank']) {
+    const w = restored.warnings.find((x) => x.code === code);
+    assert.equal(w?.level, 'info', `${code} should be retired to info after restore`);
+    assert.match(w?.msg ?? '', /^No longer applies after your edit:/, code);
+    assert.equal(context.checkShown(w, restored), false, `${code} must not show as an open check`);
+  }
+  const restoredQuotedIdx = restored.warnings.findIndex((w) => w.code === 'prior.carrier-is-quoted');
+  assert.ok(restoredQuotedIdx >= 0, 'derived prior.carrier-is-quoted warning is re-raised on restore');
+  assert.ok(restored.done.includes(restoredQuotedIdx), 'Looks right on derived warning survives restore');
+  assert.equal(context.firstView(restored), context.firstView(live), 'firstView matches live edit');
+  assert.equal(context.firstView(restored), 'page');
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.

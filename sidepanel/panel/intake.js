@@ -253,7 +253,7 @@ async function restoreKeptWork(intake, after = -Infinity) {
   intake.agentEdited = [...edited];
   const by = { ...(intake.agentDerivedBy ?? {}) };
   for (const path of edited) {
-    const derived = rederive(intake.record, path, { keep: edited }).filter((p) => changedFromRead(intake, p));
+    const derived = rederive(intake.record, path, { keep: edited, intake }).filter((p) => changedFromRead(intake, p));
     if (derived.length) by[path] = derived;
   }
   intake.agentDerivedBy = by;
