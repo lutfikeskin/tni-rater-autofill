@@ -11,7 +11,7 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn, unlogged } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, flushPendingTextChanges, pageOf, tellRecorder } from './usage.js';
@@ -678,7 +678,7 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
       state.autoPaused = true;
       keepJournal(tabId);
       fillProblem({ tabId, page, carrier }, 'Continue didn\'t take: click it yourself.');
-      if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
+      if (!unlogged(carrier)) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
       return;
     }
   }
@@ -692,7 +692,7 @@ async function markDone(rec, key, tabId, page, x = null) {
   if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   // Which question the agent marked done, and why it needed them: the review sees what was
   // waved through, not only what was filled.
-  if (x && state.intake && !state.tab?.carrier?.practice) {
+  if (x && state.intake && !unlogged(state.tab?.carrier)) {
     usage.log({ ...checkDismissedEvent(x, { redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }),
       carrier: state.tab.carrier?.id ?? null, page, view: viewOf(tabId, page, state.tab.carrier) });
   }
@@ -712,7 +712,7 @@ async function markDone(rec, key, tabId, page, x = null) {
 // and what waits on it goes on. Logged as a Mark done is. It can be undone, as Mark done can.
 async function markActionDone(rec, id, tabId, page, x = null) {
   if (!id || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  if (x && state.intake && !state.tab?.carrier?.practice) {
+  if (x && state.intake && !unlogged(state.tab?.carrier)) {
     usage.log({ ...checkDismissedEvent(x, { redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }),
       carrier: state.tab.carrier?.id ?? null, page, view: viewOf(tabId, page, state.tab.carrier) });
   }
@@ -1384,7 +1384,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   // In on the page, so the agent's from now on where it went in (no fill changes it) and logged with
   // the quote it went into, also when they moved to another tab, page or intake meanwhile.
   await persistGuardedEdits(editOrigin, [x.key]);
-  if (!carrier.practice && usage.currentSession()?.intakeId === scope) {
+  if (!unlogged(carrier) && usage.currentSession()?.intakeId === scope) {
     const maps = tabMaps(tabId);
     const ctx = { record: intake.record, filled: maps.filled, labels: maps.labels, choices: maps.choices,
       redact: redactor(redactionTerms(intake.record)), keySalt: usage.currentSession()?.keySalt, step: knownStep(carrier, tabStep(carrier, tabId)) };
@@ -1410,7 +1410,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       taken = true;
     } else if (!sugg.done && !sugg.dismissed) {
       sugg.dismissed = true;
-      if (!carrier.practice) usage.log(aiDecisionEvent(sugg, { carrier, page }, 'dismissed'));
+      if (!unlogged(carrier)) usage.log(aiDecisionEvent(sugg, { carrier, page }, 'dismissed'));
     }
   }
   if (taken) {

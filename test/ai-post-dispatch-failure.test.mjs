@@ -24,7 +24,7 @@ const HARNESS_FNS = [
   'aiLiveFieldHash', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'aiActionCurrent', 'aiCacheSignature',
   'aiDecisionBlocks', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
   'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiPendingRecord', 'persistAiPending',
-  'restoreAiPending', 'pendingAi', 'applyAi', 'renderAi',
+  'restoreAiPending', 'pendingAi', 'unlogged', 'applyAi', 'renderAi',
 ];
 
 function makeHarness({ failAt, decision, practice = true }) {

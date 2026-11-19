@@ -131,11 +131,14 @@ test('BHHC recon stub builds an empty plan and never auto-fills', () => {
   }
 });
 
-test('recon carrier logs nothing from onRecorderMessage (page_view, field_changes, agent_click, recorder_error) while normal carriers still log', () => {
+test('recon carrier logs nothing from onRecorderMessage (page_view, choice and coalesced text field_changes, agent_click, recorder_error) while normal carriers still log', () => {
   /** @param {any} carrier */
   function runEvents(carrier) {
     /** @type {any[]} */
     const logged = [];
+    /** @type {Map<number, () => void>} */
+    const timers = new Map();
+    let nextTimerId = 1;
     const state = {
       intake: { record: sampleRecord },
       tab: { id: 7, url: 'https://portal.bhhomestate.com/breeze', carrier },
@@ -169,7 +172,7 @@ test('recon carrier logs nothing from onRecorderMessage (page_view, field_change
       knownStep: () => null,
       redactor: () => (s) => s,
       redactionTerms: () => [],
-      fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }),
+      fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key, kind: c.kind, before: c.before, after: c.after }),
       quoteStatePick: () => undefined,
       noteQuoteState: () => {},
       noteChangedAfterDone: () => false,
@@ -184,26 +187,70 @@ test('recon carrier logs nothing from onRecorderMessage (page_view, field_change
       releaseDiscardedForms: () => {},
       clientErrorEvent: (err, { where }) => ({ type: 'client_error', where, error: err.message }),
       loggedCrashes: new Set(),
+      setTimeout: (fn) => {
+        const id = nextTimerId++;
+        timers.set(id, fn);
+        return id;
+      },
+      clearTimeout: (id) => { timers.delete(id); },
     });
-    vm.runInContext(`${extractFunction('unlogged')}\n${extractFunction('logCrash')}\n${extractFunction('onRecorderMessage')}`, sandbox);
+    const code = [
+      'const TEXT_SETTLE_MS = 4000;',
+      'let pendingText = null;',
+      'let pendingTextTimer = null;',
+      extractFunction('unlogged'),
+      extractFunction('isCoalescedText'),
+      extractFunction('formsKeyOf'),
+      extractFunction('samePendingText'),
+      extractFunction('flushPendingTextChanges'),
+      extractFunction('logFieldChanges'),
+      extractFunction('logCrash'),
+      extractFunction('onRecorderMessage'),
+    ].join('\n');
+    vm.runInContext(code, sandbox);
     const sender = { tab: { id: 7 }, frameId: 0 };
     sandbox.onRecorderMessage({ ra: 'usage', event: 'page_view', page: '/breeze', fields: 3 }, sender);
-    sandbox.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/breeze', changes: [{ key: 'k1', agent: true, after: 'Yes' }] }, sender);
+    // Choice change (immediate path).
+    sandbox.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/breeze', changes: [{ key: 'k1', kind: 'select', agent: true, before: '', after: 'Yes' }] }, sender);
+    // Typed free-text edit (coalesced path, settled by timer).
+    sandbox.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/breeze', changes: [{ key: 'k2', kind: 'text', agent: true, before: '', after: 'A' }] }, sender);
+    sandbox.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/breeze', changes: [{ key: 'k2', kind: 'text', agent: true, before: 'A', after: 'Acme' }] }, sender);
+    for (const fn of [...timers.values()]) fn();
+    timers.clear();
+    // Second typed free-text edit (coalesced path, flushed by agent_click / explicit flush).
+    sandbox.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/breeze', changes: [{ key: 'k3', kind: 'text', agent: true, before: '', after: 'OH' }] }, sender);
+    sandbox.flushPendingTextChanges();
     sandbox.onRecorderMessage({ ra: 'usage', event: 'agent_click', page: '/breeze', text: 'Next' }, sender);
     sandbox.onRecorderMessage({ ra: 'usage', event: 'recorder_error', message: 'boom', stack: '' }, sender);
-    return logged;
+    // Direct call to logFieldChanges on this carrier must also respect unlogged().
+    sandbox.logFieldChanges(
+      [{ key: 'k4', kind: 'text', agent: true, before: '', after: 'Direct' }],
+      { tabId: 7, carrier: carrier.id, page: '/breeze', step: undefined, view: 't1', session: { id: 'sess1', keySalt: 'salt' }, ctx: { filled: new Map(), labels: new Map() } },
+    );
+    sandbox.flushPendingTextChanges();
+    return { logged, pendingTimers: timers.size };
   }
 
   const bhhc = carrierForUrl('https://portal.bhhomestate.com/breeze');
   assert.ok(bhhc);
-  assert.deepEqual(runEvents(bhhc), [], 'recon carrier logs nothing');
+  const reconRun = runEvents(bhhc);
+  assert.deepEqual(reconRun.logged, [], 'recon carrier logs nothing across immediate, coalesced, flushed, and direct paths');
+  assert.equal(reconRun.pendingTimers, 0, 'recon carrier schedules no text-settle timers');
 
   const normal = { ...bhhc, recon: false };
-  const normalLogged = runEvents(normal);
+  const normalRun = runEvents(normal);
   assert.deepEqual(
-    normalLogged.map((e) => e.type),
-    ['page_view', 'field_change', 'agent_click', 'client_error'],
-    'normal carrier logs all four event types',
+    normalRun.logged.map((e) => (e.type === 'field_change' ? `${e.type}:${e.key}:${e.before}->${e.after}` : e.type)),
+    [
+      'page_view',
+      'field_change:k1:->Yes',
+      'field_change:k2:->Acme',
+      'field_change:k3:->OH',
+      'agent_click',
+      'client_error',
+      'field_change:k4:->Direct',
+    ],
+    'normal carrier still logs page_view, choice changes, coalesced/flushed text edits, agent_click, and recorder_error',
   );
 });
 

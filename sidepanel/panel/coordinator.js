@@ -332,7 +332,7 @@ function showFinish({ auto = false } = {}) {
 /** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 // `plan`: the plan the fill was given, for each answer's rule concept and TNI entry.
 function logFill(ctx, frames, results, started, plan = null) {
-  if (ctx.carrier.practice) return;
+  if (unlogged(ctx.carrier)) return;
   // The kept answers logged in this quote (fillEvents' keptLogged): a new usage session, a new set.
   const session = usage.currentSession()?.id ?? null;
   if (state.keptLogged?.session !== session) state.keptLogged = { session, seen: new Set() };
@@ -350,7 +350,7 @@ function logFill(ctx, frames, results, started, plan = null) {
 // A rejected fill has no fill_run result to carry its rule version and switches. `timeline`: the
 // kit's last waits, presses and answers, where the page still has them (fillTimeline).
 function logFillError(ctx, error, timeline = null) {
-  if (ctx.carrier.practice) return;
+  if (unlogged(ctx.carrier)) return;
   const logged = timeline ? loggedTimeline(timeline, redactor(redactionTerms(ctx.intake?.record ?? {})), usage.currentSession()?.keySalt) : undefined;
   usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
     rules: rulesVersion ?? undefined, ...(carrierRulesOf(ctx.carrier.id) ? { carrierRules: carrierRulesOf(ctx.carrier.id) } : {}), settings: ctx.settings, ...(ctx.defaultsHash ? { defaultsHash: ctx.defaultsHash } : {}), auto: ctx.auto, ...(ctx.retried ? { retried: true } : {}), error: fillErrorText(ctx, error),
@@ -359,7 +359,7 @@ function logFillError(ctx, error, timeline = null) {
 // The timeline of a fill whose report never came back (its call rejected): read from the kit in
 // the tab's frames, the first that has one; none from a page gone or slow to answer (a second).
 async function fillTimeline(ctx) {
-  if (ctx.carrier?.practice) return null;
+  if (unlogged(ctx.carrier)) return null;
   try {
     const frames = await Promise.race([
       runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit?.timeline?.() ?? null),
@@ -599,7 +599,7 @@ const premiumsSeen = new Map();
 async function captureLayout(job, reason) {
   const why = () => reason ?? [...job.reasons].sort().join('+');
   job.waitsForFill = false;
-  if (!jobCurrent(job) || job.carrier.practice || superseded(job)) return;
+  if (!jobCurrent(job) || unlogged(job.carrier) || superseded(job)) return;
   // A fill started while this page change's capture was queued: reading now could catch the page
   // half filled. It waits for the fill again, as it did before it was queued.
   const fillStarted = () => job.generation !== undefined && state.filling;
@@ -695,7 +695,7 @@ function noteStopScreen({ tabId, carrier, page }, step, buttons) {
   const was = state.stopScreens.get(tabId);
   if (name === (was?.name ?? null) && (!name || was.page === page)) return;
   if (name) state.stopScreens.set(tabId, { name, page }); else state.stopScreens.delete(tabId);
-  if (name) usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${name}`] }], { carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
+  if (name && !unlogged(carrier)) usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${name}`] }], { carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
   if (tabId === state.tab?.id) renderSite();
 }
 
@@ -709,6 +709,7 @@ function waitForFill(job) {
 // A layout that couldn't be read: counted for the panel, and logged once per quote, page and kind
 // of failure, so it shows up in the review instead of just missing.
 function layoutFailed({ tabId, carrier, page }, reason, error) {
+  if (unlogged(carrier)) return;
   state.layoutErrors++;
   // Per quote tab, as layouts are: each tab is its own quote.
   const once = `${usage.currentSession()?.id}|${tabId}|${page}|${error}`;
@@ -728,7 +729,7 @@ function scheduleLayout(page, reason) {
   // Only on the carrier's quote pages, named for it: never a portal, account or search page,
   // whose text the intake's redaction may not cover.
   const quotePages = state.tab?.carrier?.layoutUrl ?? state.tab?.carrier?.autoFillUrl;
-  if (!state.intake || !state.tab?.carrier || state.tab.carrier.practice || !quotePages?.test(state.tab.url ?? '')) return;
+  if (!state.intake || !state.tab?.carrier || unlogged(state.tab.carrier) || !quotePages?.test(state.tab.url ?? '')) return;
   if (state.layoutHold && !state.layoutReadyTabs.has(state.tab.id)) return;
   const job = { ...layoutJob(page), generation: ++state.layoutGeneration, reasons: new Set([reason]) };
   const before = state.layoutPending;
