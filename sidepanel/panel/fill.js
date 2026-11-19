@@ -14,7 +14,7 @@ import { inExtension, popped } from './env.js';
 import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
-import { ensureRecorder, pageOf, tellRecorder } from './usage.js';
+import { ensureRecorder, flushPendingTextChanges, pageOf, tellRecorder } from './usage.js';
 import { announce, dropReports, fillContext, fillOptions, fillProblem, fillTimeline, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
@@ -181,6 +181,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id, { dropped: ['autoPaused'] }); }
   // The agent's own fill on a tab a rater's logo opened: theirs to fill from then on (quote-owner.js).
   if (!auto) releasePortal(state.tab.id);
+  // Flush pending free-text edits before pickListItem may switch state.active or the fill exits early.
+  flushPendingTextChanges();
   state.fillingKind = 'fill';
   state.filling = true;
   clearTimeout(state.autoTimer);

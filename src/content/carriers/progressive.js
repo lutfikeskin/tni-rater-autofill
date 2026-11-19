@@ -67,6 +67,12 @@
       const trigger = triggerOf(el);
       return !!trigger && /arrow|combo/.test(trigger.className) && !/date|time|picker-date/.test(trigger.className);
     },
+    // An ExtJS date picker: a text input with a calendar/date trigger, flagged so the panel keeps
+    // one field_change per change without coalescing as free text.
+    date: (el) => {
+      const trigger = triggerOf(el);
+      return !!trigger && /date|picker-date/.test(trigger.className);
+    },
   };
 
   /** @param {PageAdapterKit} kit @returns {Partial<PageAdapter>} */

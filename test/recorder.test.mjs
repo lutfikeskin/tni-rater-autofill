@@ -494,7 +494,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 14);
+  assert.equal(h.context.__raterRecorder.version, 15);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -550,8 +550,42 @@ test('an ExtJS combo is reported as a combo, so its typed text is not logged as 
 
   const byKey = Object.fromEntries(changes(h).map((change) => [change.key, change]));
   assert.deepEqual([byKey['field:model'].kind, byKey['field:model'].combo, byKey['field:model'].after], ['select', true, 'Trans']);
-  assert.deepEqual([byKey['field:effective'].kind, byKey['field:effective'].combo], ['text', undefined], 'a date picker stays text');
+  assert.deepEqual([byKey['field:effective'].kind, byKey['field:effective'].combo, byKey['field:effective'].date], ['text', undefined, true], 'a date picker stays text and is flagged as a date');
   assert.deepEqual([byKey['field:native'].kind, byKey['field:native'].combo], ['select', undefined], 'a native select is a choice as before');
+});
+
+test('date controls are flagged with date: true across native and carrier date inputs, while plain text is not', () => {
+  // Native <input type="date"> + plain text + AmWINS .datepicker-input / data-type="date"
+  const h = harness({ adapter: 'amwins' });
+  const nativeDate = new Control('input', { id: 'nativeDate', type: 'date', value: '' });
+  const amwinsDate = new Control('input', { id: 'ownerDob', type: 'text', value: '' });
+  amwinsDate.classList = { contains: (cls) => cls === 'datepicker-input' };
+  const dataDate = new Control('input', { id: 'expDate', type: 'text', value: '', attrs: { 'data-type': 'date' } });
+  const plainText = new Control('input', { id: 'notes', type: 'text', value: '' });
+  h.append(nativeDate, amwinsDate, dataDate, plainText);
+  h.context.__raterRecorder.rebaseline();
+  nativeDate.value = '1990-01-02';
+  amwinsDate.value = '01/02/1990';
+  dataDate.value = '05/01/2026';
+  plainText.value = 'General freight';
+  h.tick();
+  const byKey = Object.fromEntries(changes(h).map((c) => [c.key, c]));
+  assert.equal(byKey['field:nativeDate'].date, true);
+  assert.equal(byKey['field:nativeDate'].kind, 'text');
+  assert.equal(byKey['field:ownerDob'].date, true);
+  assert.equal(byKey['field:expDate'].date, true);
+  assert.equal(byKey['field:notes'].date, undefined);
+
+  // GEICO <gds-date-input-wrapper>
+  const g = harness({ adapter: 'geico' });
+  const gdsDate = new Control('input', { id: 'Id_GiveDateOfBirth_50246', name: 'Id_GiveDateOfBirth_50246', type: 'text', value: '' });
+  gdsDate.closest = (sel) => (/gds-date-input-wrapper|mask-type/.test(sel) ? {} : null);
+  g.append(gdsDate);
+  g.context.__raterRecorder.rebaseline();
+  gdsDate.value = '01/02/1990';
+  g.tick();
+  assert.equal(changes(g)[0]?.date, true);
+  assert.equal(changes(g)[0]?.kind, 'text');
 });
 
 test('an older recorder is replaced, so changes carry what the current one reports', () => {
@@ -562,7 +596,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 14);
+  assert.equal(h.context.__raterRecorder.version, 15);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
