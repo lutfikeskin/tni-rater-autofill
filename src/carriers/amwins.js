@@ -572,15 +572,19 @@ export const amwins = {
     { concept: 'quote.state', name: 'Risk state', label: 'select a risk state', path: 'amwins.riskState', kind: 'state', source: 'derived', value: (r) => r.garaging?.state ?? null },
 
     // --- Insured Info --------------------------------------------------------------------------
-    // The agency's own details, effective dates and inspection contacts are left as the page has them.
+    // The agency's own details, effective dates and the inspection contact's mobile phone are left
+    // as the page has them.
     // Agency Information (#agnecyName, #contactName, #phone, #email are the agency's), website,
     // DBA and policy dates stay as the page has them.
     ...['#agnecyName', '#contactName', '#phone', '#email', '#website', '#effectiveDate', '#expirationDate', '#dba',
-      '#inspectionContactEmail', '#inspectionContactMobilePhone']
+      '#inspectionContactMobilePhone']
       .map(/** @returns {CarrierRule} */ (selector) => ({ concept: LEFT_AS_IS[selector] ?? 'quote.agency', selector, name: `Left as the page has it (${selector.slice(1)})`, ignore: true })),
-    // Contact Information: the client, name and phone only; single contact stays Yes.
+    // Contact Information: the client's name, office phone and email; single contact stays Yes.
+    // The email is the intake's (TNI, 2026-11-19: agents typed the intake's on 10 of 35 quotes);
+    // with none on the intake the box is the agent's.
     { concept: 'business.contact', selector: '#inspectionContactName', name: 'Contact name (the owner)', source: 'derived', value: ownerFull },
     { concept: 'business.contact', selector: '#inspectionContactOfficePhone', name: 'Contact phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
+    { concept: 'business.contact', selector: '#inspectionContactEmail', name: 'Contact email', path: 'applicant.email' },
     { concept: 'business.name', selector: '#name', name: 'Named insured (company, else the owner)', source: 'derived', value: (r) => companyName(r.applicant.name) || ownerFull(r) },
     { concept: 'owner.name', selector: '#ownerName', name: 'Owner full name', source: 'derived', value: ownerFull },
     { concept: 'owner.dob', selector: '#ownerDob', name: 'Owner date of birth', kind: 'date', source: 'derived', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
