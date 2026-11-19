@@ -60,7 +60,7 @@ if (key) {
 const events = loadEvents(inputs);
 let tests = null;
 if (key) {
-  try { tests = testSessionsOf(events, testList.intakes); } catch (err) { fail(err.message); }
+  try { tests = testSessionsOf(events, testList.intakes, { agents: testList.agents }); } catch (err) { fail(err.message); }
 }
 const raws = await readIntakes(folders, new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId).map((e) => e.intakeId)));
 

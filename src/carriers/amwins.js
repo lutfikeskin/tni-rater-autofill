@@ -49,8 +49,8 @@
 //   2026-10-26, W44-26: Medical Payments $5,000 wherever offered, PIP not selected).
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
+import { isLongHaul, ntlNoDotFilings, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
+import { otherNotes, noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { HAZ_HAUL } from '../util.js';
 import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { STANDARDS, usd, usdK } from '../standards.js';

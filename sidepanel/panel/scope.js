@@ -43,7 +43,7 @@ function editScope(page, carrier = state.tab?.carrier, step = tabStep(carrier), 
     const unit = here?.list ?? list;
     return `${page}|${{ vehicles: 'v', trailers: 'tr', drivers: 'd' }[unit]}${active?.[unit] ?? 0}`;
   }
-  const scope = stepScope(page, carrier, state.active, step);
+  const scope = stepScope(page, carrier, active, step);
   return scope.endsWith('||') ? page : scope.slice(0, -1);
 }
 
@@ -67,7 +67,7 @@ function unitScope(page, list, index) {
 // in that document has named them): the tab's latest form (editScope). Elsewhere one scope, as
 // editScope files it (Progressive and AmWINS as before). Element names only.
 function changeScopes(page, carrier = state.tab?.carrier, step = tabStep(carrier), forms = null, { active = state.active, bound = state.unitForms } = {}) {
-  if (!formScoped(carrier)) return [editScope(page, carrier, step)];
+  if (!formScoped(carrier)) return [editScope(page, carrier, step, { active })];
   if (!step) return [page];
   const list = carrier.vehicleSteps?.includes(step) ? 'vehicles' : carrier.driverSteps?.includes(step) ? 'drivers' : null;
   if (!list) return [`${page}|s:${step}`];

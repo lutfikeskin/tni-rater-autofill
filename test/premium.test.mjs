@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readPremium, notePremium, premiumHere, PREMIUM_EVENT } from '../src/premium.js';
+import { geico } from '../src/carriers/geico.js';
+import { progressive } from '../src/carriers/progressive.js';
+import { amwins } from '../src/carriers/amwins.js';
 
 // The pages' own words (amounts made up): GEICO's summary beside its pay plans, Progressive's Rates.
 const GEICO = "View More Payment Plans\nDue Today $16,908.71\nMVR/CLUE Hasn't run\n12 Month Total Premium:  $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83\nInstallment fees will be assessed";
@@ -45,9 +48,15 @@ test('a premium is logged once per change, per quote, tab and carrier; a failure
 });
 
 test('the page text is read only where a carrier quotes its premium', () => {
-  assert.equal(premiumHere('geico', 'quote', 'Quote & Coverages'), true);
-  assert.equal(premiumHere('geico', 'quote', 'Vehicles'), false);
-  assert.equal(premiumHere('progressive', 'CoveragesRates', undefined), true);
-  assert.equal(premiumHere('progressive', 'AddVehicle', undefined), false);
-  assert.equal(premiumHere('amwins', 'application', 'Coverages'), false);
+  assert.equal(premiumHere(geico, 'quote', 'Quote & Coverages'), true);
+  assert.equal(premiumHere(geico, 'quote', 'Vehicles'), false);
+  assert.equal(premiumHere(progressive, 'CoveragesRates', undefined), true);
+  assert.equal(premiumHere(progressive, 'AddVehicle', undefined), false);
+  assert.equal(premiumHere(amwins, 'application', 'Coverages'), false);
+  // Any carrier config declares its own premiumPages without changing src/premium.js.
+  assert.equal(premiumHere({ premiumPages: ['QuoteSummary'] }, 'QuoteSummary', undefined), true);
+  assert.equal(premiumHere({ premiumPages: ['QuoteSummary'] }, 'quote', 'QuoteSummary'), true);
+  assert.equal(premiumHere({ premiumPages: ['QuoteSummary'] }, 'Drivers', undefined), false);
+  assert.equal(premiumHere({}, 'QuoteSummary', 'QuoteSummary'), false);
+  assert.equal(premiumHere(null, 'QuoteSummary', 'QuoteSummary'), false);
 });

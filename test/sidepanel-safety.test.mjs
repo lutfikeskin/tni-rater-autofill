@@ -14,7 +14,7 @@ import { fillEvents, loggedTimeline, sha256Hex, knownStep } from '../src/usage.j
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
-import { checkHolds, intakeNotes, rederive } from '../src/normalize.js';
+import { checkHolds, intakeNotes, noNumberEdit, normalizeIntake, rederive } from '../src/normalize.js';
 import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
 import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -158,7 +158,7 @@ function extractFunction(name) {
           keepJournal: '() => Promise.resolve()', forgetJournals: '() => Promise.resolve()', restoreJournal: 'async () => {}',
           // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
           // elsewhere nothing is kept or brought back.
-          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
+          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', noNumberEdit: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
           // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
           resumeHeldFill: '() => {}' };
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
@@ -2917,6 +2917,198 @@ test('a correction brought back after a restart raises its own checks again, and
   await context.restoreKeptWork(again);
   assert.deepEqual(JSON.parse(JSON.stringify([again.warnings.map((w) => w.code), [...again.done].sort()])), [['drivers.owner-excluded', 'coverage.ntl-cargo'], [0, 1]]);
   assert.deepEqual(JSON.parse(JSON.stringify(replayed)), [['answer', 'coverage.ntl'], ['primary'], ['owner', { check: { i: 0, done: true } }]]);
+});
+
+// Typing "No" / "None" / "N/A" into USDOT or MC empties the box and sets noDot/noMc + dot.none/mc.none
+// (noNumberEdit). Kept work keeps the No as 'No' so a browser-restart restore reproduces the record
+// state, the "No" intake note (whatever word was typed), and carrier answers — while a number or an
+// emptied box keeps its own meaning.
+test('USDOT or MC typed as No survives kept-work restore with its "No" note and carrier answers; a number or emptied box keeps its own meaning', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); },
+    remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = {
+    keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf,
+    get: getPath, set: setPath, noNumberEdit, rederive, JSON, Date, structuredClone, keptHeld: new Set(),
+  };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork', 'changedFromRead'].map(extractFunction).join('\n'), context);
+
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { readIntakeFields } = await import('../src/intake.js');
+  const sampleRaw = await readIntakeFields(pdfjs, new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url))));
+  const baseRaw = { ...sampleRaw, dot_number: '', mc_number: '', mc_dot_60days: '' };
+  const load = (id, overrides = {}) => {
+    const res = normalizeIntake({ ...baseRaw, ...overrides }, { today: new Date('2026-09-30') });
+    return { ...res, intakeId: id, done: [], agentEdited: [], intakeRecord: structuredClone(res.record) };
+  };
+  const editLive = (intake, path, value) => {
+    setPath(intake.record, path, value);
+    noNumberEdit(intake, path);
+    const edited = new Set(intake.agentEdited);
+    edited.add(path);
+    intake.agentEdited = [...edited];
+    rederive(intake.record, path, { keep: edited, intake });
+  };
+  const progressiveDot = (r) => buildPlan(r, progressive).find((s) => s.q === '1ED')?.value;
+  const geicoDot = (r) => buildPlan(r, geico).find((s) => s.name === 'Has a USDOT number')?.value;
+  const amwinsMc = (r) => buildPlan(r, amwins).find((s) => s.selector === '#hasMcNumber')?.value;
+
+  // 1. Typed "No", "None", "N/A" into USDOT: restored as 'No' with the "No" note whatever word was typed.
+  for (const typed of ['No', 'None', 'N/A']) {
+    const id = `dot-${typed}`;
+    const live = load(id);
+    editLive(live, 'applicant.dot', typed);
+    await context.keepKeptWork(live);
+    assert.deepEqual(memory[`${KEPT_WORK_PREFIX}${id}`].edits, [['applicant.dot', 'No']], typed);
+    const restored = load(id);
+    const counts = await context.restoreKeptWork(restored);
+    assert.deepEqual(JSON.parse(JSON.stringify(counts)), { edits: 1, checks: 0 }, typed);
+    assert.deepEqual([restored.record.applicant.dot, restored.record.applicant.noDot], [null, true], typed);
+    assert.deepEqual([...restored.agentEdited], ['applicant.dot'], typed);
+    assert.equal(restored.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.', typed);
+    assert.equal(progressiveDot(restored.record), 'No - and the customer will not have a USDOT number', typed);
+    assert.equal(geicoDot(restored.record), 'No', typed);
+  }
+
+  // 2. Typed "None" into MC: restored as 'No' with the "No" note and AmWINS answer false.
+  const liveMc = load('mc-none');
+  editLive(liveMc, 'applicant.mc', 'None');
+  await context.keepKeptWork(liveMc);
+  assert.deepEqual(memory[`${KEPT_WORK_PREFIX}mc-none`].edits, [['applicant.mc', 'No']]);
+  const restoredMc = load('mc-none');
+  await context.restoreKeptWork(restoredMc);
+  assert.deepEqual([restoredMc.record.applicant.mc, restoredMc.record.applicant.noMc], [null, true]);
+  assert.equal(restoredMc.warnings.find((w) => w.code === 'mc.none')?.msg, 'MC # "No": the client has no MC number.');
+  assert.equal(amwinsMc(restoredMc.record), false);
+
+  // 3. Counterexample: a real USDOT number restored (over a PDF that said "No").
+  const liveNum = load('dot-num-over-no', { dot_number: 'No' });
+  editLive(liveNum, 'applicant.dot', '7654321');
+  await context.keepKeptWork(liveNum);
+  const restoredNum = load('dot-num-over-no', { dot_number: 'No' });
+  await context.restoreKeptWork(restoredNum);
+  assert.deepEqual([restoredNum.record.applicant.dot, restoredNum.record.applicant.noDot], ['7654321', null]);
+  assert.match(restoredNum.warnings.find((w) => w.code === 'dot.none')?.msg ?? '', /^No longer applies after your edit:/);
+  assert.equal(progressiveDot(restoredNum.record), 'Yes - the customer has a USDOT number');
+
+  // 4. Counterexample: emptying the USDOT box when the PDF had a number leaves noDot null and adds no note.
+  const liveCleared = load('dot-cleared', { dot_number: '1234567' });
+  editLive(liveCleared, 'applicant.dot', null);
+  await context.keepKeptWork(liveCleared);
+  assert.deepEqual(memory[`${KEPT_WORK_PREFIX}dot-cleared`].edits, [['applicant.dot', null]]);
+  const restoredCleared = load('dot-cleared', { dot_number: '1234567' });
+  await context.restoreKeptWork(restoredCleared);
+  assert.deepEqual([restoredCleared.record.applicant.dot, restoredCleared.record.applicant.noDot], [null, null]);
+  assert.equal(restoredCleared.warnings.find((w) => w.code === 'dot.none'), undefined);
+
+  // 5. Counterexample: emptying a box whose PDF already said "No" keeps the earlier No,
+  //    and legacy kept work (['applicant.dot', null]) written by the released build also restores cleanly.
+  const liveEmptyOnNo = load('dot-empty-on-no', { dot_number: 'No' });
+  editLive(liveEmptyOnNo, 'applicant.dot', null);
+  await context.keepKeptWork(liveEmptyOnNo);
+  const restoredEmptyOnNo = load('dot-empty-on-no', { dot_number: 'No' });
+  await context.restoreKeptWork(restoredEmptyOnNo);
+  assert.deepEqual([restoredEmptyOnNo.record.applicant.dot, restoredEmptyOnNo.record.applicant.noDot], [null, true]);
+  assert.equal(restoredEmptyOnNo.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.');
+
+  memory[`${KEPT_WORK_PREFIX}legacy-null`] = { at: Date.now(), edits: [['applicant.dot', null]], checks: [] };
+  const legacyRestored = load('legacy-null', { dot_number: 'No' });
+  await context.restoreKeptWork(legacyRestored);
+  assert.deepEqual([legacyRestored.record.applicant.dot, legacyRestored.record.applicant.noDot], [null, true]);
+  assert.equal(legacyRestored.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.');
+});
+
+// restoreKeptWork must pass intake to rederive (as agentEdit does) so fixed checks (id.invalid,
+// phone.invalid, dob.invalid, claims.blank, etc.) retire to info instead of staying open after a
+// browser restart, and derived warnings (like prior.carrier-is-quoted) are raised again.
+test('a correction brought back after a restart settles its intake checks and re-raises derived warnings as agentEdit does', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); },
+    remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = {
+    keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf,
+    get: getPath, set: setPath, noNumberEdit, rederive, checkHolds, quotedCarrierPolicy,
+    state: { tab: { carrier: { id: 'progressive' } } },
+    JSON, Date, structuredClone, keptHeld: new Set(),
+  };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork', 'changedFromRead', 'followChecks', 'checkShown', 'firstView'].map(extractFunction).join('\n'), context);
+
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { readIntakeFields } = await import('../src/intake.js');
+  const sampleRaw = await readIntakeFields(pdfjs, new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url))));
+  const rawWithChecks = {
+    ...sampleRaw,
+    garaging_address: '125 Maple Leaf Dr, Springfield, IL 62704',
+    phone_number: '555-123',
+    dot_number: 'pending',
+    mc_number: '',
+    mc_dot_60days: '',
+    drv_first_1: 'Jordan',
+    drv_dob_1: '13/45/1980',
+    drv_dob_2: '07/09/1995',
+    drv_cdl_yr_1: '',
+    veh_vin_2: '1FTBR3X87MKA12345',
+    veh_ownership: 'Owned',
+    ins_type_1: 'Commercial Auto', ins_carrier_1: 'Travelers', ins_limit_1: '$1M CSL', ins_exp_1: '10/31/2026',
+    claims_details: '',
+  };
+  const load = () => {
+    const res = normalizeIntake(rawWithChecks, { today: new Date('2026-09-30') });
+    return { ...res, intakeId: 'checks-1', done: [], agentEdited: [], intakeRecord: structuredClone(res.record) };
+  };
+
+  // Sanity check: the fresh PDF opens with all four checks active.
+  const initial = load();
+  for (const code of ['id.invalid', 'phone.invalid', 'dob.invalid', 'claims.blank']) {
+    assert.equal(initial.warnings.find((w) => w.code === code)?.level, 'check', `fresh PDF should have ${code}`);
+  }
+  assert.equal(initial.warnings.find((w) => w.code === 'prior.carrier-is-quoted'), undefined);
+
+  // Simulate live agentEdit fixing all four checks and editing prior carrier to Progressive,
+  // then marking the resulting prior.carrier-is-quoted alert done.
+  const live = load();
+  const liveEdits = [
+    ['applicant.dot', '1234567'],
+    ['applicant.phone', '305-555-1234'],
+    ['drivers[0].dob', '04/12/1980'],
+    ['claims.text', 'No claims'],
+    ['priorInsurance[0].carrier', 'Progressive'],
+  ];
+  const edited = new Set();
+  for (const [path, value] of liveEdits) {
+    setPath(live.record, path, value);
+    noNumberEdit(live, path);
+    edited.add(path);
+    live.agentEdited = [...edited];
+    context.followChecks(live, path, value);
+    rederive(live.record, path, { keep: edited, intake: live });
+  }
+  const quotedIdx = live.warnings.findIndex((w) => w.code === 'prior.carrier-is-quoted');
+  assert.ok(quotedIdx >= 0, 'live edit raises prior.carrier-is-quoted');
+  live.done = [...new Set([...live.done, quotedIdx])];
+
+  // Keep work and restore on a fresh PDF after a simulated browser restart.
+  await context.keepKeptWork(live);
+  const restored = load();
+  await context.restoreKeptWork(restored);
+
+  for (const code of ['id.invalid', 'phone.invalid', 'dob.invalid', 'claims.blank']) {
+    const w = restored.warnings.find((x) => x.code === code);
+    assert.equal(w?.level, 'info', `${code} should be retired to info after restore`);
+    assert.match(w?.msg ?? '', /^No longer applies after your edit:/, code);
+    assert.equal(context.checkShown(w, restored), false, `${code} must not show as an open check`);
+  }
+  const restoredQuotedIdx = restored.warnings.findIndex((w) => w.code === 'prior.carrier-is-quoted');
+  assert.ok(restoredQuotedIdx >= 0, 'derived prior.carrier-is-quoted warning is re-raised on restore');
+  assert.ok(restored.done.includes(restoredQuotedIdx), 'Looks right on derived warning survives restore');
+  assert.equal(context.firstView(restored), context.firstView(live), 'firstView matches live edit');
+  assert.equal(context.firstView(restored), 'page');
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
@@ -9088,6 +9280,20 @@ test('a GEICO edit on a unit step is filed by the unit forms on screen with it; 
     assert.deepEqual(['AddVehicle', 'AddTrailer', 'AddDriver', 'Rates'].map((p) => scopes(undefined, f, progressive, p)), [['AddVehicle|v1'], ['AddTrailer|tr0'], ['AddDriver|d2'], ['Rates']]);
     assert.deepEqual(['Vehicles', 'Drivers', null, undefined].map((s) => scopes(s, f, amwins, '/application/businessauto')), Array(4).fill(['/application/businessauto']));
   }
+});
+
+test('editScope and changeScopes use the active units passed in on per-unit pages, not state.active', () => {
+  const state = { tab: { id: 1, carrier: null }, active: { vehicles: 1, drivers: 2, trailers: 1 }, tabSteps: new Map(), unitShown: null, unitForms: {} };
+  const context = { state };
+  vm.runInNewContext(extractFunction('changeScopes'), context);
+  const progressive = { vehiclePages: ['AddVehicle'], trailerPages: ['AddTrailer'], driverPage: 'AddDriver' };
+  const active = { vehicles: 0, drivers: 0, trailers: 0 };
+  assert.equal(context.editScope('AddVehicle', progressive, undefined, { active }), 'AddVehicle|v0');
+  assert.equal(context.editScope('AddTrailer', progressive, undefined, { active }), 'AddTrailer|tr0');
+  assert.equal(context.editScope('AddDriver', progressive, undefined, { active }), 'AddDriver|d0');
+  assert.deepEqual([...context.changeScopes('AddVehicle', progressive, undefined, null, { active })], ['AddVehicle|v0']);
+  assert.deepEqual([...context.changeScopes('AddTrailer', progressive, undefined, null, { active })], ['AddTrailer|tr0']);
+  assert.deepEqual([...context.changeScopes('AddDriver', progressive, undefined, null, { active })], ['AddDriver|d0']);
 });
 
 test('the recorder\'s field_changes file a GEICO edit under each scope its forms give, the tab\'s latest form when it names none', () => {
