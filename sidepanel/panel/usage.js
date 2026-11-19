@@ -7,13 +7,14 @@ import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usa
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { logCrash, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
+import { logCrash, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn, unlogged } from './core.js';
 import { releaseDiscardedForms } from './record.js';
 import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
 import { syncAiBanner } from './assistant.js';
 import { changeScopes, tabStep } from './scope.js';
 import { currentReportKey, stopNoteFor } from './report-model.js';
+/** @import { CarrierConfig } from '../../types.js' */
 
 // ---------------------------------------------------------------------------------------------
 // Usage recording (see src/usage.js for what is and isn't kept)
@@ -35,6 +36,7 @@ const TEXT_SETTLE_MS = 4000;
  * @typedef {object} PendingTextChange
  * @property {number | null} tabId
  * @property {string | null} carrier
+ * @property {CarrierConfig | null} [carrierConfig]
  * @property {string} page
  * @property {string} pageKey
  * @property {string | undefined} step
@@ -119,7 +121,7 @@ function flushPendingTextChanges(tabId) {
   }
   const pending = pendingText;
   pendingText = null;
-  if (!pending) return Promise.resolve();
+  if (!pending || unlogged(pending.carrierConfig)) return Promise.resolve();
   if (String(pending.change.before ?? '') === String(pending.change.after ?? '')) return Promise.resolve();
   return usage.log({
     carrier: pending.carrier,
@@ -146,9 +148,10 @@ registerTextChangeFlush();
  * Logs a batch of recorder field_changes: plain free-text edits coalesce into one event per settled
  * edit, while choice/checkbox/radio/select/combo/date changes log immediately as before.
  * @param {any[]} changes
- * @param {{ tabId: number | null, carrier: string | null, page: string, step: string | undefined, view: string, forms?: any, session: any, ctx: any }} info
+ * @param {{ tabId: number | null, carrier: string | null, carrierConfig?: CarrierConfig | null, page: string, step: string | undefined, view: string, forms?: any, session: any, ctx: any }} info
  */
-function logFieldChanges(changes, { tabId, carrier, page, step, view, forms, session, ctx }) {
+function logFieldChanges(changes, { tabId, carrier, carrierConfig = state.tab?.carrier ?? null, page, step, view, forms, session, ctx }) {
+  if (unlogged(carrierConfig)) return;
   // Never coalesce text across an intake/session mismatch (loadFile before startSession, or a
   // panel reopened with mismatched stored intake/session); log immediately uncoalesced as main did.
   const sessionMismatch = !!(state.intake?.intakeId && session?.intakeId && state.intake.intakeId !== session.intakeId);
@@ -163,6 +166,7 @@ function logFieldChanges(changes, { tabId, carrier, page, step, view, forms, ses
       const next = {
         tabId,
         carrier,
+        carrierConfig,
         page,
         pageKey,
         step,
@@ -241,7 +245,7 @@ function tellRecorder(cmd, tabId = state.tab?.id) {
 function onRecorderMessage(msg, sender, sendResponse) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
-  const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
+  const log = (...events) => { if (!unlogged(state.tab.carrier)) usage.log(...events); };
   // Layouts are of the quote page, the tab's top frame; a child frame names its own address.
   const layoutPage = sender.frameId ? pageOf(state.tab.url) : samePage(msg.page);
   if (msg.event === 'page_view') {
@@ -305,7 +309,7 @@ function onRecorderMessage(msg, sender, sendResponse) {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: session?.keySalt,
       step };
     const view = viewOf(sender.tab.id, samePage(msg.page));
-    if (!state.tab.carrier?.practice) logFieldChanges(msg.changes, { tabId: sender.tab?.id ?? null, carrier, page: msg.page, step, view, forms: msg.forms, session, ctx });
+    if (!unlogged(state.tab.carrier)) logFieldChanges(msg.changes, { tabId: sender.tab?.id ?? null, carrier, carrierConfig: state.tab.carrier, page: msg.page, step, view, forms: msg.forms, session, ctx });
     scheduleLayout(layoutPage, 'changed');
     // The quote's state, by whoever picked it: remembered for this tab, checked against the intake.
     for (const c of msg.changes) {

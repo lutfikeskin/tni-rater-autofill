@@ -21,6 +21,7 @@
     "https://*.progressive.com/*",
     "https://*.geico.com/*",
     "https://*.amwinsadmittedplacement.com/*",
+    "https://portal.bhhomestate.com/*",
     "https://api.openai.com/*",
     "https://usage-server-production.up.railway.app/*",
     "http://localhost/*",

@@ -9,7 +9,7 @@ import * as usage from '../usage-log.js';
 import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
-import { $, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
+import { $, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn, unlogged } from './core.js';
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -304,6 +304,7 @@ async function applyCheckChoice(i, choice) {
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
+  if (ctx?.carrier?.recon || state.tab?.carrier?.recon) return;
   // The quote the review is for: its ai_suggest is logged as that quote's, also when the intake was
   // replaced while Luna answered (usage-log.js log keeps an event's own session and intakeId).
   const origin = usage.currentSession();
@@ -401,7 +402,7 @@ async function runAssist(frames, ctx) {
       const fresh = result.suggestions.map(named.restore);
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
+      if (!unlogged(ctx.carrier)) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
@@ -417,7 +418,7 @@ async function runAssist(frames, ctx) {
       // Which prompt failed (luna.js suggest: error.promptHash), only as its 12 hex characters, and what
       // a failed or dropped review spent before it stopped (error.usage).
       const prompt = /^[0-9a-f]{12}$/.test(e?.promptHash ?? '') ? { promptHash: e.promptHash } : {};
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, ...prompt, ...spentOf(e), error: redactor(redactionTerms(record))(msg).slice(0, 200) });
+      if (!unlogged(ctx.carrier)) usage.log({ ...logged, ms: Date.now() - started, ...prompt, ...spentOf(e), error: redactor(redactionTerms(record))(msg).slice(0, 200) });
       if (!stale()) holder.say({ bad: /AI assistant/.test(msg) ? msg : `AI assistant: ${msg}` });
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
@@ -624,7 +625,7 @@ async function applyAi(list, ctx, decision) {
         x.done = null;
         x.error = problem?.reason ?? 'the question is no longer on this page';
       }
-      if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
+      if (sameContext && !unlogged(ctx.carrier)) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
     if (sameContext) state.agentKeys.set(editOrigin.page, keys);
     // On the quote's finishing step after its action was clicked: the printed proposal is no longer
@@ -782,7 +783,7 @@ function renderAi(holder, suggestions, ctx) {
     }
     for (const x of list) {
       if (decision === 'approved') x.approved = true; else { x.rejected = true; x.unconfirmed = false; }
-      if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
+      if (!unlogged(ctx.carrier)) usage.log(aiDecisionEvent(x, ctx, decision));
     }
     if (decision === 'rejected') {
       for (const x of list) {
@@ -816,7 +817,7 @@ function renderAi(holder, suggestions, ctx) {
         x.unconfirmed = false;
         x.error = null;
         x.confirmError = null;
-        if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
+        if (!unlogged(ctx.carrier)) usage.log(aiDecisionEvent(x, ctx, decision));
       } else {
         x.confirmError = 'The page answer changed; review it.';
       }
@@ -864,7 +865,7 @@ function renderAi(holder, suggestions, ctx) {
     }
     return { kind: 'suggest', choice: x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice, tip: x.tip || null, why: why(x), ...rules(x),
       use: () => act([x], 'accepted'),
-      noThanks: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } };
+      noThanks: () => { x.dismissed = true; if (!unlogged(ctx.carrier)) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } };
   };
   // The rows of the report shown (report-rows.js): the AI's word goes on its question's.
   const rows = (state.reportFor?.list ?? []).filter((r) => r.type === 'need');

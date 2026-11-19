@@ -31,7 +31,7 @@ import { PANEL_SOURCE } from './panel-source.mjs';
 // What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
 // function in, as the panel's other imports are given there: the real words, not stubs. A context's
 // own value of a name wins.
-const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, productOf, ...context });
+const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, productOf, unlogged: (c) => !!(c?.practice || c?.recon), ...context });
 const vm = { ...nodeVm,
   createContext: (context, ...rest) => nodeVm.createContext(withMessages(context), ...rest),
   runInNewContext: (code, context, ...rest) => nodeVm.runInNewContext(code, withMessages(context), ...rest) };

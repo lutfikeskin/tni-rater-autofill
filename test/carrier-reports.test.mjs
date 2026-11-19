@@ -10,8 +10,8 @@ import { signals } from '../scripts/lib/signals.mjs';
 // check or its portal filter. Now each carrier has one entry, every key said (null where it doesn't
 // apply), and a carrier without one fails here.
 test('every carrier the extension quotes tells the reports each of its pages and its mock', () => {
-  // The local test page's events never reach the reports (events.mjs loadEvents).
-  const quoted = CARRIERS.filter((c) => c.id !== 'test').map((c) => c.id);
+  // The local test page and recon stubs log no events and never reach the reports.
+  const quoted = CARRIERS.filter((c) => c.id !== 'test' && !c.recon).map((c) => c.id);
   assert.deepEqual(Object.keys(CARRIER_REPORTS).sort(), [...quoted].sort());
   for (const id of quoted) {
     for (const key of REPORT_KEYS) assert.notEqual(CARRIER_REPORTS[id][key], undefined, `${id}.${key}: say it, or null where it doesn't apply`);

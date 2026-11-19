@@ -416,6 +416,7 @@
  * @property {string[]} [keepTakenBack]
  * @property {boolean} [continueRetry]  false: a Continue whose page didn't move is never clicked a second time (GEICO, FL live run 4); otherwise it is, once (sidepanel/panel/fill.js)
  * @property {boolean} [practice]
+ * @property {boolean} [recon]  a carrier being explored before its first rules: fills nothing, logs no usage events (docs/new-carrier.md)
  */
 
 // ---------------------------------------------------------------------------------------------

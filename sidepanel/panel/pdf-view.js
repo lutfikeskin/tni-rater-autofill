@@ -5,7 +5,7 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { fillEvents, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store, clearKeptWork, forgetJournals } from './core.js';
+import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store, clearKeptWork, forgetJournals, unlogged } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
 import { flushPendingTextChanges, pageOf, samePage } from './usage.js';
@@ -327,7 +327,7 @@ function noteStep(msg, sender) {
     flushPendingTextChanges();
     state.tabSteps.set(sender.tab.id, step);
   }
-  if (carrier?.stopSteps?.[step] && (moved || (msg.event === 'page_view' && !msg.from)) && !carrier.practice && stopPageIsOurs()) {
+  if (carrier?.stopSteps?.[step] && (moved || (msg.event === 'page_view' && !msg.from)) && !unlogged(carrier) && stopPageIsOurs()) {
     const page = samePage(msg.page) || pageOf(state.tab.url);
     usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${step}`] }], { carrier: carrier.id, page, view: viewOf(sender.tab.id, page), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
   }

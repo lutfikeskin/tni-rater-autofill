@@ -59,6 +59,18 @@ export const CARRIERS = [
   progressive,
   geico,
   amwins,
+  // Recon stub (docs/bhhc-spec.md Phase 1): fills nothing and logs no usage events;
+  // replaced by src/carriers/bhhc.js with the first rules.
+  {
+    id: 'bhhc',
+    name: 'BHHC',
+    product: 'commercial-auto',
+    hosts: [/^portal\.bhhomestate\.com$/i],
+    autoFillUrl: /(?!)/,
+    useGenericRules: false,
+    recon: true,
+    rules: [],
+  },
   ...(LOCAL_PAGES ? [{
     id: 'test',
     name: 'Local test page',
