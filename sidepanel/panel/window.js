@@ -83,6 +83,8 @@ async function giveWay(to) {
   // The copy taking over doesn't take up a recording: this one saves it, with its last events.
   if (state.recording) await stopRecording('The panel moved, so the recording stopped.');
   await handOver(to);
+  // A late tick may arrive during stopRecording or handOver; flush and await again before closing.
+  await flushPendingTextChanges();
   closeSelf();
 }
 

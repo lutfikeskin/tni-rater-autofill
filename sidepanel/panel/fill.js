@@ -181,6 +181,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   if (!auto && state.autoPaused) { state.autoPaused = false; keepJournal(state.tab.id, { dropped: ['autoPaused'] }); }
   // The agent's own fill on a tab a rater's logo opened: theirs to fill from then on (quote-owner.js).
   if (!auto) releasePortal(state.tab.id);
+  // Flush pending free-text edits before pickListItem may switch state.active or the fill exits early.
   flushPendingTextChanges();
   state.fillingKind = 'fill';
   state.filling = true;

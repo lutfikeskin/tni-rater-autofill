@@ -52,7 +52,7 @@ function copyUsage(rec) {
   return usage.onLogged((events, { t, session }) => {
     if (rec.stopping || state.recording !== rec) return;
     const mine = rec.store.manifest.session;
-    const matched = events.filter((/** @type {any} */ e) => e && typeof e.type === 'string' && (!mine || (e.session ?? session) === mine));
+    const matched = events.filter((/** @type {any} */ e) => e && typeof e.type === 'string' && (!mine || ('session' in e ? e.session : session) === mine));
     if (!matched.length) return;
     const fallbackAt = Date.parse(t);
     rec.store.add(matched.map((/** @type {any} */ event) => {

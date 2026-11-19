@@ -614,13 +614,16 @@ test('the store copy takes no server or token of the agent\'s own', async () => 
   }
 });
 
-test('beforeLog runs synchronously before an event enters the log, without recursing, and preserves explicit t and seq order', async () => {
+test('beforeLog runs synchronously with incoming events before they enter the log, without recursing, and preserves explicit t and seq order', async () => {
   await usage.clearLog();
   usage.startSession('intake-1');
   const seen = [];
+  const hookedBatches = [];
   let pending = { type: 'field_change', page: 'P', t: '2026-11-19T10:00:00.000Z', key: 'notes', kind: 'text', by: 'agent', change: 'entered' };
   const untap = usage.onLogged((events) => seen.push(...events.map((e) => e.type)));
-  const unhook = usage.beforeLog(() => {
+  const unhook = usage.beforeLog((incoming) => {
+    hookedBatches.push(incoming.map((e) => e.type));
+    if (incoming.some((e) => e.type === 'fill_run' && e.auto === true)) return;
     const next = pending;
     pending = null;
     if (next) usage.log(next);
@@ -632,12 +635,15 @@ test('beforeLog runs synchronously before an event enters the log, without recur
   };
   try {
     await usage.saveSettings({ serverUrl: 'http://usage.test' });
+    await usage.log({ type: 'fill_run', page: 'P', auto: true, filled: 0 });
+    assert.deepEqual(seen, ['fill_run'], 'hook can inspect events and skip flushing for no-op auto fill_run');
     await usage.log({ type: 'page_layout', page: 'P', reason: 'changed' });
     await usage.upload();
-    assert.deepEqual(seen, ['field_change', 'page_layout'], 'onLogged sees the flushed event first');
-    assert.deepEqual(uploaded.map((e) => e.type), ['field_change', 'page_layout']);
-    assert.ok(uploaded[0].seq < uploaded[1].seq, 'flushed event gets the earlier seq');
-    assert.equal(uploaded[0].t, '2026-11-19T10:00:00.000Z', 'explicit event timestamp t is preserved');
+    assert.deepEqual(hookedBatches, [['fill_run'], ['page_layout']], 'beforeLog received each outer batch and did not recurse on the flush');
+    assert.deepEqual(seen, ['fill_run', 'field_change', 'page_layout'], 'onLogged sees the flushed event before page_layout');
+    assert.deepEqual(uploaded.map((e) => e.type), ['fill_run', 'field_change', 'page_layout']);
+    assert.ok(uploaded[1].seq < uploaded[2].seq, 'flushed event gets the earlier seq than page_layout');
+    assert.equal(uploaded[1].t, '2026-11-19T10:00:00.000Z', 'explicit event timestamp t is preserved');
   } finally {
     unhook();
     untap();

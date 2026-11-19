@@ -116,10 +116,11 @@ export function onLogged(fn) {
 
 // Hooks run synchronously just before events enter the log (e.g., flushing a coalesced text edit
 // so any following event — page_layout, fill_run, page_view, agent_click, intake_closed — is never
-// logged ahead of the edit that preceded it). Nested log() calls made by a hook skip the hooks.
+// logged ahead of the edit that preceded it). Receives the incoming events so a hook can ignore
+// no-op automatic follow-ups. Nested log() calls made by a hook skip the hooks.
 const beforeLogs = new Set();
 let flushingBeforeLog = false;
-/** @param {() => void} fn */
+/** @param {(events: object[]) => void} fn */
 export function beforeLog(fn) {
   beforeLogs.add(fn);
   return () => beforeLogs.delete(fn);
@@ -135,7 +136,7 @@ export function log(...events) {
   if (!flushingBeforeLog && beforeLogs.size) {
     flushingBeforeLog = true;
     try {
-      for (const fn of beforeLogs) { try { fn(); } catch { /* the log goes on */ } }
+      for (const fn of beforeLogs) { try { fn(events); } catch { /* the log goes on */ } }
     } finally {
       flushingBeforeLog = false;
     }

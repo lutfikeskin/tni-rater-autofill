@@ -25,6 +25,7 @@ import { productOf } from '../src/products.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { layoutTransitions } from '../scripts/lib/transitions.mjs';
+import * as realUsageLog from '../sidepanel/usage-log.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 
 // What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
@@ -165,7 +166,7 @@ function extractFunction(name) {
           // Settled free-text field_change coalescing (#587) has its own tests; unrelated extracted
           // functions no-op unless the harness provides flushPendingTextChanges.
           flushPendingTextChanges: '() => {}' };
-        if ((name === 'onRecorderMessage' || name === 'logFieldChanges') && !/function flushPendingTextChanges\(/.test(source)) source += `\n${extractFunction('flushPendingTextChanges')}`;
+        if ((name === 'onRecorderMessage' || name === 'logFieldChanges' || name === 'registerTextChangeFlush') && !/function flushPendingTextChanges\(/.test(source)) source += `\n${extractFunction('flushPendingTextChanges')}`;
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
@@ -182,7 +183,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey', 'logFieldChanges', 'isCoalescedText', 'samePendingText']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey', 'logFieldChanges', 'isCoalescedText', 'formsKeyOf', 'samePendingText', 'shouldFlushBefore']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // Free-text field_change coalescer state (sidepanel/panel/usage.js, #587).
@@ -12471,7 +12472,7 @@ test('the header carrier logo has its own class, sized by one rule without paddi
 
 // Issue #587: free-text typing coalesces into one settled field_change usage event while keeping
 // agent-edit bookkeeping immediate, choice/date controls unchanged, and causal log ordering intact.
-function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.layoutSteps, autoFillUrl: /amwins\.test/ }, record = { applicant: { email: 'jordan@avery.test', name: 'Avery Freight' }, operations: {}, vehicles: [], trailers: [], drivers: [], coverage: {} }, filled = new Map(), session = { id: 'sess-1', intakeId: 'int-1', keySalt: 'salt-1' }, extraFns = [], overrides = {} } = {}) {
+function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.layoutSteps, autoFillUrl: /amwins\.test/ }, record = { applicant: { email: 'jordan@avery.test', name: 'Avery Freight' }, operations: {}, vehicles: [], trailers: [], drivers: [], coverage: {} }, filled = new Map(), session = { id: 'sess-1', intakeId: 'int-1', keySalt: 'salt-1' }, extraFns = [], overrides = {}, useRealUsageLog = false } = {}) {
   const logged = [];
   const taps = new Set();
   const beforeHooks = new Set();
@@ -12537,7 +12538,7 @@ function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.lay
     cards: {},
   };
   let logDelay = null;
-  const usage = {
+  const mockUsage = {
     beforeLog: (fn) => { beforeHooks.add(fn); return () => beforeHooks.delete(fn); },
     onLogged: (fn) => { taps.add(fn); return () => taps.delete(fn); },
     currentSession: () => currentSession,
@@ -12546,7 +12547,7 @@ function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.lay
     log: (...events) => {
       if (!flushingBefore && beforeHooks.size) {
         flushingBefore = true;
-        try { for (const fn of beforeHooks) fn(); } finally { flushingBefore = false; }
+        try { for (const fn of beforeHooks) fn(events); } finally { flushingBefore = false; }
       }
       const fallbackT = new Date(clock).toISOString();
       const sid = currentSession?.id ?? null;
@@ -12557,6 +12558,7 @@ function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.lay
       return logDelay ? logDelay() : Promise.resolve();
     },
   };
+  const usage = useRealUsageLog ? realUsageLog : mockUsage;
   class FakeDate extends Date {
     constructor(...args) { super(...(args.length ? args : [clock])); }
     static now() { return clock; }
@@ -12640,8 +12642,9 @@ function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.lay
     ...overrides,
   };
   vm.createContext(context);
-  const fns = ['onRecorderMessage', 'tellRecorder', 'noteStep', 'copyUsage', 'stopRecording', ...extraFns];
-  vm.runInContext(`${PAGE_HELPERS}\n${fns.map(extractFunction).join('\n')}\nusage.beforeLog?.(() => { flushPendingTextChanges(); });`, context);
+  const fns = ['onRecorderMessage', 'registerTextChangeFlush', 'tellRecorder', 'noteStep', 'copyUsage', 'stopRecording', ...extraFns];
+  vm.runInContext(`${PAGE_HELPERS}\n${fns.map(extractFunction).join('\n')}`, context);
+  const unhook = context.registerTextChangeFlush();
   const advance = async (ms) => {
     const target = clock + ms;
     for (;;) {
@@ -12657,7 +12660,7 @@ function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.lay
   };
   const send = (msg, sender = { tab: { id: 1 }, frameId: 0 }) => context.onRecorderMessage({ ra: 'usage', ...msg }, sender, (r) => replies.push(r));
   return {
-    context, state, logged, timers, advance, send, persistedKeys, answered, replies, recorderCmds,
+    context, state, logged, timers, advance, send, persistedKeys, answered, replies, recorderCmds, unhook,
     setSession: (s) => { currentSession = s; },
     setLogDelay: (fn) => { logDelay = fn; },
     now: () => clock,
@@ -12665,65 +12668,103 @@ function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.lay
   };
 }
 
-test('real scheduleAutoFill/autoFill (600 ms) does not split multi-tick free-text typing; one settled event keeps first before, final after, updated label and last tick timestamp', async () => {
+test('real scheduleAutoFill/autoFill (including no-op auto fills that log fill_run on unfamiliar/held/advanceDue) does not split multi-tick free-text typing, while alternating step and no-step ticks coalesce with the known step', async () => {
   const filled = new Map([['desc', { path: 'operations.whatHaul', shown: 'General freight' }]]);
   let runKitCalls = 0;
+  let kitResult = () => ({
+    frameId: 0,
+    result: {
+      fields: 5, filled: [], kept: [{ key: 'desc' }], failed: [], noData: [], leftRequired: [],
+      // Real conditions that force autoFill to call logFill even when filled/clicked are 0:
+      unknown: [{ key: 'u1', label: 'Extra question', controlKind: 'text' }],
+      held: 'check', advanceDue: 'none', actions: [], blockers: [],
+    },
+  });
   const h = textCoalesceHarness({
     filled,
     extraFns: ['reportKey', 'stepScope', 'scheduleAutoFill', 'autoFill'],
     overrides: {
-      runKit: async () => {
-        runKitCalls++;
-        return [{ frameId: 0, result: { fields: 5, filled: [], kept: [{ key: 'desc' }], failed: [], noData: [], leftRequired: [], unknown: [], actions: [], blockers: [] } }];
-      },
+      renderReport() {},
+      runKit: async () => { runKitCalls++; return [kitResult()]; },
     },
   });
+  h.state.switches.autoAdvance = true;
+  h.state.switches.checkBeforeContinue = true;
   h.state.reports.set(h.context.reportKey(1, '/application/businessauto', h.state.tab.carrier), { fields: 5, filled: 5 });
+
+  // Alternating stepped and step-less ticks (real AmWINS/GEICO behavior) + autoFill logging fill_run every tick!
   const ticks = [
-    ['General freight', 'General freight - '],
-    ['General freight - ', 'General freight - dry'],
-    ['General freight - dry', 'General freight - dry van'],
-    ['General freight - dry van', 'jordan@'],
-    ['jordan@', 'jordan@avery.test'],
+    ['General freight', 'General freight - ', 'Insured Info'],
+    ['General freight - ', 'General freight - dry', undefined],
+    ['General freight - dry', 'General freight - dry van', 'Insured Info'],
+    ['General freight - dry van', 'jordan@', undefined],
+    ['jordan@', 'jordan@avery.test', undefined],
   ];
   let lastTickIso = '';
   for (let i = 0; i < ticks.length; i++) {
-    const [before, after] = ticks[i];
+    const [before, after, step] = ticks[i];
     if (i === ticks.length - 1) h.state.labels.set('desc', 'Updated Operations Description');
     lastTickIso = new Date(h.now()).toISOString();
-    h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    h.send({ event: 'field_changes', page: '/application/businessauto', ...(step ? { step } : {}),
       changes: [{ key: 'desc', q: null, label: 'Operations Description', kind: 'text', before, after, agent: true }] });
     if (i === 0) {
       assert.equal(h.state.agentKeys.get('/application/businessauto')?.has('desc'), true, 'agent key protected immediately on tick 1');
     }
-    // Advance 1500 ms (one recorder tick) so scheduleAutoFill (600 ms) -> autoFill -> tellRecorder('pause') runs every tick!
     if (i < ticks.length - 1) await h.advance(1500);
   }
   assert.ok(runKitCalls >= 4, `real autoFill ran between typing ticks (${runKitCalls} calls)`);
-  assert.ok(h.recorderCmds.some((c) => c.cmd === 'pause'), 'real tellRecorder("pause") ran during autoFill');
-  assert.equal(h.logged.length, 0, 'no partial field_change written while still typing despite autoFill running');
+  assert.ok(h.logged.filter((e) => e.type === 'fill_run' && e.auto === true).length >= 4, 'no-op autoFill logged fill_run on unfamiliar/held/advanceDue');
+  assert.equal(h.logged.filter((e) => e.type === 'field_change').length, 0, 'no partial field_change written despite auto fill_run logging and missing steps');
   assert.equal(h.persistedKeys.length, ticks.length, 'persistAgentKeys ran on every tick');
   assert.equal(h.answered.length, ticks.length, 'answeredOnPage ran on every tick');
   assert.equal(h.replies.filter((r) => r?.ok).length, ticks.length, 'every recorder message acknowledged immediately');
 
-  // Quiet interval (4 s) flushes the one settled event, stamped at the last tick's time (not 4 s later)
+  // Quiet interval (4 s) flushes the one settled event, keeping the known step and last tick's timestamp
   await h.advance(4000);
-  assert.equal(h.logged.length, 1, 'exactly one field_change event after settling');
-  assert.equal(h.logged[0].type, 'field_change');
-  assert.equal(h.logged[0].page, '/application/businessauto');
-  assert.equal(h.logged[0].step, 'Insured Info');
-  assert.equal(h.logged[0].label, 'Updated Operations Description', 'refreshed label on later tick is used');
-  assert.equal(h.logged[0].change, 'edited', 'derived from first before ("General freight") and final after');
-  assert.equal(h.logged[0].vsAutofill, 'different');
-  assert.deepEqual(h.logged[0].matchesIntake, ['applicant.email'], 'matchesIntake computed on the final value');
-  assert.equal(h.logged[0].t, lastTickIso, 'timestamp is the last recorder tick, not flush time');
-  assert.equal(h.logged[0].session, 'sess-1');
-  assert.equal(h.logged[0].intakeId, 'int-1');
+  const fc = h.logged.filter((e) => e.type === 'field_change');
+  assert.equal(fc.length, 1, 'exactly one field_change event after settling');
+  assert.equal(fc[0].page, '/application/businessauto');
+  assert.equal(fc[0].step, 'Insured Info', 'known step preserved when trailing ticks had no step');
+  assert.equal(fc[0].label, 'Updated Operations Description', 'refreshed label on later tick is used');
+  assert.equal(fc[0].change, 'edited', 'derived from first before ("General freight") and final after');
+  assert.equal(fc[0].vsAutofill, 'different');
+  assert.deepEqual(fc[0].matchesIntake, ['applicant.email'], 'matchesIntake computed on the final value');
+  assert.equal(fc[0].t, lastTickIso, 'timestamp is the last recorder tick, not flush time');
+  assert.equal(fc[0].session, 'sess-1');
+  assert.equal(fc[0].intakeId, 'int-1');
+
+  // Conversely: starting step-less then gaining a step upgrades to the known step, AND an autoFill
+  // that actually fills a follow-up question flushes the pending text edit FIRST.
+  h.logged.length = 0;
+  kitResult = () => ({
+    frameId: 0,
+    result: {
+      fields: 5, filled: [{ key: 'follow', label: 'Follow-up', controlKind: 'select', shown: 'Yes' }],
+      kept: [], failed: [], noData: [], leftRequired: [], unknown: [], actions: [], blockers: [],
+    },
+  });
+  h.send({ event: 'field_changes', page: '/application/businessauto',
+    changes: [{ key: 'box2', q: null, label: 'Notes 2', kind: 'text', before: '', after: 'a', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Underwriting',
+    changes: [{ key: 'box2', q: null, label: 'Notes 2', kind: 'text', before: 'a', after: 'ab', agent: true }] });
+  await h.advance(600);
+  const seqTypes = h.logged.map((e) => e.type);
+  assert.equal(seqTypes[0], 'field_change', 'autoFill that filled a follow-up flushes pending text first');
+  assert.equal(seqTypes[1], 'fill_run');
+  assert.equal(h.logged[0].step, 'Underwriting', 'upgraded from step-less tick to known step');
 });
 
-test('a text edit that reveals a follow-up question logs field_change before page_layout so layoutTransitions still sees it', async () => {
+test('real usage-log.js beforeLog and real sidepanel/panel/usage.js registration flush field_change before page_layout so layoutTransitions still sees it', async () => {
+  // Removing the module-level registration in sidepanel/panel/usage.js must fail this test.
+  const usageSrc = fs.readFileSync(new URL('../sidepanel/panel/usage.js', import.meta.url), 'utf8');
+  assert.match(usageSrc, /^registerTextChangeFlush\(\);$/m, 'sidepanel/panel/usage.js registers its beforeLog hook on load');
+
+  await realUsageLog.clearLog();
+  const realSess = realUsageLog.startSession('int-real-1');
   let controls = [{ q: '2A1', kind: 'text', label: 'Commodity notes', pageHasValue: false }];
   const h = textCoalesceHarness({
+    useRealUsageLog: true,
+    session: realSess,
     carrier: { id: 'progressive', autoFillUrl: /progressive\.test/ },
     extraFns: ['layoutJob', 'jobCurrent', 'sameLayoutScope', 'superseded', 'captureLayout', 'recordLayout', 'scheduleLayout', 'layoutWhenQuiet'],
     overrides: {
@@ -12739,29 +12780,41 @@ test('a text edit that reveals a follow-up question logs field_change before pag
       },
     },
   });
-  h.state.tab.url = 'https://progressive.test/quote?pageName=Operations';
-  // Initial layout on arrival
-  await h.context.recordLayout('Operations', 'arrived');
-  assert.equal(h.logged.length, 1);
-  assert.equal(h.logged[0].type, 'page_layout');
+  const stored = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    stored.push(...body.events);
+    return { ok: true, json: async () => ({ accepted: body.events.length, duplicates: 0, rejected: [] }) };
+  };
+  try {
+    await realUsageLog.saveSettings({ serverUrl: 'http://usage.test' });
+    h.state.tab.url = 'https://progressive.test/quote?pageName=Operations';
+    await h.context.recordLayout('Operations', 'arrived');
 
-  // Agent types in a text box; the page reveals a follow-up question and scheduleLayout fires at 1.2 s (< 4 s quiet interval)
-  controls = [
-    { q: '2A1', kind: 'text', label: 'Commodity notes', pageHasValue: true },
-    { q: '2A2', kind: 'text', label: 'Placards carried', pageHasValue: false },
-  ];
-  h.send({ event: 'field_changes', page: 'Operations',
-    changes: [{ key: '2A1', q: '2A1', label: 'Commodity notes', kind: 'text', before: '', after: 'Hazmat', agent: true }] });
-  assert.equal(h.logged.length, 1, 'text edit still pending right after tick');
-  await h.advance(1200);
-  await h.state.layoutChain;
+    // Agent types in a text box; the page reveals a follow-up question and scheduleLayout fires at 1.2 s (< 4 s quiet interval)
+    controls = [
+      { q: '2A1', kind: 'text', label: 'Commodity notes', pageHasValue: true },
+      { q: '2A2', kind: 'text', label: 'Placards carried', pageHasValue: false },
+    ];
+    h.send({ event: 'field_changes', page: 'Operations',
+      changes: [{ key: '2A1', q: '2A1', label: 'Commodity notes', kind: 'text', before: '', after: 'Hazmat', agent: true }] });
+    await h.advance(1200);
+    await h.state.layoutChain;
+    await realUsageLog.upload();
 
-  assert.deepEqual(h.logged.map((e) => e.type), ['page_layout', 'field_change', 'page_layout'], 'field_change flushed before page_layout via beforeLog');
-  assert.ok(h.logged[1].seq < h.logged[2].seq, 'field_change has an earlier seq than page_layout');
-  const transitions = layoutTransitions(h.logged);
-  assert.equal(transitions.length, 1, 'layoutTransitions sees the text-triggered transition');
-  assert.deepEqual(transitions[0].appeared, ['Placards carried']);
-  assert.equal(transitions[0].after[0].question, 'Commodity notes');
+    assert.deepEqual(stored.map((e) => e.type), ['page_layout', 'field_change', 'page_layout'], 'real usage-log.js beforeLog flushed field_change before page_layout');
+    assert.ok(stored[1].seq < stored[2].seq, 'field_change got an earlier seq than page_layout');
+    const transitions = layoutTransitions(stored);
+    assert.equal(transitions.length, 1, 'layoutTransitions sees the text-triggered transition');
+    assert.deepEqual(transitions[0].appeared, ['Placards carried']);
+    assert.equal(transitions[0].after[0].question, 'Commodity notes');
+  } finally {
+    h.unhook?.();
+    globalThis.fetch = origFetch;
+    await realUsageLog.clearLog();
+    realUsageLog.restoreSession(null);
+  }
 });
 
 test('real recorder date messages keep one event per change, while two plain text boxes coalesce to one event each and choices stay immediate', async () => {
@@ -12959,11 +13012,13 @@ test('session boundaries (loadFile, clearClient, newQuote) and copyUsage keep pe
   assert.deepEqual(recorded.map((r) => r.event.type), ['field_change', 'intake_closed']);
   assert.equal(recorded[0].t, Date.parse(h.logged[0].t), 'copyUsage stamps recording timeline with event.t');
 
-  // Verify copyUsage filters by (e.session ?? session) === mine directly
+  // Verify copyUsage filters by ('session' in e ? e.session : session) === mine directly (explicit null does not match)
   const rec2Events = [];
   const rec2 = { tabId: 1, stopping: false, timer: 0, store: { manifest: { session: 'sess-A' }, add: (ev) => rec2Events.push(...ev) } };
   h.state.recording = rec2;
   const untap2 = h.context.copyUsage(rec2);
+  h.setSession({ id: 'sess-A', intakeId: 'int-A', keySalt: 'salt-A' });
+  h.context.usage.log({ type: 'field_change', session: null, t: '2026-11-19T12:00:04.000Z', key: 'explicitNull' });
   h.setSession({ id: 'sess-B', intakeId: 'int-B', keySalt: 'salt-B' });
   h.context.usage.log({ type: 'field_change', session: 'sess-A', t: '2026-11-19T12:00:05.000Z', key: 'fromA' });
   h.context.usage.log({ type: 'field_change', session: 'sess-B', t: '2026-11-19T12:00:06.000Z', key: 'fromB' });
@@ -12996,29 +13051,141 @@ test('session boundaries (loadFile, clearClient, newQuote) and copyUsage keep pe
   assert.equal(h.logged[0].session, 'sess-3');
 });
 
-test('giveWay awaits the pending text flush write before handing over and closing', async () => {
-  let resolveWrite;
+test('giveWay awaits pending text flush writes both before handOver and for late ticks arriving during handOver before closeSelf', async () => {
+  const resolvers = [];
   const order = [];
+  let lateSent = false;
   const h = textCoalesceHarness({
     extraFns: ['giveWay'],
     overrides: {
       stopFill: async () => {},
-      handOver: async () => { order.push('handOver'); },
+      handOver: async () => {
+        order.push('handOver');
+        if (!lateSent) {
+          lateSent = true;
+          h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+            changes: [{ key: 'lateBox', label: 'Late notes', kind: 'text', before: '', after: 'typed during handOver', agent: true }] });
+        }
+      },
       closeSelf: () => { order.push('closeSelf'); },
     },
   });
-  h.setLogDelay(() => new Promise((r) => { resolveWrite = () => { order.push('writeDone'); r(); }; }));
+  h.setLogDelay(() => new Promise((r) => {
+    const idx = resolvers.length + 1;
+    resolvers.push(() => { order.push(`writeDone:${idx}`); r(); });
+  }));
   h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
     changes: [{ key: 'closingBox', label: 'Closing notes', kind: 'text', before: '', after: 'final words', agent: true }] });
 
   const givingWay = h.context.giveWay('newer-panel');
   await Promise.resolve();
   await Promise.resolve();
-  assert.deepEqual(order, [], 'handOver and closeSelf wait for the storage write to finish');
-  assert.equal(h.logged.length, 1, 'flush started writing the pending event');
-  resolveWrite();
+  assert.deepEqual(order, [], 'handOver and closeSelf wait for the first flush write to finish');
+  assert.equal(h.logged.length, 1);
+  resolvers[0]();
+  for (let i = 0; i < 6 && resolvers.length < 2; i++) await Promise.resolve();
+  assert.deepEqual(order, ['writeDone:1', 'handOver'], 'closeSelf waits for the late tick flush write after handOver');
+  assert.equal(h.logged.length, 2, 'late tick started writing before closeSelf');
+  assert.equal(h.logged[1].key, 'lateBox');
+  resolvers[1]();
   await givingWay;
-  assert.deepEqual(order, ['writeDone', 'handOver', 'closeSelf'], 'write finishes before handOver and closeSelf');
+  assert.deepEqual(order, ['writeDone:1', 'handOver', 'writeDone:2', 'closeSelf'], 'both writes finish before closeSelf');
+});
+
+test('GEICO unit forms split repeating keys across forms while ignoring blank transitions, and mid-swap guard skips text only', async () => {
+  const h = textCoalesceHarness({
+    carrier: { id: 'geico', layoutSteps: geico.layoutSteps, autoFillUrl: /sales\.geico\.com/ },
+  });
+  h.state.tab.url = 'https://sales.geico.com/quote';
+  // Same unit form (blank: true -> blank: false) coalesces
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents', forms: [{ list: 'drivers', id: 'drv-1', blank: true }],
+    changes: [{ key: 'ref:GiveFirstName', label: 'First Name', kind: 'text', before: '', after: 'Jo', agent: true }] });
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents', forms: [{ list: 'drivers', id: 'drv-1', blank: false }],
+    changes: [{ key: 'ref:GiveFirstName', label: 'First Name', kind: 'text', before: 'Jo', after: 'Jordan', agent: true }] });
+  assert.equal(h.logged.length, 0, 'same GEICO unit form coalesces even when blank flips');
+  // Switching to another unit form on the same step with the same key splits immediately
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents', forms: [{ list: 'drivers', id: 'drv-2', blank: false }],
+    changes: [{ key: 'ref:GiveFirstName', label: 'First Name', kind: 'text', before: '', after: 'Alex', agent: true }] });
+  assert.equal(h.logged.length, 1, 'switching GEICO unit form flushes the first driver form');
+  assert.equal(h.logged[0].key, 'ref:GiveFirstName');
+  await h.advance(4000);
+  assert.equal(h.logged.length, 2, 'second driver form logs its own event');
+
+  // Mid-swap mismatch (state.intake swapped to int-2 while currentSession is still int-1): text is skipped, choice still logs!
+  h.logged.length = 0;
+  h.state.intake = { ...h.state.intake, intakeId: 'int-2' };
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents',
+    changes: [
+      { key: 'ref:GiveLastName', label: 'Last Name', kind: 'text', before: '', after: 'Avery', agent: true },
+      { key: 'ref:MaritalStatus', label: 'Marital Status', kind: 'select', before: '', after: 'Single', agent: true },
+    ] });
+  await h.advance(4000);
+  assert.deepEqual(h.logged.map((e) => [e.key, e.kind, e.to]), [['ref:MaritalStatus', 'select', 'Single']], 'mid-swap guard skips text coalescing only; choice still logs');
+});
+
+test('wire() connects tabs.onRemoved, pagehide and visibilitychange to flushPendingTextChanges, and step_shown flushes directly in onRecorderMessage', () => {
+  // 1. Direct step_shown through onRecorderMessage (without noteStep) flushes pending text
+  const h = textCoalesceHarness();
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'stepBox', label: 'Step box', kind: 'text', before: '', after: 'before step_shown', agent: true }] });
+  assert.equal(h.logged.length, 0);
+  h.send({ event: 'step_shown', page: '/application/businessauto', step: 'Drivers' });
+  assert.equal(h.logged.length, 1, 'step_shown in onRecorderMessage flushes pending text directly');
+  assert.equal(h.logged[0].key, 'stepBox');
+  assert.equal(h.logged[0].step, 'Insured Info');
+
+  // 2. Real wire() from sidepanel/sidepanel.js registers tabs.onRemoved, pagehide, and visibilitychange
+  const flushes = [];
+  const winListeners = {};
+  const docListeners = {};
+  let removedListener = null;
+  const noopEl = () => ({ addEventListener() {}, classList: { add() {}, remove() {} }, hidden: false });
+  const noop = () => {};
+  const wireCtx = {
+    inExtension: true,
+    state: { tabSteps: new Map(), stopScreens: new Map(), tabSessions: new Map(), quoteStates: new Map(), layoutHold: false, layoutNewTabs: new Set(), settingsOpen: false, filling: false, intake: null, pdf: null, summary: null, detailsOpen: false },
+    usage: { build: () => ({ channel: 'source' }) },
+    canRecord: () => false,
+    $: noopEl,
+    document: { visibilityState: 'visible', body: noopEl(), addEventListener: (t, fn) => { docListeners[t] = fn; } },
+    window: { addEventListener: (t, fn) => { winListeners[t] = fn; } },
+    ResizeObserver: class { observe() {} },
+    chrome: {
+      commands: { onCommand: { addListener: noop } },
+      runtime: { onMessage: { addListener: noop } },
+      tabs: { onActivated: { addListener: noop }, onCreated: { addListener: noop }, onUpdated: { addListener: noop }, onRemoved: { addListener: (fn) => { removedListener = fn; } }, onAttached: { addListener: noop }, onDetached: { addListener: noop } },
+      windows: { onFocusChanged: { addListener: noop } },
+    },
+    flushPendingTextChanges: (tabId) => { flushes.push(tabId === undefined ? 'all' : tabId); },
+    forgetJournals: noop, forgetQuoteTab: noop, dropReports: noop, inheritQuoteState: noop, noteNewTab: noop,
+    popOut: noop, dock: noop, closeSettings: noop, openSettings: noop, mountSiteTrack: noop, mountNote: noop,
+    mountLoadError: noop, mountSetup: noop, mountSettings: noop, settingsActs: () => ({}), aiActs: () => ({}),
+    markTestRun: noop, defaultsActs: () => ({}), setDefaultsShown: noop, renderSteps: noop, resumeHeldFill: noop,
+    capturePage: noop, mountRecordingLine: noop, mountSteps: noop, setView: noop, refreshAnswers: noop,
+    checkItems: noop, fileReplacer: () => ({ replace: noop, answered: noop }), loadFile: noop, askFile: noop,
+    clientNote: noop, workSaid: noop, mountClient: noop, closeDetails: noop, openDetails: noop, openPdf: noop,
+    closeSummary: noop, openSummary: noop, render: noop, clearClient: noop, storageSaid: noop, newQuote: noop,
+    mountChecks: noop, mountDetails: noop, showEmpty: noop, mountSummary: noop, saveSummary: noop, mountCards: noop,
+    openPortal: noop, mountPickers: noop, pickUnit: noop, mountFeed: noop, setFilter: noop, showPast: noop,
+    clearMarks: noop, mountPdf: noop, closePdf: noop, openPdfInTab: noop, pdfZoom: noop, PDF_FOCUS_ZOOM: 2,
+    pdfPage: noop, PDF_ZOOMS: [1, 2], pdfPan: noop, drawPdf: noop, overlayKey: noop, mountDock: noop,
+    fillPage: noop, stopFill: noop, showNextNeed: noop, lookRight: noop, pageOf: noop, dismissState: noop,
+    captureFromShortcut: noop, noteCaptured: noop, toggleRecording: noop, onTraceMessage: noop,
+    recordedTabUpdated: noop, recordedTabRemoved: noop, renderUnfinished: noop, wireUsage: noop, noteStep: noop,
+    onRecorderMessage: noop, noteLiveItems: noop, onPanelMessage: noop, refreshTab: noop, onTabUpdated: noop,
+    startRecording: noop, noteRecording: noop, stopRecording: noop, recoverRecording: noop, discardUnfinished: noop,
+  };
+  vm.runInNewContext(`${extractFunction('wire')}\nwire();`, wireCtx);
+  assert.equal(typeof removedListener, 'function', 'wire() registered chrome.tabs.onRemoved');
+  assert.equal(typeof winListeners.pagehide, 'function', 'wire() registered window pagehide');
+  assert.equal(typeof docListeners.visibilitychange, 'function', 'wire() registered document visibilitychange');
+  removedListener(42);
+  winListeners.pagehide();
+  wireCtx.document.visibilityState = 'visible';
+  docListeners.visibilitychange();
+  wireCtx.document.visibilityState = 'hidden';
+  docListeners.visibilitychange();
+  assert.deepEqual(flushes, [42, 'all', 'all'], 'tabs.onRemoved passes tabId, pagehide flushes all, visibilitychange flushes only when hidden');
 });
 
 test('real flush paths (page_view, noteStep, fillPage, pickUnit, refreshTab, tabs.onRemoved, agent_click, recording stop), no-op drop and practice suppression', async () => {
