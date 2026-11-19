@@ -204,6 +204,7 @@ test('loadFile holds defaults while loading and releases the loading hold when a
       intakeSummary: async () => ({ intakeId }),
       testIntakes: { get: async () => [] },
       stopFillFirst: async () => {},
+      flushPendingTextChanges: () => {},
       profileTimer: null,
       logProfile: () => false,
       stopRecording: async () => {},

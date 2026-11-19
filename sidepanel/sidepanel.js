@@ -9,7 +9,7 @@ import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, sta
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { closeSettings, firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
-import { onRecorderMessage, pageOf } from './panel/usage.js';
+import { flushPendingTextChanges, onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
 import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
@@ -210,12 +210,14 @@ function wire() {
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); noteNewTab(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); state.tabSessions.delete(tabId); state.quoteStates.delete(tabId); forgetJournals(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { flushPendingTextChanges(tabId); state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); state.tabSessions.delete(tabId); state.quoteStates.delete(tabId); forgetJournals(tabId); forgetQuoteTab(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
     // A tab dragged into another window, or back: which tab this copy holds depends on its window.
     chrome.tabs.onAttached.addListener(refreshTab);
     chrome.tabs.onDetached.addListener(refreshTab);
   }
+  window.addEventListener('pagehide', () => flushPendingTextChanges());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPendingTextChanges(); });
 }
 
 async function init() {

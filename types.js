@@ -1243,6 +1243,7 @@
  * @property {PageAdapterKeys} [keys]  how its fields are named and keyed (field-key.js)
  * @property {(el: Element) => string} [caption]  a question's caption as the page draws it (Progressive's c_<id> label), for the recorder
  * @property {(el: Element) => boolean} [combo]  a dropdown drawn as a text box (an ExtJS combo), for the recorder
+ * @property {(el: Element) => boolean} [date]  a carrier date picker drawn as a text box, for the recorder
  */
 
 /**
