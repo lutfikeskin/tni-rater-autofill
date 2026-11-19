@@ -14,6 +14,7 @@ import * as usage from '../usage-log.js';
 import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals } from './core.js';
 import { changedFromRead, firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
+import { flushPendingTextChanges } from './usage.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
 import { ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, reviewIntake } from './assistant.js';
@@ -57,6 +58,7 @@ async function loadFile(file, { reset = false } = {}) {
   state.resetting = true;
   try {
     await stopFillFirst();
+    flushPendingTextChanges();
     // The same PDF again (to see it in the panel again, or by mistake): the agent's work on it stays.
     const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
     if (profileTimer) logProfile();

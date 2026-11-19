@@ -6,7 +6,7 @@ import { inExtension, popped } from './env.js';
 import { restoreAgentKeys, restoreDoneActions, restoreJournal, restoreReports, retireAiOrigins, state } from './core.js';
 import { firstUnits } from './intake.js';
 import { renderPickers } from './record.js';
-import { ensureRecorder, pageOf } from './usage.js';
+import { ensureRecorder, flushPendingTextChanges, pageOf } from './usage.js';
 import { issueSaid, renderSite, scheduleLayout, seedQuoteState } from './coordinator.js';
 import { noteQuoteTab } from './quote-owner.js';
 import { noteFollowed } from './dev-recording.js';
@@ -82,6 +82,7 @@ async function refreshTab() {
     }
   }
   showHeldNote(null);
+  if (tab?.id !== state.tab?.id || pageOf(tab?.url) !== pageOf(state.tab?.url)) flushPendingTextChanges();
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
     const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'triedAgain', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'advanceRetried', 'assistPage', 'unitNamed', 'active'];

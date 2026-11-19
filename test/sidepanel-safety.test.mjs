@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
-import { fillEvents, loggedTimeline, sha256Hex, knownStep } from '../src/usage.js';
+import { fieldChangeEvent, fillEvents, loggedTimeline, redactor, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
@@ -160,11 +160,15 @@ function extractFunction(name) {
           // elsewhere nothing is kept or brought back.
           forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', noNumberEdit: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
           // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
-          resumeHeldFill: '() => {}' };
+          resumeHeldFill: '() => {}',
+          // Settled free-text field_change coalescing (#587) has its own tests; unrelated extracted
+          // functions no-op unless the harness provides flushPendingTextChanges.
+          flushPendingTextChanges: '() => {}' };
+        if ((name === 'onRecorderMessage' || name === 'logFieldChanges') && !/function flushPendingTextChanges\(/.test(source)) source += `\n${extractFunction('flushPendingTextChanges')}`;
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
-          if (new RegExp(`\\b${stub}\\(`).test(source)) source += `\nvar ${stub} = globalThis.${stub} ?? (${fallback});`;
+          if (name !== stub && new RegExp(`\\b${stub}\\(`).test(source) && !new RegExp(`function ${stub}\\(`).test(source)) source += `\nvar ${stub} = globalThis.${stub} ?? (${fallback});`;
         }
         if (name !== 'persistGuardedEdits' && /\bpersistGuardedEdits\(/.test(source)) source += `\n${extractFunction('persistGuardedEdits')}`;
         // The filling switches are read through switchOn (the harness's boxes stand in for Settings).
@@ -177,9 +181,11 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey', 'logFieldChanges', 'isCoalescedText', 'samePendingText']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
+        // Free-text field_change coalescer state (sidepanel/panel/usage.js, #587).
+        if (/\bpendingText\b/.test(source) && !/let pendingText =/.test(source)) source += '\nvar TEXT_SETTLE_MS = globalThis.TEXT_SETTLE_MS ?? 4000;\nvar pendingText = null;\nvar pendingTextTimer = null;';
         // A carrier's own rules fingerprint is the build's (CARR-14): none here, unless the harness gives one.
         if (source.includes('carrierRulesOf(') && !source.includes('const carrierRulesOf =')) source += '\nvar carrierRulesOf = globalThis.carrierRulesOf ?? (() => undefined);';
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -6144,7 +6150,7 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(extractFunction('loadFile'), /doneRestored\.clear\(\);/);
   assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
   assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
-  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
+  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,1000}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
   assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\)\.catch\(storageSaid\);/, 'Clear runs once the agent confirms it');
 });
 
@@ -12460,4 +12466,240 @@ test('the header carrier logo has its own class, sized by one rule without paddi
   assert.equal(rules.length, 1, 'one rule styles the header logo');
   assert.doesNotMatch(rules[0], /padding/);
   assert.ok(Number(rules[0].match(/(?:^|;)\s*height:\s*(\d+)px/)?.[1]) >= 20, rules[0]);
+});
+
+// Issue #587: free-text typing coalesces into one settled field_change usage event while keeping
+// agent-edit bookkeeping immediate and choice controls unchanged.
+function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.layoutSteps }, record = { applicant: { email: 'jordan@avery.test', name: 'Avery Freight' } }, filled = new Map(), session = { id: 'sess-1', intakeId: 'int-1', keySalt: 'salt-1' } } = {}) {
+  const logged = [];
+  const taps = new Set();
+  const timers = new Map();
+  let nextTimer = 1;
+  let currentSession = session;
+  const persistedKeys = [];
+  const answered = [];
+  const replies = [];
+  const state = {
+    intake: { record },
+    tab: { id: 1, url: 'https://amwins.test/application/businessauto', carrier },
+    active: { drivers: 0, vehicles: 0, trailers: 0 },
+    filled,
+    labels: new Map(),
+    choices: new Map(),
+    agentKeys: new Map(),
+    visitedPages: new Set(),
+    autoPages: new Set(),
+    layoutReadyTabs: new Set(),
+    layoutNewTabs: new Set(),
+    quoteStates: new Map(),
+    tabSteps: new Map(),
+    stopScreens: new Map(),
+    tabSessions: new Map(),
+    recording: null,
+    filling: false,
+  };
+  const usage = {
+    log: (...events) => {
+      for (const fn of taps) fn(events, { t: new Date().toISOString(), session: currentSession?.id ?? null });
+      logged.push(...events);
+    },
+    onLogged: (fn) => { taps.add(fn); return () => taps.delete(fn); },
+    currentSession: () => currentSession,
+  };
+  const context = {
+    state,
+    URL,
+    Date,
+    Number,
+    Array,
+    Map,
+    Set,
+    Promise,
+    chrome: { tabs: { sendMessage: async () => {} } },
+    setTimeout: (fn, ms) => {
+      const id = nextTimer++;
+      timers.set(id, { fn, ms });
+      return id;
+    },
+    clearTimeout: (id) => { timers.delete(id); },
+    clearInterval: () => {},
+    $: () => ({ checked: false }),
+    usage,
+    redactor,
+    redactionTerms: () => [],
+    fieldChangeEvent,
+    knownStep,
+    viewOf: (tabId, page) => `t${tabId}:${page === 'AddVehicle' ? `v${state.active.vehicles}` : 'top'}`,
+    scheduleLayout() {},
+    scheduleAutoFill() {},
+    quoteStatePick: () => undefined,
+    persistAgentKeys: () => persistedKeys.push(new Map([...state.agentKeys].map(([k, v]) => [k, new Set(v)]))),
+    settleRejectedAi: async () => false,
+    answeredOnPage: (page, list) => answered.push({ page, keys: list.map((c) => c.key) }),
+    renderSite() {},
+    renderSteps() {},
+    refreshAnswers() {},
+    renderDevrec() {},
+    devrecSaid() {},
+    saveRecording: async () => {},
+    stopPageIsOurs: () => false,
+    fillEvents,
+  };
+  vm.createContext(context);
+  vm.runInContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'tellRecorder', 'noteStep', 'copyUsage', 'stopRecording'].map(extractFunction).join('\n')}`, context);
+  const fireTimers = () => {
+    for (const [id, entry] of [...timers]) {
+      timers.delete(id);
+      entry.fn();
+    }
+  };
+  const send = (msg, sender = { tab: { id: 1 }, frameId: 0 }) => context.onRecorderMessage({ ra: 'usage', ...msg }, sender, (r) => replies.push(r));
+  return { context, state, logged, timers, fireTimers, send, persistedKeys, answered, replies, setSession: (s) => { currentSession = s; } };
+}
+
+test('typing a long text in one box over many ticks logs one settled event with first before and final after, while protecting the key immediately', () => {
+  const filled = new Map([['desc', { path: 'operations.whatHaul', shown: 'General freight' }]]);
+  const h = textCoalesceHarness({ filled });
+  const ticks = [
+    ['General freight', 'General freight - '],
+    ['General freight - ', 'General freight - dry'],
+    ['General freight - dry', 'General freight - dry van'],
+    ['General freight - dry van', 'jordan@'],
+    ['jordan@', 'jordan@avery.test'],
+  ];
+  for (const [before, after] of ticks) {
+    h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+      changes: [{ key: 'desc', q: null, label: 'Operations Description', kind: 'text', before, after, agent: true }] });
+  }
+  // Bookkeeping happened immediately on the first tick, before the quiet interval fires.
+  assert.equal(h.logged.length, 0, 'nothing written to the usage log while still typing');
+  assert.equal(h.state.agentKeys.get('/application/businessauto')?.has('desc'), true, 'agent key protected immediately on tick 1');
+  assert.equal(h.persistedKeys.length, ticks.length, 'persistAgentKeys ran on every tick');
+  assert.equal(h.answered.length, ticks.length, 'answeredOnPage ran on every tick');
+  assert.equal(h.replies.filter((r) => r?.ok).length, ticks.length, 'every recorder message acknowledged immediately');
+  assert.equal(h.timers.size, 1, 'one quiet-interval timer armed');
+  assert.equal([...h.timers.values()][0].ms, 4000, 'quiet interval is 4 s');
+  h.fireTimers();
+  assert.equal(h.logged.length, 1, 'exactly one field_change event after settling');
+  assert.equal(h.logged[0].type, 'field_change');
+  assert.equal(h.logged[0].page, '/application/businessauto');
+  assert.equal(h.logged[0].step, 'Insured Info');
+  assert.equal(h.logged[0].change, 'edited', 'derived from first before ("General freight") and final after');
+  assert.equal(h.logged[0].vsAutofill, 'different');
+  assert.deepEqual(h.logged[0].matchesIntake, ['applicant.email'], 'matchesIntake computed on the final value');
+  assert.equal(h.logged[0].session, 'sess-1');
+  assert.equal(h.logged[0].intakeId, 'int-1');
+});
+
+test('editing two free-text boxes in turn logs one event each, and choice controls still log one event per change', () => {
+  const h = textCoalesceHarness();
+  // Box 1 typed over two ticks
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'box1', label: 'Notes 1', kind: 'text', before: '', after: 'First', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'box1', label: 'Notes 1', kind: 'text', before: 'First', after: 'First line', agent: true }] });
+  assert.equal(h.logged.length, 0);
+  // Moving to Box 2 flushes Box 1 immediately
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'box2', label: 'Notes 2', kind: 'text', before: '', after: 'Second', agent: true }] });
+  assert.equal(h.logged.length, 1, 'moving to box2 flushes box1');
+  assert.equal(h.logged[0].key, 'box1');
+  assert.equal(h.logged[0].change, 'entered');
+  // Moving to a choice control flushes Box 2 immediately, and each choice change logs immediately
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'state', label: 'State', kind: 'select', before: '', after: 'TX', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'state', label: 'State', kind: 'select', before: 'TX', after: 'OH', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'hazmat', label: 'Hazmat', kind: 'radio', before: '', after: 'No', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'dob', label: 'DOB', kind: 'date', before: '', after: '01/02/1990', agent: true }] });
+  assert.deepEqual(h.logged.map((e) => [e.key, e.kind, e.kind === 'text' ? e.change : e.from, e.to ?? null]), [
+    ['box1', 'text', 'entered', null],
+    ['box2', 'text', 'entered', null],
+    ['state', 'select', null, 'TX'],
+    ['state', 'select', 'TX', 'OH'],
+    ['hazmat', 'radio', null, 'No'],
+    ['dob', 'text', 'entered', null],
+  ]);
+});
+
+test('a pending text event flushes on page change, step change, and fill start under its original page and step', async () => {
+  const h = textCoalesceHarness();
+  // 1. Page change flushes under the old page before logging page_view
+  h.send({ event: 'field_changes', page: 'PageA', step: 'Insured Info',
+    changes: [{ key: 'boxA', label: 'Box A', kind: 'text', before: '', after: 'hello', agent: true }] });
+  h.send({ event: 'page_view', page: 'PageB', from: 'PageA', fields: 5 });
+  assert.deepEqual(h.logged.map((e) => [e.type, e.page, e.step ?? null]), [
+    ['field_change', 'PageA', 'Insured Info'],
+    ['page_view', 'PageB', null],
+  ]);
+  h.logged.length = 0;
+
+  // 2. Step change (noteStep) flushes under the old step, never the next step
+  h.state.tabSteps.set(1, 'Insured Info');
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'boxB', label: 'Box B', kind: 'text', before: '', after: 'step one', agent: true }] });
+  h.context.noteStep({ ra: 'usage', event: 'step_shown', page: '/application/businessauto', step: 'Drivers' }, { tab: { id: 1 } });
+  assert.equal(h.logged.length, 1);
+  assert.equal(h.logged[0].key, 'boxB');
+  assert.equal(h.logged[0].step, 'Insured Info', 'filed under the step it was typed on');
+  h.logged.length = 0;
+
+  // 3. Fill start (tellRecorder pause) flushes pending text immediately
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Drivers',
+    changes: [{ key: 'boxC', label: 'Box C', kind: 'text', before: '', after: 'before fill', agent: true }] });
+  assert.equal(h.logged.length, 0);
+  await h.context.tellRecorder('pause', 1);
+  assert.equal(h.logged.length, 1);
+  assert.equal(h.logged[0].key, 'boxC');
+  assert.equal(h.logged[0].step, 'Drivers');
+});
+
+test('stopping a developer recording flushes the pending text edit into the recording timeline, and practice/recon carriers log nothing', async () => {
+  const h = textCoalesceHarness();
+  const recorded = [];
+  const rec = {
+    tabId: 1,
+    stopping: false,
+    timer: 0,
+    store: { manifest: { session: 'sess-1' }, add: (events) => recorded.push(...events) },
+  };
+  h.state.recording = rec;
+  rec.untap = h.context.copyUsage(rec);
+
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'notes', label: 'Notes', kind: 'text', before: '', after: 'part 1', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'notes', label: 'Notes', kind: 'text', before: 'part 1', after: 'part 1 + part 2', agent: true }] });
+  assert.equal(recorded.length, 0, 'not yet copied while typing');
+
+  // Stop recording (fire the 600 ms timer once sendMessage settles so stopRecording resolves)
+  const stopping = h.context.stopRecording();
+  for (let i = 0; i < 20 && !h.timers.size; i++) await new Promise((r) => setImmediate(r));
+  h.fireTimers();
+  await stopping;
+  assert.equal(h.logged.length, 1, 'flushed to usage log on recording stop');
+  assert.equal(recorded.length, 1, 'developer recording received the coalesced event before untap');
+  assert.equal(recorded[0].event.type, 'field_change');
+  assert.equal(recorded[0].event.key, 'notes');
+
+  // Typing and backspacing back to the starting value produces no settled event
+  h.logged.length = 0;
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'undo', label: 'Undo', kind: 'text', before: 'same', after: 'sameX', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'undo', label: 'Undo', kind: 'text', before: 'sameX', after: 'same', agent: true }] });
+  h.fireTimers();
+  assert.equal(h.logged.length, 0, 'no-op settled edit is dropped');
+
+  // Practice and recon carriers log nothing while still protecting agentKeys
+  for (const flag of ['practice', 'recon']) {
+    const p = textCoalesceHarness({ carrier: { id: flag, [flag]: true } });
+    p.send({ event: 'field_changes', page: '/quote',
+      changes: [{ key: 'txt', label: 'Notes', kind: 'text', before: '', after: 'abc', agent: true }] });
+    p.fireTimers();
+    assert.equal(p.logged.length, 0, `${flag} carrier logs nothing`);
+    assert.equal(p.state.agentKeys.get('/quote')?.has('txt'), true, `${flag} carrier still protects agent key`);
+  }
 });

@@ -9,7 +9,7 @@ import { $, state, switchOn } from './core.js';
 import { popped } from './env.js';
 import { rulesFingerprint } from './coordinator.js';
 import { fillDefaultsHash } from './agent-defaults/store.js';
-import { ensureRecorder } from './usage.js';
+import { ensureRecorder, flushPendingTextChanges } from './usage.js';
 import { runKit } from './fill.js';
 import { planFor } from './plan-for.js';
 
@@ -249,6 +249,7 @@ async function discardUnfinished() {
 async function stopRecording(why = '') {
   const rec = state.recording;
   if (!rec || rec.stopping) return;
+  flushPendingTextChanges();
   rec.stopping = true;
   clearInterval(rec.timer);
   rec.untap?.();
