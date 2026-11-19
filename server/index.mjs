@@ -11,6 +11,8 @@
 // GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
 // POST /v1/luna     (upload token) a Luna request (src/ai/luna.js)  -> OpenAI's response
 // GET  /dashboard   (dashboard token, HTTP Basic) the maintainer's live usage page (server/dashboard.mjs)
+// GET  /dashboard/sales (dashboard token) which quoted clients bought: the last push (server/sales.mjs)
+// PUT  /v1/sales    (admin token) { builtAt, pulledAt, since, rows } from npm run push-sales -> { rows }
 //
 // Events are appended to DATA_DIR/events/YYYY-MM-DD.jsonl (by day received), one JSON object
 // per line; the review scripts (scripts/*.mjs) read that folder directly. Each event carries an
@@ -54,6 +56,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { MIN_DASHBOARD_TOKEN, WINDOWS, eventReader, renderDashboard, summarize, testIntakesFrom } from './dashboard.mjs';
+import { MAX_SALES_BYTES, readSales, renderSales, salesPushFrom, storeSales, summarizeSales } from './sales.mjs';
 // agent defaults: everything about them is in that module (removal steps at its top).
 import { AGENT_DEFAULT_FIELDS, AGENT_DEFAULT_RUN_FIELDS, AGENT_DEFAULT_SOURCE, cleanAgentDefaults } from './agent-defaults.mjs';
 // The event contract, shared with the extension (the image copies src/usage-schema.js).
@@ -74,6 +77,7 @@ const DASHBOARD_CACHE_MS = 30_000;
 // daily review compares it with the repository's.
 export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url)))
   .update(fs.readFileSync(new URL('./dashboard.mjs', import.meta.url)))
+  .update(fs.readFileSync(new URL('./sales.mjs', import.meta.url)))
   .update(fs.readFileSync(new URL('./agent-defaults.mjs', import.meta.url)))
   .update(fs.readFileSync(new URL('./privacy.html', import.meta.url)))
   .update(fs.readFileSync(new URL('../src/usage-schema.js', import.meta.url))).digest('hex').slice(0, 12);
@@ -100,12 +104,18 @@ export function logLine(fields, level = 'info') {
   else console.log(line);
 }
 // A route for the log and the counters: one of this server's, or `other`, never what was asked.
-const ROUTES = new Set(['/v1/events', '/v1/luna', '/v1/health', '/v1/days', '/v1/export', '/dashboard', '/privacy']);
+const ROUTES = new Set(['/v1/events', '/v1/luna', '/v1/health', '/v1/days', '/v1/export', '/v1/sales', '/dashboard', '/dashboard/sales', '/privacy']);
 // A refusal's reason as a counter's name: what the server said, without the event's own text (an
 // unknown type's name, quotes inside it included: from the first quote to the last) or numbers,
 // so a client can't make up names of its own.
 const reasonKey = (error) => String(error).replace(/"[\s\S]*"/, '"…"').replace(/\d+/g, 'N').slice(0, 80);
 const MAX_REASONS = 50;
+// The maintainer's pages (/dashboard, /dashboard/sales): never cached, indexed or framed, and no script.
+const PAGE_HEADERS = {
+  'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex',
+  'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+};
 
 // Uploads from one address (audit 2026-11-07, SRV-13: the upload token ships in the extension, so
 // anyone could fill the volume). Two token buckets per address, in memory: requests and bytes. An
@@ -870,13 +880,54 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
         }
         dashboardPages.set(key, page);
       }
-      res.writeHead(200, {
-        'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'x-robots-tag': 'noindex',
-        'x-frame-options': 'DENY', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
-        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
-      });
+      res.writeHead(200, { ...PAGE_HEADERS });
       res.end(page.html);
       logged(200, { window, tests: includeTests, cached: page.at !== now });
+      return;
+    }
+    // Which quoted clients bought (server/sales.mjs): the last push, drawn on each request.
+    if (url.pathname === '/dashboard/sales') {
+      if (!dashboardOn) return done(404, { error: 'not found' });
+      if (req.method !== 'GET') return done(405, { error: 'use GET' });
+      if (!dashboardAuthorized(req)) {
+        res.setHeader('www-authenticate', 'Basic realm="Rater usage", charset="UTF-8"');
+        return done(401, { error: 'dashboard password required' });
+      }
+      let html;
+      try {
+        const push = readSales(dataDir);
+        html = renderSales(push ? summarizeSales(push) : null, { now: clock() });
+      } catch (e) {
+        return done(500, { error: 'could not build the sales page' }, { error: e?.name ?? 'error' });
+      }
+      res.writeHead(200, { ...PAGE_HEADERS });
+      res.end(html);
+      logged(200);
+      return;
+    }
+    // The warehouse's sales rows (npm run push-sales), for the admin only: kept whole or not at all.
+    if (url.pathname === '/v1/sales') {
+      if (req.method !== 'PUT') return done(405, { error: 'use PUT' });
+      if (!isAdmin(req)) return done(401, { error: 'admin token required' });
+      if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) return done(415, { error: 'send application/json' });
+      let size = 0;
+      const chunks = [];
+      req.on('data', guarded(req, res, (c) => {
+        size += c.length;
+        if (size > MAX_SALES_BYTES) { done(413, { error: 'request too large' }); req.destroy(); return; }
+        chunks.push(c);
+      }));
+      req.on('end', guarded(req, res, () => {
+        if (res.writableEnded) return;
+        let body;
+        try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return done(400, { error: 'body is not valid JSON' }); }
+        const { push, error } = salesPushFrom(body, new Date(clock()).toISOString());
+        if (error) return done(400, { error });
+        try { storeSales(dataDir, push); } catch (e) {
+          return done(500, { error: 'could not store sales' }, { error: e?.name ?? 'error', code: typeof e?.code === 'string' ? e.code : undefined });
+        }
+        done(200, { rows: push.rows.length }, { rows: push.rows.length });
+      }));
       return;
     }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {

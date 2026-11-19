@@ -9,7 +9,8 @@
 // panel's document never scrolled its header out of view on the way (W44-10).
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens. The run fails if any request leaves the machine (a host
-// other than localhost: the production usage server, an AI provider, a CDN), if the intake_loaded
+// other than localhost: the production usage server, an AI provider, a CDN; the browser is started
+// resolving no other name, OFFLINE, for what Playwright can't see), if the intake_loaded
 // event, or the intake_profile event whole (nothing in it out of the server's shapes), doesn't reach
 // the local server, or on any console error or uncaught exception in the panel,
 // the mock tab or the extension's service worker that isn't on BENIGN. It waits on what the mock
@@ -56,7 +57,13 @@ const usageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-usage-'));
 const usageServer = createServer({ dataDir: usageDir });
 await new Promise((resolve) => usageServer.listen(0, '127.0.0.1', resolve));
 const usageUrl = `http://127.0.0.1:${usageServer.address().port}`;
-const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
+// The browser itself resolves no name but this machine's, so a request Playwright's routes never see
+// can't leave either. Chrome's own side panel (Back to the side panel, below) is no page of
+// Playwright's: the store build's sent what the run had queued to TNI's server, 36 events as a new
+// install on every run (2026-11-09 to 2026-11-18). A routed address is answered before any lookup.
+// And no proxy: one on this machine would do the lookup itself, past the rule.
+const OFFLINE = ['--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1', '--no-proxy-server'];
+const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, ...OFFLINE] });
 // Only this machine: a request to any other host is refused and fails the run (the production
 // usage server named apart). The extension's own pages, data: and blob: URLs aren't requests out.
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);

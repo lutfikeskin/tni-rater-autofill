@@ -657,7 +657,7 @@ function aiPendingRecord(sig, x, scope) {
     // Which prompt picked it (luna.js promptHash): told apart, never retired for it.
     promptHash: x.promptHash ?? null,
     key: x.key, label: x.pendingLabel ?? aiSafeText(x.label), choice: x.pendingChoice ?? aiSafeText(x.choice), controlKind: x.controlKind,
-    done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
+    done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed, unconfirmed: !!x.unconfirmed,
     fieldHash: x.fieldHash ?? (x.restored ? null : aiFingerprint([x.key, x.label, x.choice])),
     snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
     origin: aiOriginRecord(x.origin),
@@ -716,7 +716,9 @@ async function restoreAiPending() {
       ...x, restored: true, retired, provider: 'luna', pendingScope: x.scope,
       pendingLabel: x.label, pendingChoice: x.choice, done: 'auto', approved: !!x.approved,
       rejected: !!x.rejected || (retired && !x.approved && !x.manual && !x.confirmed),
-      manual: !!x.manual, confirmed: !!x.confirmed, tip: '', checks: [], leave: false,
+      manual: !!x.manual, confirmed: !!x.confirmed, unconfirmed: !!x.unconfirmed,
+      error: x.unconfirmed ? 'the answer was sent but could not be confirmed; review the page before continuing' : null,
+      tip: '', checks: [], leave: false,
       origin: aiOriginRecord(x.origin), originAmbiguous: !!x.originAmbiguous,
       applyable: true, autoOk: !retired, contextKey: null, snapshots: null,
     });

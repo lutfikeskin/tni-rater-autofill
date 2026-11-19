@@ -54,8 +54,9 @@ import { STANDARDS, usd } from '../standards.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler } from '../answers/classes.js';
 import { garagingIs } from '../answers/state.js';
 import { filingsIntent } from '../answers/filings.js';
-import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
+import { phoneNote } from '../answers/contact.js';
+import { isLongHaul, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand, vinUnreadable } from '../normalize.js';
+import { otherNotes, noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
   interchangeLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 
@@ -337,8 +338,7 @@ const ownershipWarn = (r) => companyStructureWarn(r.applicant.name);
 
 // The intake's phone, in GEICO's phone boxes (owner and business, and the owner's mobile phone on
 // Add Driver: W43-29, PA live run, 2026-10-21); a number that isn't a 10-digit US number stays the
-// agent's.
-const phoneNote = (r) => (r.applicant.phone && !/^\(\d{3}\) \d{3}-\d{4}$/.test(r.applicant.phone) ? 'The intake\'s phone isn\'t a 10-digit number: enter it yourself.' : null);
+// agent's (phoneNote, answers/contact.js).
 
 // The business street: the intake's address typed whole (street, city, state and ZIP; the unit has
 // boxes of its own), and GEICO's suggestion for it picked: one with the intake's house number and
@@ -990,6 +990,7 @@ const named = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => (rule
 export const geico = {
   id: 'geico',
   name: 'GEICO',
+  product: 'commercial-auto',
   // The quote is started from the agent gateway.
   display: { logo: 'assets/raters/geico.gif', portalUrl: 'https://gateway2.geico.com/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)geico\.com$/],
@@ -1012,6 +1013,8 @@ export const geico = {
   // in layouts, fill and field-change events only when it is one of these (src/usage.js knownStep).
   layoutSteps: STEPS,
   quoteSteps: STEPS.map((name) => ({ name, step: name })),
+  // Where GEICO quotes its premium (src/premium.js premiumHere).
+  premiumPages: [COVERAGES],
   // The generic label rules misfired on GEICO's pages (FL: the first driver in the owner's boxes,
   // the intake's phone in the mobile-homes cargo question).
   useGenericRules: false,

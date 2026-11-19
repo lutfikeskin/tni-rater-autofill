@@ -50,7 +50,7 @@ const EXPECT = [
   ['#mailingAddress', '1 Test Way'], ['#mailingCity', 'Omaha'], ['#mailingState', 'Nebraska'], ['#mailingZip', '68102'], ['#businessPhone', '4025550100'],
   ['#entityType', 'SOLE PROPRIETOR'], ['#yrsInBusiness', '5+'], ['#yearBusinessEstablished', String(new Date().getFullYear())],
   ['radio:isNonProfit', 'No'], ['#inspectionContactName', 'SAMPLE DRIVER'], ['#inspectionContactOfficePhone', '4025550100'],
-  ['#inspectionContactEmail', ''], ['radio:isSingleContact', 'Yes'], ['#sameAsMailingAddress0_0_', true],
+  ['#inspectionContactEmail', 'client@example.test'], ['radio:isSingleContact', 'Yes'], ['#sameAsMailingAddress0_0_', true],
   ['#garagePanel [data-id="address"]', '1 Test Way'], ['#garagePanel [data-id="city"]', 'Omaha'], ['#garagePanel [data-id="state"]', 'Nebraska'], ['#garagePanel [data-id="zip"]', '68102'],
   ['#natureOfBusiness', 'TRANSPORTATION'], ['#classCodeAndDescription', '484122 - General freight trucking, long-distance, less-than-truckload (LTL)'], ['#operationDescription', 'Trucking for Hire - Other for hire trucking'],
   ['#retailOrServiceOperationPert', '0'],

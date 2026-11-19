@@ -46,7 +46,7 @@ if (testList.warning) console.error(`Warning: ${testList.warning}`);
 
 const events = loadEvents(inputs);
 let tests;
-try { tests = testSessionsOf(events, testList.intakes); } catch (err) { fail(err.message); }
+try { tests = testSessionsOf(events, testList.intakes, { agents: testList.agents }); } catch (err) { fail(err.message); }
 const raws = await readIntakes(folders, new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId && !tests.has(e.session)).map((e) => e.intakeId)));
 if (!raws.size) fail(`None of the recorded quotes' intake PDFs (test runs left out) is in ${folders.join(', ')}.`);
 const run = benchmark(events, { carriers: CARRIERS, raws, detail: true });

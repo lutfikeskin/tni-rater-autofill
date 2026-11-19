@@ -627,7 +627,7 @@ async function captureLayout(job, reason) {
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     noteStopScreen(job, step, buttons);
     // The premium the page quotes, logged when it changed (src/premium.js; not awaited).
-    if (premiumHere(carrier.id, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
+    if (premiumHere(carrier, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
       read: async () => (await chrome.scripting.executeScript({ target: { tabId }, func: () => document.body?.innerText ?? '' }))[0]?.result,
       log: (e) => { if (!jobCurrent(job)) return false; usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier), ...e }); return true; } });
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads
@@ -1532,7 +1532,7 @@ function dockFor() {
     const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
     const ai = aiDock ? pendingAi(state.tab.id, page) : [];
     if (ai.length) {
-      const waiting = ai.filter((x) => !x.rejected).length;
+      const waiting = ai.filter((x) => !x.rejected && !x.unconfirmed).length;
       const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
       return { phase: 'ai', tone: 'ai', eyebrow: DOCK.ai.eyebrow(ai.length), title: DOCK.ai.title(waiting),
         sub: DOCK.ai.sub(waiting < ai.length, !!aiDock.canContinue), button: 'ai-approve', label: DOCK.ai.label(waiting, continues) };

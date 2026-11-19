@@ -11,6 +11,23 @@
 export const KEPT_WORK_PREFIX = 'keptWork:';
 export const KEPT_WORK_MS = 24 * 60 * 60 * 1000;
 
+/** @type {Record<string, string>} */
+const NO_NUMBER_FLAG = { 'applicant.dot': 'applicant.noDot', 'applicant.mc': 'applicant.noMc' };
+
+/**
+ * The value kept for a corrected field. "No" / "None" / "N/A" in USDOT or MC empties the box and
+ * sets `noDot` / `noMc` (noNumberEdit, normalize.js), so it is kept as `'No'` while that flag is
+ * true; a number or an emptied box keeps its value.
+ * @param {any} record
+ * @param {string} path
+ * @param {(record: any, path: string) => any} get
+ */
+function keptValue(record, path, get) {
+  const value = get(record, path) ?? null;
+  const flag = value == null ? NO_NUMBER_FLAG[path] : null;
+  return flag && get(record, flag) === true ? 'No' : value;
+}
+
 /**
  * A check's identity on its intake: its warning's code and path, and which of the warnings with both
  * it is (`n`), so it is found again on the same PDF read again, whatever was added to the list since.
@@ -31,7 +48,7 @@ function checkId(warnings, i) {
  * @param {number} [now]
  */
 export function keptWorkOf(intake, get, now = Date.now()) {
-  const edits = (intake.agentEdited ?? []).filter((p) => typeof p === 'string' && p).map((p) => [p, get(intake.record, p) ?? null]);
+  const edits = (intake.agentEdited ?? []).filter((p) => typeof p === 'string' && p).map((p) => [p, keptValue(intake.record, p, get)]);
   const warnings = intake.warnings ?? [];
   const checks = (intake.done ?? []).filter((i) => Number.isInteger(i) && warnings[i]).map((i) => checkId(warnings, i));
   return edits.length || checks.length ? { at: now, edits, checks } : null;

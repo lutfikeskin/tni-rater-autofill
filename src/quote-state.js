@@ -7,12 +7,9 @@
 // reports for it). The extension fills neither Progressive's pick nor an agent's change of AmWINS'
 // (agent edits are never replaced), so this is a warning only.
 
-import { STATES } from './util.js';
+import { STATES } from './states.js';
 
-// Built on first use: normalize.js reads stateCode (parseEdit), and util.js, which holds STATES,
-// imports normalize.js, so STATES may not be there yet when this module loads.
-let byName = null;
-const BY_NAME = () => (byName ??= Object.fromEntries(Object.entries(STATES).map(([code, name]) => [name.toLowerCase(), code])));
+const BY_NAME = Object.fromEntries(Object.entries(STATES).map(([code, name]) => [name.toLowerCase(), code]));
 
 // The carriers' own names for a state: AmWINS lists "Washington DC".
 const ALIASES = { 'washington dc': 'DC' };
@@ -26,7 +23,7 @@ export function stateCode(value) {
   if (tagged && STATES[tagged]) return tagged;
   const plain = s.replace(/\./g, '').trim();
   if (STATES[plain.toUpperCase()]) return plain.toUpperCase();
-  return BY_NAME()[plain.toLowerCase()] ?? ALIASES[plain.toLowerCase()] ?? null;
+  return BY_NAME[plain.toLowerCase()] ?? ALIASES[plain.toLowerCase()] ?? null;
 }
 
 // A recorded change of the carrier's quote-state control: the state picked (its code), null when

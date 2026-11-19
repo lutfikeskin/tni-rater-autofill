@@ -5,8 +5,8 @@
 import { GENERIC_RULES } from './rules.js';
 import { stepResolution } from './resolution.js';
 import { fieldInfo } from './schema.js';
-import { toDate, toMoney, toPhone, vinUnreadable } from './normalize.js';
-import { get, listOf } from './util.js';
+import { toDate, toPhone, vinUnreadable } from './normalize.js';
+import { get, listOf, toMoney } from './util.js';
 
 /** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, ListCondition, PlanOptions, PlanStep, StepOverlay } from '../types.js' */
 
