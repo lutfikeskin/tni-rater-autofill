@@ -120,8 +120,6 @@ const NOT_MAPPED = {
     'applicant.fein': 'Progressive asks the EIN on the finish flow, which is the agent\'s (AdditionalDetails is ignored)',
     'applicant.yearEstablished': 'Progressive does not ask when the business was established',
     'applicant.yearsInBusiness': 'Progressive does not ask the years in business',
-    'applicant.phone': 'the optional phone boxes are deliberately left blank (TNI workflow)',
-    'applicant.email': 'the optional customer email is deliberately left blank (TNI workflow)',
     'applicant.owner2': 'Progressive asks for one business owner',
     'applicant.yearsExperience': 'Progressive does not ask the years under own authority',
     'operations.movingState': 'not asked by Progressive',
@@ -194,6 +192,7 @@ const READ_INDIRECTLY = {
     'drivers[].suffix': 'util.owner (the owner\'s name parts, from their driver row)',
     'operations.vehicleOwnership': 'answers/vehicles.vehicleFinancing (the vehicle loan / lease)',
     'trailerInfo.ownership': 'answers/vehicles.trailerFinancing (the trailer loan / lease)',
+    'applicant.phone': 'answers/contact.phoneDigits (the three boxes of the primary phone)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
