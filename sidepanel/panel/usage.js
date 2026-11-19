@@ -149,15 +149,14 @@ registerTextChangeFlush();
  * @param {{ tabId: number | null, carrier: string | null, page: string, step: string | undefined, view: string, forms?: any, session: any, ctx: any }} info
  */
 function logFieldChanges(changes, { tabId, carrier, page, step, view, forms, session, ctx }) {
-  // Never coalesce text across a mid-swap intake/session mismatch (loadFile before startSession);
-  // choice controls still log immediately as before.
+  // Never coalesce text across an intake/session mismatch (loadFile before startSession, or a
+  // panel reopened with mismatched stored intake/session); log immediately uncoalesced as main did.
   const sessionMismatch = !!(state.intake?.intakeId && session?.intakeId && state.intake.intakeId !== session.intakeId);
   const pageKey = samePage(page);
   const formsKey = formsKeyOf(forms);
   const now = new Date().toISOString();
   for (const c of changes) {
-    if (isCoalescedText(c)) {
-      if (sessionMismatch) continue;
+    if (isCoalescedText(c) && !sessionMismatch) {
       const filledEntry = ctx.filled?.get(c.key);
       const hasLabel = ctx.labels?.has(c.key);
       /** @type {PendingTextChange} */

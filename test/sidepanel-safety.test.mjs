@@ -13092,7 +13092,7 @@ test('giveWay awaits pending text flush writes both before handOver and for late
   assert.deepEqual(order, ['writeDone:1', 'handOver', 'writeDone:2', 'closeSelf'], 'both writes finish before closeSelf');
 });
 
-test('GEICO unit forms split repeating keys across forms while ignoring blank transitions, and mid-swap guard skips text only', async () => {
+test('GEICO unit forms split repeating keys across forms while ignoring blank transitions, and mismatched session logs text immediately uncoalesced', async () => {
   const h = textCoalesceHarness({
     carrier: { id: 'geico', layoutSteps: geico.layoutSteps, autoFillUrl: /sales\.geico\.com/ },
   });
@@ -13111,16 +13111,26 @@ test('GEICO unit forms split repeating keys across forms while ignoring blank tr
   await h.advance(4000);
   assert.equal(h.logged.length, 2, 'second driver form logs its own event');
 
-  // Mid-swap mismatch (state.intake swapped to int-2 while currentSession is still int-1): text is skipped, choice still logs!
+  // Mismatched intake/session (e.g. reopened panel with mismatched stored intake/session, or loadFile mid-swap):
+  // typed text edits are never dropped and never coalesced across the mismatch — they log immediately as main did.
   h.logged.length = 0;
   h.state.intake = { ...h.state.intake, intakeId: 'int-2' };
   h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents',
+    changes: [{ key: 'ref:GiveLastName', label: 'Last Name', kind: 'text', before: '', after: 'Av', agent: true }] });
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents',
     changes: [
-      { key: 'ref:GiveLastName', label: 'Last Name', kind: 'text', before: '', after: 'Avery', agent: true },
+      { key: 'ref:GiveLastName', label: 'Last Name', kind: 'text', before: 'Av', after: 'Avery', agent: true },
       { key: 'ref:MaritalStatus', label: 'Marital Status', kind: 'select', before: '', after: 'Single', agent: true },
     ] });
-  await h.advance(4000);
-  assert.deepEqual(h.logged.map((e) => [e.key, e.kind, e.to]), [['ref:MaritalStatus', 'select', 'Single']], 'mid-swap guard skips text coalescing only; choice still logs');
+  assert.deepEqual(
+    h.logged.map((e) => [e.key, e.kind, e.change ?? null, e.to ?? null]),
+    [
+      ['ref:GiveLastName', 'text', 'entered', null],
+      ['ref:GiveLastName', 'text', 'edited', null],
+      ['ref:MaritalStatus', 'select', null, 'Single'],
+    ],
+    'mismatched session logs each typed text edit immediately and uncoalesced alongside choices',
+  );
 });
 
 test('wire() connects tabs.onRemoved, pagehide and visibilitychange to flushPendingTextChanges, and step_shown flushes directly in onRecorderMessage', () => {
