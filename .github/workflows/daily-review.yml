@@ -4,7 +4,10 @@
 # something is new (never a problem report's text: the repository is public): problem reports, questions without a rule first
 # seen, a deployed usage server that isn't this repository's (it would drop fields the extension
 # sends), or a run that failed. The decisions are in scripts/daily-issue.mjs and scripts/lib/daily.mjs.
-# Needs the repository secret RATER_ADMIN_TOKEN (the server's admin token).
+# Needs the repository secret RATER_ADMIN_TOKEN (the server's admin token). With the secret
+# RATER_TEST_LIST (the text of the maintainer's reviews/test-intakes.txt: PDF fingerprints and
+# agent: lines, no client data) the maintainer's test quotes are left out as on their computer;
+# without it they count as agents' work, and the review says so.
 name: Daily review
 
 on:
@@ -59,11 +62,18 @@ jobs:
         id: review
         env:
           SINCE_INPUT: ${{ github.event.inputs.since }}
+          RATER_TEST_LIST: ${{ secrets.RATER_TEST_LIST }}
         run: |
           SINCE="$SINCE_INPUT"
           [ -n "$SINCE" ] || SINCE=$(node scripts/daily-issue.mjs since)
           FILE="reviews/review-$(date -u +%F).md"
-          node scripts/review.mjs server-data --since "$SINCE" --out "$FILE" --summary review-summary.json | tee review.log
+          # The test-run list, kept out of the public repository: written outside the checkout, never printed.
+          TESTS=()
+          if [ -n "$RATER_TEST_LIST" ]; then
+            printf '%s\n' "$RATER_TEST_LIST" > "$RUNNER_TEMP/test-intakes.txt"
+            TESTS=(--tests "$RUNNER_TEMP/test-intakes.txt")
+          fi
+          node scripts/review.mjs server-data --since "$SINCE" --out "$FILE" --summary review-summary.json "${TESTS[@]}" | tee review.log
           # Whether the deployed server is this repository's (the first step): else it may drop fields.
           if [ -f server-check.md ]; then cat server-check.md >> "$FILE"; fi
           echo "file=$FILE" >> "$GITHUB_OUTPUT"
