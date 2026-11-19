@@ -136,7 +136,6 @@ const UNDEFINED_MS = 3000;
 const undefinedSince = new WeakMap();
 let componentPrefix = null;
 
-export const getComponentPrefix = () => componentPrefix;
 export const setComponentPrefix = (prefix) => { componentPrefix = prefix; };
 
 /**

@@ -296,8 +296,6 @@ export const setHiddenOk = (val) => { hiddenOk = val ? [].concat(val) : []; };
 
 let controlReads = 0;
 export const getControlReads = () => controlReads;
-export const resetControlReads = () => { controlReads = 0; };
-export const incrementControlReads = () => ++controlReads;
 
 const hiddenOf = new WeakMap();
 const hiddenKeySets = new WeakMap();

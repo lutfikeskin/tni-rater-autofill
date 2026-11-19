@@ -167,7 +167,6 @@ export function guardEdits(onEdit) {
 /** @type {{ questions: Map<string, string | null>, release: () => void, token: string } | null} */
 let answerEditSession = null;
 export const getAnswerEditSession = () => answerEditSession;
-export const clearAnswerEditSession = () => { answerEditSession = null; };
 
 /**
  * Manages multi-frame AI answer edit protection session.

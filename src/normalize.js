@@ -24,7 +24,6 @@ const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+
 // The other words say how far in general; an explicit mileage beside them ("anywhere within 100
 // miles", "OTR up to 500 miles") is the answer.
 const LONG_HAUL_WORDS = /\b(?:unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|any(?:where)?)\b/i;
-export const LONG_HAUL = new RegExp(`${STATES_48.source}|${LONG_HAUL_WORDS.source}`, 'i');
 export const isLongHaul = (text) => parseRadius(String(text ?? '')).kind === 'long-haul';
 
 // Other distance units need an agent conversion; never treat their number as miles.
