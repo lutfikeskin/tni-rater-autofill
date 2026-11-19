@@ -27,7 +27,7 @@ const HARNESS_FNS = [
   'restoreAiPending', 'pendingAi', 'applyAi', 'renderAi',
 ];
 
-function makeHarness({ failAt, decision }) {
+function makeHarness({ failAt, decision, practice = true }) {
   const record = {}, intake = { record }, url = 'https://example.test/quote';
   const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
   const quoteHash = JSON.stringify(url);
@@ -37,20 +37,21 @@ function makeHarness({ failAt, decision }) {
   const withAnswer = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }];
   const row = { type: 'need', x: { key: x.key, label: x.label }, settled: null };
   const state = {
-    filling: false, intake, active: {}, tab: { id: 1, url, carrier: { practice: true } },
+    filling: false, intake, active: {}, tab: { id: 1, url, carrier: { practice } },
     aiCache: new Map([[sig, x]]), agentKeys: new Map(), filled: new Map(),
     aiDocks: new Map(), reportFor: { list: [row] }, rowsDrawn: 0,
   };
   const ctx = {
-    tabId: 1, page: '/quote', tabUrl: url, intake, carrier: { practice: true },
+    tabId: 1, page: '/quote', tabUrl: url, intake, carrier: { practice },
     contextKey: assistContextKey(record, state.active), snapshots: pre,
   };
   let stored = [], snapCalls = 0, nextSnapshot = pre;
-  const markedNeeds = [];
+  const markedNeeds = [], logged = [];
   const context = {
     state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
     DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', pageOf: v => new URL(v).pathname,
-    usage: { currentSession: () => ({ intakeId: 'scope' }), log() {} },
+    usage: { currentSession: () => ({ intakeId: 'scope' }), log(e) { logged.push(e); } },
+    aiDecisionEvent: (item, c, d) => ({ type: 'ai_decision', decision: d }),
     aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
     aiPendingStore: { get: async () => stored, set: async v => { stored = v; } },
     tellRecorder: async () => {}, traced: () => false, editScope: p => p, noteChangedAfterDone: () => {},
@@ -81,7 +82,7 @@ function makeHarness({ failAt, decision }) {
   vm.runInNewContext(HARNESS_FNS.map(extractFunction).join('\n'), context);
   const holder = { isConnected: true, say(s) { this.said = s; } };
   return {
-    x, ctx, row, state, context, holder, pre, withAnswer, markedNeeds,
+    x, ctx, row, state, context, holder, pre, withAnswer, markedNeeds, logged,
     stored: () => stored,
     setNextSnapshot: (s) => { nextSnapshot = s; },
     run: () => context.applyAi([x], ctx, decision),
@@ -167,4 +168,24 @@ test('Reject on an unconfirmed post-dispatch card marks the field needs and keep
   assert.equal(h.markedNeeds.length, 1, 'marks the field on the page for review');
   assert.equal(h.row.aiCard?.kind, 'rejected');
   assert.equal(typeof h.row.aiCard?.confirm, 'function');
+});
+
+// Claude's review of #578: an unconfirmed pick the agent confirms is the AI's answer accepted, so
+// the reports count it with the approved ones, not as a rejection.
+test('Confirm on an unconfirmed pick logs approved; on a rejected one, rejected_confirmed', async () => {
+  const h = makeHarness({ failAt: 'finalSnapshot', decision: 'auto', practice: false });
+  assert.equal(await h.run(), false);
+  h.context.renderAi(h.holder, [h.x], h.ctx);
+  h.setNextSnapshot(h.withAnswer);
+  await h.row.aiCard.confirm();
+  assert.equal(h.x.confirmed, true);
+  assert.deepEqual(h.logged.filter((e) => e.type === 'ai_decision').map((e) => e.decision), ['auto', 'approved']);
+
+  const r = makeHarness({ failAt: 'readEditsEnd', decision: 'auto', practice: false });
+  assert.equal(await r.run(), false);
+  r.context.renderAi(r.holder, [r.x], r.ctx);
+  await r.row.aiCard.reject();
+  r.setNextSnapshot(r.withAnswer);
+  await r.row.aiCard.confirm();
+  assert.deepEqual(r.logged.filter((e) => e.type === 'ai_decision').map((e) => e.decision), ['rejected', 'rejected_confirmed']);
 });

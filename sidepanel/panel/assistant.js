@@ -809,11 +809,14 @@ function renderAi(holder, suggestions, ctx) {
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;
       if (present) {
+        // An unconfirmed pick the agent confirms is the AI's answer accepted (approved, as the
+        // reports count it); a rejected one whose page answer they confirm stays rejected.
+        const decision = x.unconfirmed && !x.rejected ? 'approved' : 'rejected_confirmed';
         x.confirmed = true;
         x.unconfirmed = false;
         x.error = null;
         x.confirmError = null;
-        if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'rejected_confirmed'));
+        if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
       } else {
         x.confirmError = 'The page answer changed; review it.';
       }
