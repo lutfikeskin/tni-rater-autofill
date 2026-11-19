@@ -5,10 +5,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { STANDARDS, usd, usdK } from '../src/standards.js';
-import { CARRIERS as REGISTERED } from '../src/carriers.js';
+import { RATERS } from '../src/carriers.js';
 
 // Every carrier with rules of its own (a new one is checked once registered: audit 2026-11-07, CARR-10).
-const CARRIERS = REGISTERED.filter((c) => c.rules.length);
+const CARRIERS = RATERS;
 
 const record = () => ({
   applicant: { name: 'Synthetic Expediter LLC', dot: '1234567', owner1: 'Amina Kone', ownerDrives: true },
@@ -23,13 +23,13 @@ const record = () => ({
   claims: { hasClaims: false },
 });
 
-// Each shared standard: the rulebook ids under which the carriers fill it (a carrier-only rule
-// under the same id, GEICO's UM deductible and type, is left out by `not`) and its amounts.
+// Each shared standard: its `std.id` tag(s) (src/standards.js) and its amounts, so any registered
+// carrier's rules and rulebook entries for it are found without listing carrier-specific tni ids.
 const SHARED = [
-  { what: 'uninsured motorist', ids: ['progressive.um', 'geico.um', 'amwins.um'], not: /deductible|type/i, amounts: [STANDARDS.umCsl] },
-  { what: 'medical payments', ids: ['progressive.medpay', 'geico.medpay-pip', 'amwins.medpay-pip'], only: /^medical payments/i, amounts: [STANDARDS.medPay] },
-  { what: 'comprehensive and collision deductible', ids: ['progressive.deductibles', 'geico.comp-coll', 'amwins.comp-coll'], amounts: [STANDARDS.deductible] },
-  { what: 'rental reimbursement', ids: ['progressive.rental', 'geico.rental', 'amwins.rental'], amounts: [STANDARDS.rental.perDay, STANDARDS.rental.max] },
+  { what: 'uninsured motorist', stdIds: ['umCsl'], amounts: [STANDARDS.umCsl] },
+  { what: 'medical payments', stdIds: ['medPay'], amounts: [STANDARDS.medPay] },
+  { what: 'comprehensive and collision deductible', stdIds: ['compDeductible', 'collDeductible'], amounts: [STANDARDS.deductible] },
+  { what: 'rental reimbursement', stdIds: ['rental'], amounts: [STANDARDS.rental.perDay, STANDARDS.rental.max] },
 ];
 
 const written = (amount) => [usd(amount), usdK(amount), usdK(amount, 'K')];
@@ -38,9 +38,9 @@ const shows = (text, amount) => written(amount).some((w) => new RegExp(`${escape
 
 // The carrier's rules for one standard, with the answer each gives this client (text answers only:
 // a Yes for "comprehensive or collision wanted" is no amount).
-function answers(carrier, { ids, not, only }) {
-  return carrier.rules
-    .filter((r) => ids.includes(r.tni) && !(not && not.test(r.name ?? '')) && (!only || only.test(r.name ?? '')))
+const stdRules = (carrier, { stdIds }) => carrier.rules.filter((r) => stdIds.includes(r.std?.id));
+function answers(carrier, standard) {
+  return stdRules(carrier, standard)
     .map((r) => ({ name: r.name ?? '', value: typeof r.value === 'function' ? r.value(record(), { vehicles: 0, drivers: 0, trailers: 0 }) : r.value }))
     .filter((a) => typeof a.value === 'string');
 }
@@ -77,7 +77,8 @@ test('each carrier\'s rulebook states the shared standards\' amounts', async () 
   for (const carrier of CARRIERS) {
     const entries = new Map(rulebookFor(carrier.id).map((e) => [e.id, e.text]));
     for (const standard of SHARED) {
-      const texts = standard.ids.filter((id) => entries.has(id)).map((id) => entries.get(id));
+      const ids = [...new Set(stdRules(carrier, standard).map((r) => r.tni).filter(Boolean))];
+      const texts = ids.filter((id) => entries.has(id)).map((id) => entries.get(id));
       assert.ok(texts.length, `${carrier.name}'s rulebook has ${standard.what}`);
       for (const amount of standard.amounts) assert.ok(texts.some((t) => shows(t, amount)), `${carrier.name}'s rulebook says ${usd(amount)} for ${standard.what}`);
     }

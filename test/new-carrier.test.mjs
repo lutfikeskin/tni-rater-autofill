@@ -126,8 +126,14 @@ test('every carrier with rules says how the panel shows it: a logo on disk, its 
     assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
     assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
   }
-  assert.equal(ratersSaid(), 'Progressive, GEICO or AmWINS.');
-  assert.equal(ratersSaid(RATERS.slice(0, 1)), 'Progressive.');
+  const rater = (name) => ({ id: name.toLowerCase(), name, hosts: [], rules: [], useGenericRules: false });
+  assert.equal(ratersSaid([]), 'A rater.');
+  assert.equal(ratersSaid([rater('Alpha')]), 'Alpha.');
+  assert.equal(ratersSaid([rater('Alpha'), rater('Beta')]), 'Alpha or Beta.');
+  assert.equal(ratersSaid([rater('Alpha'), rater('Beta'), rater('Gamma')]), 'Alpha, Beta or Gamma.');
+  assert.equal(ratersSaid([rater('Alpha'), rater('Beta'), rater('Gamma'), rater('Delta')]), 'Alpha, Beta, Gamma or Delta.');
+  const expected = RATERS.length > 1 ? `${RATERS.slice(0, -1).map((c) => c.name).join(', ')} or ${RATERS.at(-1).name}.` : `${RATERS[0].name}.`;
+  assert.equal(ratersSaid(), expected);
 });
 
 test('docs/new-carrier.md and the template name the carrier\'s display', () => {
