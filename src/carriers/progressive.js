@@ -805,6 +805,8 @@ export const progressive = {
     { name: 'Rates', pages: ['CoveragesRates', 'ChangePaymentPlan'] },
     { name: 'Print', pages: ['PrintEmailFax', 'PrintEmailFaxConfirm'] },
   ],
+  // Where Progressive quotes its premium (src/premium.js premiumHere).
+  premiumPages: ['CoveragesRates'],
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
     // Chrome opens the PDF only for the agent's own click (see the actions above).

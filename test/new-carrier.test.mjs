@@ -67,6 +67,8 @@ const LEFT_OUT = {
   intakeMocks: { geico: 'GEICO\'s mock is its one fixture run, npm run mock:geico' },
   // package.json: a mock:<carrier> command.
   mock: { progressive: 'Progressive\'s fixture replays are npm run e2e' },
+  // The carrier's own `premiumPages`: where its premium is quoted, for the quoting history (src/premium.js).
+  premiumPages: { amwins: 'where AmWINS quotes its premium is not known yet' },
 };
 test('every registry names each carrier with rules, or says here why not', async () => {
   const { RULE_FILES } = await import('../src/usage.js');
@@ -98,11 +100,13 @@ test('every registry names each carrier with rules, or says here why not', async
     for (const entry of REGISTRY) assert.ok(entry.choices?.[c.id], `${c.id}: agents' defaults ${entry.id} lists its choices`);
     assert.ok(ratersSaid().includes(c.name), `${c.id}: named on the panel's "Open the client's quote" line`);
     has('names', c.id, nameKeys.includes(c.id));
+    has('premiumPages', c.id, c.premiumPages?.length > 0);
     has('intakeMocks', c.id, intakeMocks.includes(c.id));
     has('mock', c.id, !!scripts[`mock:${c.id}`]);
   }
   // A reason only for what is really left out: each one names a carrier still missing there.
-  const present = { names: (id) => nameKeys.includes(id), intakeMocks: (id) => intakeMocks.includes(id), mock: (id) => !!scripts[`mock:${id}`] };
+  const present = { names: (id) => nameKeys.includes(id), intakeMocks: (id) => intakeMocks.includes(id), mock: (id) => !!scripts[`mock:${id}`],
+    premiumPages: (id) => CARRIERS.find((c) => c.id === id)?.premiumPages?.length > 0 };
   assert.deepEqual(Object.keys(LEFT_OUT).sort(), Object.keys(present).sort(), 'LEFT_OUT names the registries checked here');
   for (const [where, ids] of Object.entries(LEFT_OUT)) {
     for (const id of Object.keys(ids)) {
@@ -126,8 +130,14 @@ test('every carrier with rules says how the panel shows it: a logo on disk, its 
     assert.ok(hosts.some((h) => h.test(url.hostname)), `${id}'s agent site ${url.hostname} is one of its hosts`);
     assert.ok(display.product && display.classesSaid, `${id} names its product and classes`);
   }
-  assert.equal(ratersSaid(), 'Progressive, GEICO or AmWINS.');
-  assert.equal(ratersSaid(RATERS.slice(0, 1)), 'Progressive.');
+  const rater = (name) => ({ id: name.toLowerCase(), name, hosts: [], rules: [], useGenericRules: false });
+  assert.equal(ratersSaid([]), 'A rater.');
+  assert.equal(ratersSaid([rater('Alpha')]), 'Alpha.');
+  assert.equal(ratersSaid([rater('Alpha'), rater('Beta')]), 'Alpha or Beta.');
+  assert.equal(ratersSaid([rater('Alpha'), rater('Beta'), rater('Gamma')]), 'Alpha, Beta or Gamma.');
+  assert.equal(ratersSaid([rater('Alpha'), rater('Beta'), rater('Gamma'), rater('Delta')]), 'Alpha, Beta, Gamma or Delta.');
+  const expected = RATERS.length > 1 ? `${RATERS.slice(0, -1).map((c) => c.name).join(', ')} or ${RATERS.at(-1).name}.` : `${RATERS[0].name}.`;
+  assert.equal(ratersSaid(), expected);
 });
 
 test('docs/new-carrier.md and the template name the carrier\'s display', () => {

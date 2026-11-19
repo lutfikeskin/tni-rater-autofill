@@ -13,6 +13,7 @@ import { toMoney, noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
 import { redactionPattern } from './redaction.js';
 import { ID_LIKE, LIMIT, PROFILE_UNITS } from './usage-schema.js';
+import { CARRIERS } from './carriers.js';
 
 
 // A fill's waits by what they were for, summed over its frames (each frame's report's `waits`):
@@ -435,12 +436,21 @@ export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }
 // One carrier's own fingerprint (`carrierRules` on fill_run and fill_error; audit 2026-11-07,
-// CARR-14): the shared rule files (RULE_FILES but the carriers' modules), that carrier's module and
-// its page adapter (src/content/carriers/), which decides the field keys and matching. A change to
-// GEICO's rules leaves Progressive's and AmWINS' as they were, so a review can group quotes by the
-// carrier's mapping in force; `rules` still covers every carrier.
+// CARR-14): the shared rule files (RULE_FILES but the carriers' modules), that carrier's module,
+// and its page adapter (`pageAdapter`) when it declares one, which decides the field keys and
+// matching. A change to GEICO's rules leaves Progressive's and AmWINS' as they were, so a review
+// can group quotes by the carrier's mapping in force; `rules` still covers every carrier.
 export const RULE_CARRIERS = RULE_FILES.filter((f) => f.startsWith('src/carriers/')).map((f) => f.slice('src/carriers/'.length, -'.js'.length));
-export const carrierRuleFiles = (id) => [...RULE_FILES.filter((f) => !f.startsWith('src/carriers/')), `src/carriers/${id}.js`, `src/content/carriers/${id}.js`];
+/** @param {string | { id: string, pageAdapter?: string }} carrier @returns {string[]} */
+export const carrierRuleFiles = (carrier) => {
+  /** @type {{ id: string, pageAdapter?: string }} */
+  const config = typeof carrier === 'string' ? CARRIERS.find((c) => c.id === carrier) ?? { id: carrier } : carrier;
+  return [
+    ...RULE_FILES.filter((f) => !f.startsWith('src/carriers/')),
+    `src/carriers/${config.id}.js`,
+    ...(config.pageAdapter ? [config.pageAdapter] : []),
+  ];
+};
 
 // A fill_field event's why fields, set only when true or given, from the item's resolution (one
 // rebuilt from its fields for a report from before resolutions): `source` its method, `standard` a
