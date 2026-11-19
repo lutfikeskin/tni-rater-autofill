@@ -24,10 +24,10 @@ const PROGRESSIVE = new RegExp(String.raw`total\s+premium\s+amount\s*${AMOUNT}\s
 const ANY = new RegExp(String.raw`(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*${AMOUNT}`, 'i');
 const TERMS = { year: 12, '6 months': 6, 'six months': 6, month: 1 };
 
-// Where each carrier quotes its premium (a page, or a step on one-address carriers): the page's text
-// is read only there. AmWINS: not known yet.
-const PREMIUM_PAGES = { geico: ['Quote & Coverages'], progressive: ['CoveragesRates'] };
-export const premiumHere = (carrier, page, step) => (PREMIUM_PAGES[carrier] ?? []).some((p) => p === page || p === step);
+// Where a carrier quotes its premium (its `premiumPages`: page names, or step names on
+// one-address carriers): the page's text is read only there.
+/** @param {{ premiumPages?: string[] } | null | undefined} carrier @param {string | null | undefined} page @param {string | null | undefined} [step] */
+export const premiumHere = (carrier, page, step) => (carrier?.premiumPages ?? []).some((p) => p === page || p === step);
 
 // What the page quotes: { total, termMonths, dueToday, payments, payment } (null where the page
 // doesn't say), or null when it shows no current premium.

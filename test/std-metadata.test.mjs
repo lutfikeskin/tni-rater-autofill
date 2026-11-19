@@ -7,11 +7,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { STANDARD_IDS, usd, usdK } from '../src/standards.js';
 import { STATES } from '../src/states.js';
-import { progressive } from '../src/carriers/progressive.js';
-import { amwins } from '../src/carriers/amwins.js';
+import { RATERS } from '../src/carriers.js';
 import { geico } from '../src/carriers/geico.js';
 
-const CARRIERS = [progressive, amwins, geico];
+const CARRIERS = RATERS;
 const ACTIVE = { vehicles: 0, drivers: 0, trailers: 0 };
 
 // A synthetic client (no client data), garaged in `state`, with the notes given.

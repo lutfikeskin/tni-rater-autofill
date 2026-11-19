@@ -354,6 +354,7 @@
  * @property {RegExp} [fillOnDraw]
  * @property {string[]} [layoutSteps]
  * @property {QuoteStep[]} [quoteSteps]
+ * @property {string[]} [premiumPages]  pages (or one-address steps) where the carrier quotes its premium (src/premium.js premiumHere); omit while unknown
  * @property {boolean} useGenericRules  whether the generic label rules (src/rules.js) fill this carrier's pages
  *   too: only when true (AmWINS, the local test page), so a new carrier opts in after checking them (audit
  *   2026-11-07, CARR-09)

@@ -1222,3 +1222,59 @@ test('a recorder that replaces another keeps the agent edits the old one held fo
   const again = h.sent.slice(sentBefore).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
   assert.deepEqual(again.map((c) => [c.key, c.after, c.agent]), [['field:yrsInBusiness', '3', true]]);
 });
+
+test('a failed first messages read falls back to an empty Set so later ticks still report events', () => {
+  const h = harness();
+  const notes = new Control('input', { id: 'notes', value: 'before' });
+  const oldField = new Control('input', { id: 'oldField', value: 'keep' });
+  h.append(notes, oldField);
+  // Replaced as an older build's recorder is (the test above), by one that can't read the page's
+  // messages while it starts. Not deleted from the context first: a vm context of Node 22 keeps a
+  // deleted property, and the same recorder would then decline to start again.
+  h.context.__raterRecorder.version = 12;
+  const query = h.document.querySelectorAll.bind(h.document);
+  let unreadable = true;
+  h.document.querySelectorAll = (selector) => {
+    if (unreadable && /role=alert/.test(selector ?? '')) throw new Error('messages unreadable');
+    return query(selector);
+  };
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  unreadable = false;
+  const afterInit = h.sent.length;
+
+  notes.value = 'after';
+  h.emit('input', notes, true);
+  h.append(new Control('input', { id: 'followUp' }));
+  oldField.disabled = true;
+  h.document.messages = [{ textContent: 'This field is required', getClientRects: () => [{}] }];
+  h.context.__raterKit = { unitListsNow: () => '#summaryPage-AddCommercialVehicle:1' };
+  h.document.headings = [{ tagName: 'H2', textContent: 'Vehicles', getClientRects: () => [{}] }];
+  h.tick();
+
+  const onTick = h.sent.slice(afterInit);
+  // The failed read is told once, as a recorder_error; the tick's own events all follow.
+  assert.deepEqual(onTick.map((m) => m.event).filter((e) => e !== 'recorder_error'), ['field_changes', 'new_fields', 'removed_fields', 'new_messages', 'list_shown', 'step_shown']);
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:notes', 'before', 'after', true]]);
+});
+
+test('an agent edit made while paused on another step is reported with that step on resume', async () => {
+  const h = harness();
+  const heading = (text) => [{ tagName: 'H2', textContent: text, getClientRects: () => [{}] }];
+  h.document.headings = heading('Drivers');
+  const years = select({ id: 'yrsInBusiness' });
+  h.append(years);
+  h.context.__raterRecorder.rebaseline();
+
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.document.headings = heading('Vehicles');
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+
+  const sent = h.sent.filter((m) => m.event === 'field_changes');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].step, 'Vehicles');
+  assert.deepEqual(Array.from(sent[0].changes, (c) => [c.key, c.before, c.after, c.agent]), [['field:yrsInBusiness', '', '3', true]]);
+});

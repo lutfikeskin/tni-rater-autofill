@@ -3,7 +3,7 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import * as pdfjs from '../../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
-import { normalizeIntake, rederive } from '../../src/normalize.js';
+import { noNumberEdit, normalizeIntake, rederive } from '../../src/normalize.js';
 import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
 import { get, set } from '../../src/util.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -149,11 +149,11 @@ async function loadFile(file, { reset = false } = {}) {
     render();
     refreshTab();
     reviewIntake();
-    // agent defaults: a new quote, asked again whose defaults it fills with.
-    refreshDefaults();
   } finally {
     state.resetDepth -= 1;
     state.resetting = state.resetDepth > 0;
+    // agent defaults: a new quote, asked again whose defaults it fills with (also on load failure).
+    if (!state.resetting) refreshDefaults();
   }
 }
 
@@ -247,12 +247,13 @@ async function restoreKeptWork(intake, after = -Infinity) {
   for (const [path, value] of Array.isArray(kept.edits) ? kept.edits : []) {
     if (typeof path !== 'string' || !path) continue;
     set(intake.record, path, value);
+    noNumberEdit(intake, path);
     edited.add(path);
   }
   intake.agentEdited = [...edited];
   const by = { ...(intake.agentDerivedBy ?? {}) };
   for (const path of edited) {
-    const derived = rederive(intake.record, path, { keep: edited }).filter((p) => changedFromRead(intake, p));
+    const derived = rederive(intake.record, path, { keep: edited, intake }).filter((p) => changedFromRead(intake, p));
     if (derived.length) by[path] = derived;
   }
   intake.agentDerivedBy = by;

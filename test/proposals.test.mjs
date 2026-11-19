@@ -205,3 +205,26 @@ test('rule proposals: the script lists candidates without --live and sends nothi
   assert.match(run(['--threshold', '1']), /Rule proposals for questions left to the agent/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('rule-proposals honors agent: lines in --tests, including earlier quotes on that install, while intake_marked still wins', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'proposals-agents-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const meta = {
+    s0: { install: 'laptop', agent: null },
+    s1: { install: 'laptop', agent: 'AD' },
+    s2: { install: 'laptop', agent: 'AD' },
+    s3: { install: 'desk', agent: 'JC' },
+    s4: { install: 'desk', agent: 'JC' },
+  };
+  const events = [
+    ...week().map((e) => ({ ...e, ...meta[e.session] })),
+    { id: 's2-unmark', t: '2026-11-02T13:00:00Z', session: 's2', install: 'laptop', agent: 'AD', type: 'intake_marked', test: false },
+  ];
+  const log = path.join(dir, 'usage.jsonl');
+  fs.writeFileSync(log, events.map((e) => JSON.stringify(e)).join('\n'));
+  const tests = path.join(dir, 'tests.txt');
+  fs.writeFileSync(tests, 'agent:AD\n');
+  const out = JSON.parse(execFileSync(process.execPath, [path.join(ROOT, 'scripts/rule-proposals.mjs'), log, '--tests', tests, '--json'],
+    { encoding: 'utf8', env: { ...process.env, OPENAI_API_KEY: '' }, stdio: ['ignore', 'pipe', 'pipe'] }));
+  assert.deepEqual([out.quotes, out.testRunsLeftOut], [3, 2]);
+});

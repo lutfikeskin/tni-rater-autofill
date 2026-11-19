@@ -1,8 +1,29 @@
-// normalize.js imports this module too: both only call each other's functions, never at load.
-import { toMoney, otherNotes } from './normalize.js';
 import { nameWords } from './answers/owner.js';
 
 export { STATES } from './states.js';
+
+const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
+
+export function clean(v) {
+  if (v == null || typeof v !== 'string') return v ?? null;
+  const s = v.replace(/\s+/g, ' ').trim();
+  return s === '' || BLANK.test(s) ? null : s;
+}
+
+// "40,000$" -> 40000, "$100K" -> 100000, "1.5M" -> 1500000
+export function toMoney(v) {
+  if (typeof v === 'number') return v;
+  const s = clean(v);
+  if (s == null) return null;
+  const m = s.replace(/[\s,$]/g, '').match(/^(\d+(?:\.\d+)?)(k|m)?(?:usd|dollars?)?$/i);
+  if (!m) return null;
+  const mult = { k: 1e3, m: 1e6 }[m[2]?.toLowerCase()] ?? 1;
+  return Math.round(Number(m[1]) * mult);
+}
+
+// The intake's free text without the claims box's own yes/no answer: its other lines and the
+// Additional Notes box.
+export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
 
 // Paths look like "applicant.dot" or "drivers[0].first".
 function splitPath(path) {
