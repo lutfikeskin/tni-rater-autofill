@@ -1228,18 +1228,18 @@ test('a failed first messages read falls back to an empty Set so later ticks sti
   const notes = new Control('input', { id: 'notes', value: 'before' });
   const oldField = new Control('input', { id: 'oldField', value: 'keep' });
   h.append(notes, oldField);
-  h.context.__raterRecorder.dispose();
-  delete h.context.__raterRecorder;
+  // Replaced as an older build's recorder is (the test above), by one that can't read the page's
+  // messages while it starts. Not deleted from the context first: a vm context of Node 22 keeps a
+  // deleted property, and the same recorder would then decline to start again.
+  h.context.__raterRecorder.version = 12;
   const query = h.document.querySelectorAll.bind(h.document);
-  let failOnce = true;
+  let unreadable = true;
   h.document.querySelectorAll = (selector) => {
-    if (failOnce && /role=alert/.test(selector ?? '')) {
-      failOnce = false;
-      throw new Error('messages unreadable');
-    }
+    if (unreadable && /role=alert/.test(selector ?? '')) throw new Error('messages unreadable');
     return query(selector);
   };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  unreadable = false;
   const afterInit = h.sent.length;
 
   notes.value = 'after';
@@ -1252,7 +1252,8 @@ test('a failed first messages read falls back to an empty Set so later ticks sti
   h.tick();
 
   const onTick = h.sent.slice(afterInit);
-  assert.deepEqual(onTick.map((m) => m.event), ['field_changes', 'new_fields', 'removed_fields', 'new_messages', 'list_shown', 'step_shown']);
+  // The failed read is told once, as a recorder_error; the tick's own events all follow.
+  assert.deepEqual(onTick.map((m) => m.event).filter((e) => e !== 'recorder_error'), ['field_changes', 'new_fields', 'removed_fields', 'new_messages', 'list_shown', 'step_shown']);
   assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:notes', 'before', 'after', true]]);
 });
 
