@@ -2,8 +2,8 @@
 // Control matching, value application orchestration, driver registry, and agreement checks.
 
 import { oneLine, squash, humanize, loose, multiValue, isPlaceholderOption, STATE_NAMES } from './text.js';
-import { adapter, withAdapter, stepKey, stepIs, currentPage, settle, setAdapterHooks, pause, waitsStopped, INTERRUPTED, noteOwnAction } from './adapter.js';
-import { deepQueryAll, optionsOf, selectedText, hasValue, optionOn, setNativeValue, textFor, safeMatches, shownControl, hasOptions, labelFor } from './dom.js';
+import { adapter, withAdapter, currentPage, settle, setAdapterHooks, pause, waitsStopped, INTERRUPTED, noteOwnAction } from './adapter.js';
+import { deepQueryAll, optionsOf, selectedText, hasValue, optionOn, setNativeValue, textFor, safeMatches, shownControl, hasOptions, labelFor, stepKey, stepIs } from './dom.js';
 import { unitFormsOf } from './units.js';
 import { createLocator } from './locator.js';
 import { createAddressDriver } from './drivers/address.js';
