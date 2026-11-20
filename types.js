@@ -666,6 +666,7 @@
  * @property {string[]} [doneSteps]
  * @property {string[]} [stopPages]
  * @property {string[]} [stopSteps]
+ * @property {string[] | null} [premiumPages]  pages (or one-address steps) where the carrier quotes its premium (carrier.premiumPages)
  * @property {any} [units]
  * @property {{ steps?: { [step: string]: string[] }, stepUnits?: { [step: string]: any }, units?: { [list: string]: string[] }, forms?: { [id: string]: string[] } } | null} [skipBy]
  * @property {{ steps: string[], keys: { [key: string]: true } } | null} [takenBack]  the steps where the page takes
@@ -820,6 +821,17 @@
  */
 
 /**
+ * The premium a carrier page quotes, as readPremium (src/premium.js) reads it: amounts, term and
+ * payments only, never client details. Returned on FillReport.premium and logged as quote_premium.
+ * @typedef {object} PremiumReading
+ * @property {number} total
+ * @property {number | null} termMonths
+ * @property {number | null} dueToday
+ * @property {number | null} payments
+ * @property {number | null} payment
+ */
+
+/**
  * What the page kit's fill returns, one per frame (the side panel's `frames`).
  * @typedef {object} FillReport
  * @property {string} frame  the frame's origin and path
@@ -872,6 +884,7 @@
  * @property {boolean} [notDrawn]
  * @property {any} [signatureBefore]
  * @property {RecalcTrace} [recalcTrace]
+ * @property {PremiumReading} [premium]  the current premium the fill saw on a premium page (src/premium.js readPremium), before leaving it or as the fill ended
  * @property {{ ms: number, reads: number, dropped: number, gone: number, retried: number }} [reconcile]  the report made to agree with the page as the fill ended (pagekit reconcile), on a fill that ended on its page: its time in ms, the page reads since the rounds ended (1: the end's own read), the items dropped as gone from the page, the answers whose field is gone, and the failed choices given again against options the page redrew
  * @property {TimelineEvent[]} [timeline]  the fill's last waits, presses and answers (src/kit/trace.js traceTail), on a fill that halted or failed an answer
  */

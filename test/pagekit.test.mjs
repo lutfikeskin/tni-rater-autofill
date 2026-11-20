@@ -11040,6 +11040,186 @@ test('a rule\'s text pattern is compiled once, however often the fill assigns it
   assert.equal(made, 1, `compiled ${made} times over two fills`);
 });
 
+// Issues #584, #585: a fill on a premium page records the current premium on its report before
+// clicking out of the page (bill plan, Print, Continue) or as the fill ends, so the panel logs
+// quote_premium even when navigation or a new tab beats captureLayout.
+test('fill report carries the current premium across Recalculate -> billPlan/Print navigation, and omits stale or non-premium pages (#584, #585)', async () => {
+  // 1. Progressive: stale -> Recalculate -> billPlan navigates to ChangePaymentPlan in one fill.
+  const plan = () => [
+    { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium', waitRequired: true },
+    { id: 'bill', kind: 'action', action: 'billPlan', text: '^(view )?bill(ing)?( plan)? options?$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterAny: [], afterActions: [], afterPages: [], unless: [], needsPremium: true, waitRequired: true },
+  ];
+  const nav = premiumHarness({ recalcResult: 'Total premium amount $12,815.00 per year including EFT' });
+  nav.bill.onclick = () => {
+    nav.bill._clicked = true;
+    nav.h.context.location.search = '?pageName=ChangePaymentPlan';
+    nav.h.document.body.innerText = 'Choose your payment plan';
+  };
+  const r1 = await nav.h.kit.fill(plan(), { maxRounds: 6, premiumPages: ['CoveragesRates'] });
+  assert.equal(Array.from(r1.actions, (x) => x.id).join(','), 'recalculate,billPlan');
+  assert.equal(r1.navigatedTo, 'ChangePaymentPlan');
+  assert.deepEqual(plain(r1.premium), { total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null });
+
+  // 2. Progressive: back from ChangePaymentPlan with current EFT rate, straight to Print (no recalculate).
+  const p = premiumHarness();
+  p.h.document.body.innerText = 'Total premium amount $12,500.00 per year including Electronic Funds Transfer (EFT) discount';
+  const printBtn = addButton(p.h, 'Print, Email, Fax');
+  printBtn.onclick = () => {
+    printBtn._clicked = true;
+    p.h.context.location.search = '?pageName=PrintEmailFax';
+    p.h.document.body.innerText = 'Print, Email or Fax your quote';
+  };
+  const printPlan = [{ id: 'print', kind: 'action', action: 'print', text: '^print,?\\s*email,?\\s*fax$', pages: ['CoveragesRates'], after: [], afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], unless: [], waitRequired: true }];
+  const r2 = await p.h.kit.fill(printPlan, { maxRounds: 4, doneActions: ['recalculate', 'billPlan'], visitedPages: ['ChangePaymentPlan'], premiumPages: ['CoveragesRates'] });
+  assert.equal(r2.navigatedTo, 'PrintEmailFax');
+  assert.deepEqual(plain(r2.premium), { total: 12500, termMonths: 12, dueToday: null, payments: null, payment: null });
+
+  // 3. Stale page (recalculate leaves rates out of date): no premium.
+  const stale = premiumHarness({ recalcResult: 'Rates changed **** — please recalculate' });
+  const r3 = await stale.h.kit.fill(plan(), { maxRounds: 6, premiumPages: ['CoveragesRates'] });
+  assert.equal(r3.premium, undefined);
+
+  // 4. Page starts current, a coverage change makes it stale before ending without recalculating: no premium.
+  const turnedStale = harness({ progressive: true, search: '?pageName=CoveragesRates' });
+  const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'cov', ariaLabel: 'Liability', value: '750' });
+  turnedStale.document.body.append(sel);
+  turnedStale.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  sel.addEventListener('change', () => { turnedStale.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate'; });
+  const openBtn = addButton(turnedStale, '+');
+  openBtn.onclick = () => { openBtn._clicked = true; };
+  const r4 = await turnedStale.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^\\+$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'cov', selector: '#cov', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000' },
+  ], { maxRounds: 4, replaceChoices: true, premiumPages: ['CoveragesRates'] });
+  assert.equal(r4.premium, undefined, 'pre-change premium cleared once the page turned stale');
+
+  // 5. Non-premium page or carrier with no premiumPages: no premium.
+  const other = harness({ progressive: true, search: '?pageName=AddVehicle' });
+  other.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const r5 = await other.kit.fill([], { maxRounds: 2, premiumPages: ['CoveragesRates'] });
+  assert.equal(r5.premium, undefined);
+  const noPages = premiumHarness();
+  noPages.h.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const r6 = await noPages.h.kit.fill([], { maxRounds: 2, premiumPages: [] });
+  assert.equal(r6.premium, undefined);
+
+  // 6. GEICO on Quote & Coverages: recalculates and clicks Print Quote Proposal.
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(g, 'Quote & Coverages');
+  g.document.body.innerText = '12 Month Total Premium: $ --.--\nPlease Recalculate Due To Coverage Change';
+  const gRecalc = gdsButton('Recalculate');
+  const gPrint = gdsButton('Print Quote Proposal');
+  g.document.body.append(gRecalc.host, gPrint.host);
+  gRecalc.button.onclick = () => {
+    gRecalc.clicked = true;
+    g.document.body.innerText = '12 Month Total Premium: $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83';
+  };
+  gPrint.button.onclick = () => { gPrint.clicked = true; };
+  const gPlan = [
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium' },
+    { id: 'print', kind: 'action', action: 'printProposal', text: '^print quote proposal$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsPremium: true },
+  ];
+  const r7 = await g.kit.fill(gPlan, { maxRounds: 6, premiumPages: ['Quote & Coverages'] });
+  assert.equal(Array.from(r7.actions, (x) => x.id).join(','), 'recalculate,printProposal');
+  assert.deepEqual(plain(r7.premium), { total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 });
+});
+
+// Review of #592 (Blocking #1a): openCargo snapshots an initial rate, reveals a coverage field
+// whose answer turns rates stale, and the page moves on (VehicleSummary) before finishFill.
+test('mid-fill premium snapshot is cleared when a later answer turns rates stale and page moves on (#584, #585)', async () => {
+  const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
+  h.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  const openBtn = addButton(h, '+');
+  openBtn.onclick = () => {
+    openBtn._clicked = true;
+    const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'cov-m', ariaLabel: 'Liability', value: '750' });
+    sel.addEventListener('change', () => {
+      h.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate';
+      clock.setTimeout(() => { h.context.location.search = '?pageName=VehicleSummary'; }, 20);
+    });
+    h.document.body.append(sel);
+  };
+  const r = await h.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^\\+$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'cov', selector: '#cov-m', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000' },
+  ], { maxRounds: 6, replaceChoices: true, premiumPages: ['CoveragesRates'] });
+  assert.equal(r.navigatedTo, 'VehicleSummary');
+  assert.equal(r.premium, undefined, 'pre-answer rate must be cleared when answer turns rates stale and page moves on');
+});
+
+// Review of #592 (Blocking #1b): GEICO Recalculate resets an agent's skipped answer without DOM
+// put-back, leaving a non-stale rate on screen for the reset value.
+test('rejected GEICO rate after Recalculate resets an agent answer is not reported (#584, #585)', async () => {
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(g, 'Quote & Coverages');
+  const lim = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'Id_GiveLimit_1', name: 'Id_GiveLimit_1', ariaLabel: 'Liability', value: '750' });
+  g.document.body.append(lim);
+  g.document.body.innerText = 'Quote $ --.-- Due Today $ --.-- Total\nPlease Recalculate Due To Coverage Change';
+  const recalc = gdsButton('Recalculate');
+  g.document.body.append(recalc.host);
+  recalc.button.onclick = () => {
+    recalc.clicked = true;
+    lim.value = '1000';
+    g.document.body.innerText = 'Quote $1,827.00 Due Today $1,827.00 Total';
+  };
+  const plan = [
+    { id: 'lim', field: 'GiveLimit', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000', steps: ['Quote & Coverages'] },
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium', once: true, keepAnswers: true, quietMs: 20 },
+  ];
+  const r = await g.kit.fill(plan, { maxRounds: 6, skip: ['ref:GiveLimit'], premiumPages: ['Quote & Coverages'] });
+  assert.ok(r.failed.some((x) => x.code === 'answer.changed'), 'answersKept flagged the reset agent answer');
+  assert.equal(r.premium, undefined, 'rejected rate after GEICO reset an agent answer must not be reported');
+});
+
+// Review of #592 (Blocking #1c): GEICO openCargo snapshots initial rate, reveals a field whose
+// answer turns rates stale, and the agent moves into stop step Final Quote Details before finishFill.
+test('mid-fill premium snapshot is cleared when GEICO reaches a stop step (#584, #585)', async () => {
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  const bar = geicoBar(g, 'Quote & Coverages');
+  g.document.body.innerText = 'Quote $1,777.00 Due Today $1,777.00 Total';
+  const open = gdsButton('Open Cargo');
+  g.document.body.append(open.host);
+  open.button.onclick = () => {
+    open.clicked = true;
+    const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'Id_GiveLimit_2', name: 'Id_GiveLimit_2', ariaLabel: 'Liability', value: '750' });
+    sel.addEventListener('change', () => {
+      g.document.body.innerText = 'Quote $ --.-- Due Today $ --.-- Total\nPlease Recalculate Due To Coverage Change';
+      clock.setTimeout(() => {
+        g.document.title = 'GEICO Final Quote Details';
+        bar.textContent = 'Final Quote Details';
+      }, 20);
+    });
+    g.document.body.append(sel);
+  };
+  const r = await g.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^open cargo$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'lim', field: 'GiveLimit', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000', steps: ['Quote & Coverages'] },
+  ], { maxRounds: 6, replaceChoices: true, stopSteps: ['Final Quote Details'], premiumPages: ['Quote & Coverages'] });
+  assert.equal(r.stopStep, 'Final Quote Details');
+  assert.equal(r.premium, undefined, 'stale rate must be cleared when fill reaches a stop step mid-fill');
+});
+
+// Review of #592 (Blocking #2): CoveragesRates with advance + hold (checkBeforeContinue): rates
+// are current when rounds end, then turn stale during settle({ why: 'continue' }) while hold skips
+// pressButton.
+test('rate turning stale during settle(continue) is cleared when Continue is held (#584, #585)', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const input = makeInput({ id: 'hold-cov', ariaLabel: 'Liability', value: '1M CSL' });
+  h.document.body.append(input);
+  h.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  const contBtn = addButton(h, 'Continue');
+  contBtn.onclick = () => { contBtn._clicked = true; };
+  // Fire after start settle (400 ms) and initial finishFill snapshot, during settle({ why: 'continue' }).
+  clock.setTimeout(() => { h.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate'; }, 500);
+  const r = await h.kit.fill([
+    { id: 'cov', selector: '#hold-cov', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+  ], { maxRounds: 4, hold: true, advance: { text: '^continue$', pages: ['CoveragesRates'] }, premiumPages: ['CoveragesRates'] });
+  assert.equal(r.held, 'check');
+  assert.equal(contBtn._clicked, undefined);
+  assert.equal(r.premium, undefined, 'rate that turned stale during settle(continue) must not survive when Continue is held');
+});
+
 // Issue #585 (live recordings 20261119-1859-d8b2, 20261104-1707-f7c2): on CoveragesRates, pressing
 // "+" for Motor Truck Cargo (and General Liability, Trailer Interchange) starts an
 // /Express/Default.aspx XHR (~1 s) without setting Ext.Ajax.isLoading() or showing a mask. Before
