@@ -384,8 +384,11 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const glActions = glPlan.filter((step) => step.kind === 'action');
   const order = glActions.map((s) => s.action);
   assert.ok(order.indexOf('doneCargo') < order.indexOf('openGl') && order.indexOf('openGl') < order.indexOf('doneGl') && order.indexOf('doneGl') < order.indexOf('billPlan'));
+  const openCargo = glActions.find((s) => s.action === 'openCargo');
+  assert.deepEqual([openCargo.loads, openCargo.quietMs, openCargo.verify, openCargo.label], [true, 250, 'revealed', 'Motor truck cargo']);
   const openGl = glActions.find((s) => s.action === 'openGl');
-  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label], ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability']);
+  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label, openGl.loads, openGl.quietMs, openGl.verify],
+    ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability', true, 250, 'revealed']);
   // FL live run, 2026-10-28: written '^\+$' it was /^+$/, which doesn't compile; the fill stopped there.
   assert.ok(new RegExp(openGl.text, 'i').test('+') && !new RegExp(openGl.text, 'i').test('x'));
   // Every helper's words compile, whichever carrier (a throw ends the whole fill on that page).
@@ -2377,7 +2380,8 @@ test('trailer interchange: the intake\'s request is added and answered, the numb
   assert.ok(order.indexOf('doneCargo') < order.indexOf('openInterchange') && order.indexOf('openInterchange') < order.indexOf('interchangeTile')
     && order.indexOf('interchangeTile') < order.indexOf('doneInterchange') && order.indexOf('doneInterchange') < order.indexOf('recalculate'));
   const open = act('openInterchange');
-  assert.deepEqual([open.text, open.near, open.afterActions, open.unless], ['^\\+$', 'trailer interchange', ['doneCargo'], ['progressive.q21DD', 'progressive.q21BE']]);
+  assert.deepEqual([open.text, open.near, open.afterActions, open.unless, open.loads, open.quietMs, open.verify],
+    ['^\\+$', 'trailer interchange', ['doneCargo'], ['progressive.q21DD', 'progressive.q21BE'], true, 250, 'revealed']);
   const tile = act('interchangeTile');
   assert.deepEqual([tile.afterActions, tile.afterAny, tile.unless, tile.unique], [['openInterchange'], ['progressive.q21C0', 'progressive.qNP21EB'], ['progressive.q21DD', 'progressive.q21E5'], true]);
   assert.ok(layout.open.tiles.every((t) => new RegExp(tile.text, 'i').test(t)));
