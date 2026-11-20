@@ -2279,7 +2279,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).
     if (window === window.top && currentPage() === startPage && !stepChanged() && !state.stoppedAt && !state.unreadStep) {
       for (const a of actions) {
-        if (!a.missing || state.clicked.has(a.action) || !actionHere(a) || findButton(a)
+        if (!a.missing || state.clicked.has(a.action) || state.exhausted.has(a.action) || !actionHere(a) || findButton(a)
           || !a.afterActions.every((id) => state.clicked.has(id)) || a.unlessActions?.some((id) => state.clicked.has(id))
           || settledItem(a)) continue;
         // A markable one carries its own id, scoped as `clicked` has it, for the panel's Mark done.

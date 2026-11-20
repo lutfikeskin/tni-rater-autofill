@@ -499,6 +499,7 @@ const NTL_HOLD = ['ntlStillAdded'];
 // while the section is closed (saved Rates pages, 2026-10).
 const CARGO_SECTION = '[fieldref^="MotorTruckingCargoInput."]';
 const COMMODITY_ROW = '[fieldref="MTCargoCommodityCategories.MTCargolistOfCommodityCategories"], [fieldref="MTCargoCommodityCategories.MTCargoListOfCommodities"]';
+const GL_SECTION = '[fieldref^="GeneralLiabilityInput."]';
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -710,7 +711,12 @@ export const progressive = {
     // #213), so their clicks never reached the panel; the next fill pressed the commodity list's "+"
     // as cargo's and Add a commodity again, an empty row each time, and the agent removed them with
     // "x"). The page decides, whatever the panel remembers.
-    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], unlessSelector: `${CARGO_SECTION}, ${COMMODITY_ROW}`, when: (r) => r.coverage.cargo === true && notNtl(r) },
+    // Each section-opening "+" on Rates (cargo, GL, trailer interchange) sends an /Express/Default.aspx
+    // XHR (~1 s) without setting Ext.Ajax.isLoading() or showing a loading mask: `loads: true` with
+    // `verify: 'revealed'` waits for the section's questions to draw (and clicks once) so the same fill
+    // answers the section instead of ending at 250 ms with blockers waiting on Done (#585; live
+    // recordings 20261119-1859-d8b2 for cargo and 20261104-1707-f7c2 for cargo, GL and interchange).
+    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], unlessSelector: `${CARGO_SECTION}, ${COMMODITY_ROW}`, loads: true, quietMs: 250, verify: 'revealed', label: 'Motor truck cargo', when: (r) => r.coverage.cargo === true && notNtl(r) },
     { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], unlessSelector: COMMODITY_ROW, when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
@@ -726,7 +732,7 @@ export const progressive = {
     // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
     // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
     // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).
-    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
+    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], unlessSelector: GL_SECTION, afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), loads: true, quietMs: 250, verify: 'revealed', label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: { closed: 'gl' }, when: (r) => glRequested(r) && notNtl(r) },
     // Trailer interchange on the intake (TNI, 2026-10-28): once cargo and GL are done, the "+" in its
     // row, its questions, the trailer type tile once the number of non-owned trailers is in (a limit
@@ -734,7 +740,7 @@ export const progressive = {
     // Physical Damage are in: verified once its section's questions are gone and the row keeps the
     // limit (`verify: { closed: 'interchange' }`). No tile for the intake's trailers: the agent's pick, said on the
     // number of non-owned trailers (interchangeConfirm).
-    { id: 'openInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'trailer interchange', unless: [INTERCHANGE_LIMIT, 'progressive.q21BE'], afterActions: (r) => (r.coverage.ntl === true ? ['doneNtl'] : [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])]), label: 'Trailer interchange', missing: 'The intake asks for trailer interchange: add it with "+" in the Trailer Interchange row, then fill this page again.', when: interchangeOurs },
+    { id: 'openInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'trailer interchange', unless: [INTERCHANGE_LIMIT, 'progressive.q21BE'], afterActions: (r) => (r.coverage.ntl === true ? ['doneNtl'] : [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])]), loads: true, quietMs: 250, verify: 'revealed', label: 'Trailer interchange', missing: 'The intake asks for trailer interchange: add it with "+" in the Trailer Interchange row, then fill this page again.', when: interchangeOurs },
     { id: 'interchangeTile', page: 'CoveragesRates', heldBy: NTL_HOLD, text: interchangeTile, unique: true, afterActions: ['openInterchange'], afterAny: ['progressive.q21C0', NON_OWNED_COUNT], unless: [INTERCHANGE_LIMIT, 'progressive.q21E5'], when: (r) => interchangeOurs(r) && !!interchangeTile(r) },
     { id: 'doneInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openInterchange'], after: [INTERCHANGE_LIMIT, 'progressive.q21E5'], verify: { closed: 'interchange' }, when: interchangeOurs },
     // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
