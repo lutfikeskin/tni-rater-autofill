@@ -423,7 +423,7 @@ ORDER BY 1;
 
 ## Premiums
 
-The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), on the pages where a carrier quotes its premium (each carrier's `premiumPages`, checked by `premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates) it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
+The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). On the pages where a carrier quotes its premium (each carrier's `premiumPages`, checked by `premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates), the premium is read in two places and deduplicated through one per-quote, tab and carrier table (`premiumsSeen`): during a fill in the kit (`src/kit/cursor.js`, returned on the fill report and logged by `noteFillPremium` in `sidepanel/panel/coordinator.js` once a rating helper verifies it, right before pressing a helper or Continue out of the page, or as the fill ends while still there, so a fill that navigates or opens a new tab before a layout capture lands still logs it) and each time the panel reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page). When a current premium is shown and differs from the last one logged for that quote, tab and carrier, it is logged. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) and practice pages are never read. Nothing about the client is in it.
 
 | Field | Shape |
 | --- | --- |
@@ -432,11 +432,11 @@ The panel logs the premium a carrier page quotes as a `quote_premium` event ([pr
 | `termMonths` | 12 for a year, 6 for six months; null when the page doesn't say. |
 | `dueToday`, `payments`, `payment` | GEICO's down payment for the plan picked, the payments after today and each one; null elsewhere. |
 
-The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…", Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes, drops anything else, and refuses a reading without its total.
+The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…" (or its bottom sticky bar "Quote $… Due Today $… Total"), Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes, drops anything else, and refuses a reading without its total.
 
 The warehouse has every reading in `quote_premiums`, and the last per quote and carrier, test runs left out, in `v_quote_premium`. **It is a quoted premium, never a bound one:** the carrier's figure on screen, before underwriting (on GEICO before the MVR and CLUE reports). Compare it with the printed quote on a few real quotes per carrier before trusting it.
 
-The whole feature can be removed as one piece (`src/rates.js` stays: the fill engine reads it too): `src/premium.js`, its import and one call in `sidepanel/panel/coordinator.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
+The whole feature can be removed as one piece (`src/rates.js` stays: the fill engine reads it too): `src/premium.js`, its imports and calls in `sidepanel/panel/coordinator.js` (`captureLayout`, `noteFillPremium`) and `src/kit/cursor.js`, `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
 
 ## Limits
 

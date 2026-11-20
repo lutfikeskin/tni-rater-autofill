@@ -391,7 +391,7 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   const options = {
     overwrite: false, replaceChoices: !!geico.replaceChoices, batch: !!geico.batch, doneSteps: [...doneSteps],
     advance: settings.autoAdvance && geico.advance ? advanceFor(geico, unitsListed) : null, hold: false, confirmed: null,
-    doneActions: [...doneActions], visitedPages: [], stopPages: Object.keys(geico.stopPages ?? {}), stopSteps: STOP_STEPS,
+    doneActions: [...doneActions], visitedPages: [], stopPages: Object.keys(geico.stopPages ?? {}), stopSteps: STOP_STEPS, premiumPages: geico.premiumPages ?? [],
     units: {
       active: { ...active },
       count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, record[list]?.length ?? 0])),
@@ -467,6 +467,7 @@ async function fill(form, { asked = false, expectFailed = [] } = {}) {
   if (report.actions?.length) lines.push(`  clicked: ${report.actions.map((a) => a.text).join(' · ')}`);
   if (report.blocked?.length) lines.push(`  waiting: ${report.blocked.map((b) => `${b.id} (${b.why})`).join(' · ')}`);
   if (report.unitHeld) lines.push(`  held: this ${report.unitHeld.list.slice(0, -1)} form may be another unit's`);
+  if (report.premium) lines.push(`  premium: $${report.premium.total.toLocaleString('en-US')}${report.premium.dueToday != null ? ` (due today $${report.premium.dueToday.toLocaleString('en-US')})` : ''}`);
   if (report.advanced) lines.push(`  → ${report.advanced}`);
   if (report.halted) lines.push(`  halted: ${report.reason}`);
   // Answers whose question the page took away after they went in: no row in the panel (reconcile).
@@ -886,6 +887,8 @@ async function scenario() {
   if (JSON.stringify(askedIds) !== '["openCargo","recalculate"]') fail(`Quote & Coverages: the fills clicked [${askedIds.join(', ')}], expected [openCargo, recalculate] (GEICO then changed answers)`);
   if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s) after the step opened, expected once`);
   const asked = opened.find((r) => (r.actions ?? []).some((a) => a.id === 'recalculate')) ?? { failed: [] };
+  // Putting UM/UIM back made GEICO's rates stale again: the fill must not report an outdated premium (#584).
+  if (asked.premium) fail(`Quote & Coverages: the fill reported a premium (${JSON.stringify(asked.premium)}) after putting an answer back made rates stale`);
   // In page order: the agent's limit (left, "your answer"), UM/UIM (put back), then the one without a field.
   const red = (asked.failed ?? []).map((x) => [x.key ?? null, /your answer/.test(x.reason) ? 'agent' : /put it back/.test(x.reason) ? 'back' : 'say']);
   if (JSON.stringify(red) !== JSON.stringify([['cov:bodily injury or combined single limit liability', 'agent'], ['cov:uninsured motorist bodily injury includes underinsured', 'back'], [null, 'say']])) {
@@ -915,6 +918,8 @@ async function scenario() {
   if (JSON.stringify(prints) !== '["opened"]') fail(`Quote & Coverages: the fill's Print Quote Proposal gave [${prints.join(', ')}], expected the proposal opened once`);
   if ((await mock()).recalcs !== 2) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected twice (the fill's, then the agent's)`);
   if (!(await mock()).premium) fail('Quote & Coverages: the premium is out of date after the agent\'s Recalculate and the pay plan');
+  // The fill that clicked Print Quote Proposal saw the current premium on Quote & Coverages (#584).
+  if (done.premium?.total !== 1877 || done.premium?.dueToday !== 1877) fail(`Quote & Coverages: the fill after Recalculate reported premium ${JSON.stringify(done.premium)}, expected total/dueToday 1877`);
   if ((await values())['GivePayPlanV2#2'] !== 'GEICO_PP_11Pay') fail(`Quote & Coverages: the pay plan is ${JSON.stringify((await values())['GivePayPlanV2#2'])}, not 11 Payments`);
   const after = await fill('Quote & Coverages');
   await corrected('Quote & Coverages', 'cov:bodily injury or combined single limit liability', 'cov:Bodily Injury or Combined Single Limit Liability', '$750,000 Combined Single Limit');
@@ -929,6 +934,7 @@ async function scenario() {
     const report = await fill(form);
     if (!report.halted || report.stopStep !== form) fail(`${form}: the fill did not stop on the step (${report.reason ?? 'not halted'})`);
     if (report.filled.length || report.actions?.length) fail(`${form}: filled or clicked on a stop step`);
+    if (report.premium) fail(`${form}: reported a premium on a stop step (${JSON.stringify(report.premium)})`);
     const label = await inWorld('__raterKit.capture().controls[0]?.label ?? null');
     const applied = await inWorld(`__raterKit.answer([{ key: 'ref:MockPlaceholderQuestion', label: ${JSON.stringify(label)}, value: 'SAMPLE' }], null, null)`);
     if (applied.some((x) => x.ok)) fail(`${form}: an AI answer was put in on a stop step`);
@@ -1038,6 +1044,7 @@ for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: 
 // The Social Security number: never typed, by anyone here.
 for (const e of final.log.filter((x) => x.target === 'GiveSocialSecurityNumber' && x.type !== 'view')) fail(`the Social Security number was ${e.type === 'change' ? 'changed' : e.type} (${e.isTrusted ? 'agent' : 'extension'})`);
 for (const f of fills) for (const x of f.report.filled) if (x.key === 'ref:GiveSocialSecurityNumber') fail(`${f.form}: the Social Security number was filled`);
+for (const f of fills) if (f.form !== 'Quote & Coverages' && f.report.premium) fail(`${f.form}: reported a premium outside Quote & Coverages (${JSON.stringify(f.report.premium)})`);
 // W43-32: a quote whose plans have no 11 Payments (TX, 2026-10-21: Pay In Full, 4 Payments Bi-Monthly
 // Plan, 9 Payments): after View More Payment Plans the fill picks the plan with the most payments
 // offered, names it in its report, and prints. A fresh quote view (?view=quote&plans=no11), filled with

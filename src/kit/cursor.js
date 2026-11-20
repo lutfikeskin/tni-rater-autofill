@@ -30,6 +30,7 @@ import {
   ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
 } from "./apply.js";
 import { itemResolution, LIST_STATUS } from "../resolution.js";
+import { premiumHere, readPremium } from "../premium.js";
 
 /** @import { FailCode, FillOptions, FillReport, PlanStep, UnitPager } from "../../types.js" */
 /** @import { PageControl } from "./dom.js" */
@@ -247,7 +248,7 @@ export function resolveItems(report, plan) {
  * @param {FillOptions} [options]
  * @returns {Promise<FillReport>}
  */
-export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], premiumPages = null, units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
   // A fill still running here as this one begins was left by a panel that went away (closed while it
   // ran, or reloaded): it stops as on Stop, and this one begins only once it has ended, so two fills
   // never run in one frame: its waits, drivers and cleanup (the hidden selectors, the fill's units)
@@ -570,6 +571,22 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // A plan kept to steps on a page whose step bar can't be read (STEP_UNREAD_HALT): the same.
   const steppedPlan = plan.some((s) => s.steps?.length);
   state.unreadStep = false;
+  // On a carrier's premium page (`premiumPages` from the carrier config; when omitted by a bare
+  // kit caller, only where a helper checks or verifies the premium itself): read the current
+  // premium once a rating helper verifies it, right before pressing a helper or Continue out of
+  // the page, and as the fill ends while still here, so the panel logs quote_premium without
+  // racing navigation (#584, #585). Never on a stop step, in a child frame, or while busy/stale.
+  const onPremiumPage = () => window === window.top && !state.stoppedAt && !state.unreadStep
+    && currentPage() === startPage && !stepChanged()
+    && Array.isArray(premiumPages) && premiumPages.length > 0
+    && (premiumHere({ premiumPages }, startPage) || premiumHere({ premiumPages }, null, startStep ?? stepKey()));
+  const snapshotPremium = (force = false) => {
+    if (!force && !onPremiumPage()) return;
+    if (window !== window.top || state.stoppedAt || state.unreadStep || currentPage() !== startPage || stepChanged()) return;
+    const p = pageBusy() ? null : readPremium(document.body.innerText ?? '');
+    if (p) state.report.premium = p;
+    else delete state.report.premium;
+  };
   // A button the agent clicks during the fill (Next, "+", Looks Good) moves the page on their
   // click: this fill clicks no Continue and no helper after it (FL live run 4, 2026-10-21: the
   // agent's Next, then a fill's, while GEICO still worked on the first).
@@ -1454,6 +1471,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       traceEnd(a);
       return false;
     }
+    if (accepted && a.verify === 'premium') snapshotPremium(premiumPages == null);
     // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
     // watched until KEPT_WATCH_MS after the click when they held.
     if (accepted && a.kept && !await answersKept(a)) await watchKept(a);
@@ -2094,6 +2112,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
           : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now(), trace: traceStart() } : a;
       const trace = state.pendingAction.trace;
+      snapshotPremium(premiumPages == null && !!a.needsPremium);
       const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null, kit: a.kitClick });
       if (trace) trace.press = how;
       return true;
@@ -2255,7 +2274,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (coveredHelpers.length) state.report.coveredHelpers = coveredHelpers;
     // The items as the page is now, from the read above (no read or wait of its own): one whose
     // question is gone is no item and holds nothing; the others say what the page shows now.
-    if (stillHere) reconcile(controls, pairs, getControlReads() - endReads);
+    if (stillHere) {
+      reconcile(controls, pairs, getControlReads() - endReads);
+      snapshotPremium(premiumPages == null && state.report.premium !== undefined);
+    }
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a
@@ -2398,6 +2420,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // Stamped before the click so any request started by pressButton() has startTime >= pressedAt
           // regardless of click-handler duration, while pre-click requests stay < pressedAt (#590).
           const pressedAt = perfNow();
+          snapshotPremium(premiumPages == null && state.report.premium !== undefined);
           pressButton(button);
           // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
           // a second at most), never before it.

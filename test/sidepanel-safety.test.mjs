@@ -11,6 +11,7 @@ import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAns
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
 import { fieldChangeEvent, fillEvents, loggedTimeline, redactor, sha256Hex, knownStep } from '../src/usage.js';
+import { notePremium, premiumHere, readPremium, PREMIUM_EVENT } from '../src/premium.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
@@ -165,7 +166,10 @@ function extractFunction(name) {
           resumeHeldFill: '() => {}',
           // Settled free-text field_change coalescing (#587) has its own tests; unrelated extracted
           // functions no-op unless the harness provides flushPendingTextChanges.
-          flushPendingTextChanges: '() => {}' };
+          flushPendingTextChanges: '() => {}',
+          // Fill-time premium logging (#584, #585) has its own tests; unrelated extracted logFill /
+          // autoFill tests no-op unless the harness provides noteFillPremium.
+          noteFillPremium: '() => {}' };
         if ((name === 'onRecorderMessage' || name === 'logFieldChanges' || name === 'registerTextChangeFlush') && !/function flushPendingTextChanges\(/.test(source)) source += `\n${extractFunction('flushPendingTextChanges')}`;
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
@@ -13317,4 +13321,153 @@ test('real flush paths (page_view, noteStep, fillPage, pickUnit, refreshTab, tab
   await p.advance(4000);
   assert.equal(p.logged.length, 0, 'practice carrier logs nothing');
   assert.equal(p.state.agentKeys.get('/quote')?.has('txt'), true, 'practice carrier still protects agent key');
+});
+
+// Issues #584, #585: quote_premium is logged when a fill sees a current premium on a premium page,
+// even when the fill navigates or opens a new tab before captureLayout can read the page, while
+// sharing premiumsSeen dedupe with captureLayout and respecting stale, stop-step and practice guards.
+test('fill-time quote_premium logs once across navigation/tab switch, deduplicates with captureLayout, and respects guards (#584, #585)', async () => {
+  const logged = [];
+  const premiumsSeen = new Map();
+  let pageText = '';
+  let domPage = 'CoveragesRates';
+  let domStep = '';
+  const session = { id: 'sess-p1', intakeId: 'int-p1', keySalt: 'salt' };
+  const state = {
+    intake: { record: { garaging: { state: 'FL' }, operations: { businessClass: 'Freight Hauler' }, vehicles: [], trailers: [], drivers: [], coverage: {} } },
+    intakeRevision: 0,
+    tab: { id: 7, url: 'CoveragesRates', carrier: progressive },
+    active: { vehicles: 0, drivers: 0, trailers: 0 },
+    viewTabs: new Map([[7, 1]]),
+    tabSteps: new Map(),
+    tabSessions: new Map(),
+    lastLayouts: new Map(),
+    lastRuns: new Map(),
+    layoutChain: Promise.resolve(),
+    layoutGeneration: 0,
+    filling: false,
+  };
+  const context = {
+    state,
+    $: () => ({ checked: true }),
+    crypto: { randomUUID: () => 'run-p1' },
+    usage: { currentSession: () => session, log: (...e) => logged.push(...e) },
+    chrome: { scripting: { executeScript: async () => [{ result: pageText }] } },
+    store: { set: () => Promise.resolve() },
+    pageOf: (u) => u,
+    planFor: () => [],
+    redactionTerms: () => [],
+    redactor: () => (t) => t,
+    rulesVersion: null,
+    carrierRulesOf: () => undefined,
+    fillDefaultsHash: () => undefined,
+    switchOn: () => true,
+    viewOf: () => 't1',
+    editScope: (p) => p,
+    tabStep: () => null,
+    noteStopScreen() {},
+    layoutFailed() {},
+    layoutErrorKind: () => 'other',
+    waitForFill() {},
+    sha256Hex,
+    fillEvents,
+    knownStep,
+    notePremium,
+    premiumHere,
+    premiumsSeen,
+    runKit: async () => [{ frameId: 0, result: { isTopFrame: true, page: domPage, step: domStep, title: domStep, controls: [{ q: '1', kind: 'select', label: 'Liability', options: ['$1M'] }], buttons: [], messages: [] } }],
+  };
+  // Load noteFillPremium first so logFill binds to the real implementation (not the no-op stub).
+  vm.runInNewContext([
+    'stepOfResults', 'noteFillPremium', 'fillContext', 'logFill',
+    'layoutJob', 'jobCurrent', 'sameLayoutScope', 'superseded', 'captureLayout', 'recordLayout',
+  ].map(extractFunction).join('\n'), context);
+
+  const premiums = () => logged.filter((e) => e.type === PREMIUM_EVENT);
+
+  // 1. Progressive: fill recalculates and clicks billPlan -> tab moves to ChangePaymentPlan before captureLayout.
+  const progCtx = context.fillContext({ tabId: 7, carrier: progressive, page: 'CoveragesRates', tabUrl: 'CoveragesRates' });
+  const progReport = { fields: 1, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], blockers: [],
+    actions: [{ id: 'recalculate', text: 'Recalculate' }, { id: 'billPlan', text: 'View bill plan options' }],
+    navigatedTo: 'ChangePaymentPlan', premium: readPremium('Total premium amount $12,815.00 per year') };
+  state.tab.url = 'ChangePaymentPlan';
+  domPage = 'ChangePaymentPlan';
+  context.logFill(progCtx, [progReport], [{ frameId: 0, result: progReport }], Date.now());
+  await context.recordLayout('CoveragesRates');
+  assert.equal(premiums().length, 1, 'logs quote_premium even though the tab already navigated to ChangePaymentPlan');
+  assert.deepEqual({ ...premiums()[0] }, {
+    type: PREMIUM_EVENT, carrier: 'progressive', page: 'CoveragesRates', view: 't1',
+    total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null,
+  });
+
+  // 2. Later layout capture back on CoveragesRates sees the exact same premium: not logged twice.
+  state.tab.url = 'CoveragesRates';
+  domPage = 'CoveragesRates';
+  pageText = 'Total premium amount $12,815.00 per year';
+  await context.recordLayout('CoveragesRates');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(premiums().length, 1, 'same premium seen by later layout capture is deduplicated via premiumsSeen');
+
+  // 3. Stale page (no report.premium, stale text in captureLayout): logs nothing new.
+  const staleReport = { fields: 1, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], blockers: [], actions: [] };
+  pageText = 'Total premium amount **** per year\nPlease recalculate';
+  context.logFill(progCtx, [staleReport], [{ frameId: 0, result: staleReport }], Date.now());
+  await context.recordLayout('CoveragesRates');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(premiums().length, 1, 'stale page logs no quote_premium');
+
+  // 4. Changed premium before Print (EFT discount) logs a second quote_premium.
+  const eftReport = { ...progReport, actions: [{ id: 'print', text: 'Print, Email, Fax' }], navigatedTo: 'PrintEmailFax',
+    premium: readPremium('Total premium amount $12,500.00 per year including EFT') };
+  state.tab.url = 'PrintEmailFax';
+  context.logFill(progCtx, [eftReport], [{ frameId: 0, result: eftReport }], Date.now());
+  assert.deepEqual(premiums().map((e) => e.total), [12815, 12500]);
+
+  // 5. Practice carrier and recon/non-premium carrier (no premiumPages) log nothing.
+  const practiceCarrier = { ...progressive, practice: true };
+  const reconCarrier = { id: 'recon', name: 'Recon', rules: [] };
+  const pracCtx = context.fillContext({ tabId: 7, carrier: practiceCarrier, page: 'CoveragesRates', tabUrl: 'CoveragesRates' });
+  const reconCtx = context.fillContext({ tabId: 7, carrier: reconCarrier, page: 'CoveragesRates', tabUrl: 'CoveragesRates' });
+  const amwinsCtx = context.fillContext({ tabId: 7, carrier: amwins, page: '/application/businessauto', tabUrl: '/application/businessauto' });
+  for (const c of [pracCtx, reconCtx, amwinsCtx]) {
+    const r = { ...progReport, premium: { total: 9999, termMonths: 12, dueToday: null, payments: null, payment: null } };
+    context.logFill(c, [r], [{ frameId: 0, result: r }], Date.now());
+  }
+  assert.equal(premiums().length, 2, 'practice, recon and carriers without premiumPages log no quote_premium');
+
+  // 6. GEICO on Quote & Coverages: Print Quote Proposal opens /PrintQuote in a new tab (state.tab changes),
+  //    so captureLayout never runs, yet logFill logs quote_premium with step; later layout capture deduplicates;
+  //    a stop step logs nothing.
+  state.tab = { id: 8, url: '/quote', carrier: geico };
+  const geicoCtx = context.fillContext({ tabId: 8, carrier: geico, page: '/quote', tabUrl: '/quote' });
+  const geicoText = '12 Month Total Premium: $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83';
+  const geicoReport = { fields: 2, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], blockers: [],
+    stepKey: 'Quote & Coverages', actions: [{ id: 'recalculate', text: 'Recalculate' }, { id: 'printProposal', text: 'Print Quote Proposal' }],
+    premium: readPremium(geicoText) };
+  // New tab /PrintQuote took focus before fill returned.
+  state.tab = { id: 9, url: '/PrintQuote', carrier: geico };
+  context.logFill(geicoCtx, [geicoReport], [{ frameId: 0, result: geicoReport }], Date.now());
+  assert.equal(premiums().length, 3, 'GEICO quote_premium logged even after Print Quote Proposal opened a new tab');
+  assert.deepEqual({ ...premiums()[2] }, {
+    type: PREMIUM_EVENT, carrier: 'geico', page: '/quote', view: 't1', step: 'Quote & Coverages',
+    total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83,
+  });
+  // Returning to Quote & Coverages: layout capture with the same premium does not log a duplicate.
+  state.tab = { id: 8, url: '/quote', carrier: geico };
+  domPage = '/quote';
+  domStep = 'Quote & Coverages';
+  pageText = geicoText;
+  await context.recordLayout('/quote');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(premiums().length, 3, 'GEICO layout capture deduplicates against fill-logged premium');
+  // GEICO stop step logs nothing even if a report somehow carried a premium.
+  const stopReport = { ...geicoReport, stepKey: 'Final Quote Details', premium: { total: 55555, termMonths: 12, dueToday: null, payments: null, payment: null } };
+  context.logFill(geicoCtx, [stopReport], [{ frameId: 0, result: stopReport }], Date.now());
+  assert.equal(premiums().length, 3, 'stop step never logs quote_premium');
+
+  // 7. fillOptions passes carrier.premiumPages to the kit.
+  const optsState = { ...state, tab: { id: 8, url: 'https://carrier.test/quote' }, doneSteps: new Set(), doneActions: new Set(), visitedPages: new Set(), filled: new Map(), agentKeys: new Map(), unitForms: {} };
+  assert.deepEqual([...fillOptionsOf(optsState, progressive).premiumPages], ['CoveragesRates']);
+  assert.deepEqual([...fillOptionsOf(optsState, geico).premiumPages], ['Quote & Coverages']);
+  assert.deepEqual([...fillOptionsOf(optsState, amwins).premiumPages], []);
 });

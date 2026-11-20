@@ -3,6 +3,7 @@
 
 import { oneLine, sleep } from './text.js';
 import { RATES_STALE } from '../rates.js';
+import { readPremium } from '../premium.js';
 import { kitTrace, isTracing } from './trace.js';
 
 /** @import { PageAdapter, PageAdapterKit, PageAdapterShared } from '../../types.js' */
@@ -448,9 +449,6 @@ export function ratesStale() {
  * @returns {boolean}
  */
 export function premiumReady() {
-  if (pageBusy() || ratesStale()) return false;
-  const text = document.body.innerText ?? '';
-  return /(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text)
-    || /\bquote\s+\$\s*[1-9][\d,]*\.\d{2}\s+due today\s+\$\s*[\d,]+\.\d{2}\s+total\b/i.test(text);
+  return !pageBusy() && readPremium(document.body.innerText ?? '') !== null;
 }
 

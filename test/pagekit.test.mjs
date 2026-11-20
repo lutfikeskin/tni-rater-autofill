@@ -11031,3 +11031,88 @@ test('a rule\'s text pattern is compiled once, however often the fill assigns it
   await h.kit.fill(plan, { maxRounds: 3 });
   assert.equal(made, 1, `compiled ${made} times over two fills`);
 });
+
+// Issues #584, #585: a fill on a premium page records the current premium on its report before
+// clicking out of the page (bill plan, Print, Continue) or as the fill ends, so the panel logs
+// quote_premium even when navigation or a new tab beats captureLayout.
+test('fill report carries the current premium across Recalculate -> billPlan/Print navigation, and omits stale or non-premium pages (#584, #585)', async () => {
+  // 1. Progressive: stale -> Recalculate -> billPlan navigates to ChangePaymentPlan in one fill.
+  const plan = () => [
+    { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium', waitRequired: true },
+    { id: 'bill', kind: 'action', action: 'billPlan', text: '^(view )?bill(ing)?( plan)? options?$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterAny: [], afterActions: [], afterPages: [], unless: [], needsPremium: true, waitRequired: true },
+  ];
+  const nav = premiumHarness({ recalcResult: 'Total premium amount $12,815.00 per year including EFT' });
+  nav.bill.onclick = () => {
+    nav.bill._clicked = true;
+    nav.h.context.location.search = '?pageName=ChangePaymentPlan';
+    nav.h.document.body.innerText = 'Choose your payment plan';
+  };
+  const r1 = await nav.h.kit.fill(plan(), { maxRounds: 6, premiumPages: ['CoveragesRates'] });
+  assert.equal(Array.from(r1.actions, (x) => x.id).join(','), 'recalculate,billPlan');
+  assert.equal(r1.navigatedTo, 'ChangePaymentPlan');
+  assert.deepEqual(plain(r1.premium), { total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null });
+
+  // 2. Progressive: back from ChangePaymentPlan with current EFT rate, straight to Print (no recalculate).
+  const p = premiumHarness();
+  p.h.document.body.innerText = 'Total premium amount $12,500.00 per year including Electronic Funds Transfer (EFT) discount';
+  const printBtn = addButton(p.h, 'Print, Email, Fax');
+  printBtn.onclick = () => {
+    printBtn._clicked = true;
+    p.h.context.location.search = '?pageName=PrintEmailFax';
+    p.h.document.body.innerText = 'Print, Email or Fax your quote';
+  };
+  const printPlan = [{ id: 'print', kind: 'action', action: 'print', text: '^print,?\\s*email,?\\s*fax$', pages: ['CoveragesRates'], after: [], afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], unless: [], waitRequired: true }];
+  const r2 = await p.h.kit.fill(printPlan, { maxRounds: 4, doneActions: ['recalculate', 'billPlan'], visitedPages: ['ChangePaymentPlan'], premiumPages: ['CoveragesRates'] });
+  assert.equal(r2.navigatedTo, 'PrintEmailFax');
+  assert.deepEqual(plain(r2.premium), { total: 12500, termMonths: 12, dueToday: null, payments: null, payment: null });
+
+  // 3. Stale page (recalculate leaves rates out of date): no premium.
+  const stale = premiumHarness({ recalcResult: 'Rates changed **** — please recalculate' });
+  const r3 = await stale.h.kit.fill(plan(), { maxRounds: 6, premiumPages: ['CoveragesRates'] });
+  assert.equal(r3.premium, undefined);
+
+  // 4. Page starts current, a coverage change makes it stale before ending without recalculating: no premium.
+  const turnedStale = harness({ progressive: true, search: '?pageName=CoveragesRates' });
+  const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'cov', ariaLabel: 'Liability', value: '750' });
+  turnedStale.document.body.append(sel);
+  turnedStale.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  sel.addEventListener('change', () => { turnedStale.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate'; });
+  const openBtn = addButton(turnedStale, '+');
+  openBtn.onclick = () => { openBtn._clicked = true; };
+  const r4 = await turnedStale.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^\\+$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'cov', selector: '#cov', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000' },
+  ], { maxRounds: 4, replaceChoices: true, premiumPages: ['CoveragesRates'] });
+  assert.equal(r4.premium, undefined, 'pre-change premium cleared once the page turned stale');
+
+  // 5. Non-premium page or carrier with no premiumPages: no premium.
+  const other = harness({ progressive: true, search: '?pageName=AddVehicle' });
+  other.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const r5 = await other.kit.fill([], { maxRounds: 2, premiumPages: ['CoveragesRates'] });
+  assert.equal(r5.premium, undefined);
+  const noPages = premiumHarness();
+  noPages.h.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const r6 = await noPages.h.kit.fill([], { maxRounds: 2, premiumPages: [] });
+  assert.equal(r6.premium, undefined);
+
+  // 6. GEICO on Quote & Coverages: recalculates and clicks Print Quote Proposal.
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(g, 'Quote & Coverages');
+  g.document.body.innerText = '12 Month Total Premium: $ --.--\nPlease Recalculate Due To Coverage Change';
+  const gRecalc = gdsButton('Recalculate');
+  const gPrint = gdsButton('Print Quote Proposal');
+  g.document.body.append(gRecalc.host, gPrint.host);
+  gRecalc.button.onclick = () => {
+    gRecalc.clicked = true;
+    g.document.body.innerText = '12 Month Total Premium: $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83';
+  };
+  gPrint.button.onclick = () => { gPrint.clicked = true; };
+  const gPlan = [
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium' },
+    { id: 'print', kind: 'action', action: 'printProposal', text: '^print quote proposal$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsPremium: true },
+  ];
+  const r7 = await g.kit.fill(gPlan, { maxRounds: 6, premiumPages: ['Quote & Coverages'] });
+  assert.equal(Array.from(r7.actions, (x) => x.id).join(','), 'recalculate,printProposal');
+  assert.deepEqual(plain(r7.premium), { total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 });
+});
