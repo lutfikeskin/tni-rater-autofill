@@ -2566,13 +2566,17 @@ test('general liability on the intake: the fill clicks the "+" in its row, not c
     const row = new FakeNode('div');
     const plus = new FakeNode('a', { attrs: { role: 'button' } });
     plus.append(new FakeNode('span', { textContent: '+' }));
-    plus.onclick = () => clicks.push(coverage);
+    plus.onclick = () => {
+      clicks.push(coverage);
+      h.document.body.append(radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+        ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } }))));
+    };
     row.append(new FakeNode('div', { textContent: coverage }), plus);
     h.document.body.append(row);
   }
   const steps = buildPlan(record, progressive).filter((s) => s.kind === 'action' && s.action === 'openGl');
   assert.equal(steps.length, 1);
-  const report = await h.kit.fill(steps, { maxRounds: 3 });
+  const report = await h.kit.fill(steps, { maxRounds: 4 });
   assert.deepEqual(clicks, ['General Liability']);
   assert.deepEqual(Array.from(report.actions, (x) => x.id), ['openGl']);
 });
@@ -2597,10 +2601,14 @@ test('cargo closed by the agent: cargo counts as done and the fill clicks genera
     const row = new FakeNode('div');
     const plus = new FakeNode('a', { attrs: { role: 'button' } });
     plus.append(new FakeNode('span', { textContent: '+' }));
-    plus.onclick = () => clicks.push('General Liability');
+    plus.onclick = () => {
+      clicks.push('General Liability');
+      h.document.body.append(radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+        ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } }))));
+    };
     row.append(new FakeNode('div', { textContent: 'General Liability' }), plus);
     h.document.body.append(row);
-    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    const report = await h.kit.fill(plan, { maxRounds: 5, doneActions: [] });
     return { clicks, report };
   };
   let { clicks, report } = await run();
@@ -11030,4 +11038,214 @@ test('a rule\'s text pattern is compiled once, however often the fill assigns it
   assert.equal(years.value, '3', 'the rule found its question by its text');
   await h.kit.fill(plan, { maxRounds: 3 });
   assert.equal(made, 1, `compiled ${made} times over two fills`);
+});
+
+// Issue #585 (live recordings 20261119-1859-d8b2, 20261104-1707-f7c2): on CoveragesRates, pressing
+// "+" for Motor Truck Cargo (and General Liability, Trailer Interchange) starts an
+// /Express/Default.aspx XHR (~1 s) without setting Ext.Ajax.isLoading() or showing a mask. Before
+// this fix, settle({ why: 'round' }) ended quiet at 250 ms and the fill exited with blockers
+// waiting on doneCargo before the section's questions drew. Now the same fill waits for the section
+// to appear, answers it, and finishes Done, Recalculate and the bill plan.
+test('Progressive CoveragesRates: "+" waits for a ~1 s unmasked request to draw cargo, answers it, and reaches Done, Recalculate and bill plan (#585)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: true, cargoLimit: '100000', cargoDeductible: '1000', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  const clicks = [];
+  const addCombo = (q, { caption, ref, options, value = '' }) => {
+    const f = addExtText(h, 'c', q, { caption, ref, value });
+    const recs = options.map((label) => ({ get: () => label }));
+    Object.assign(f.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => recs, isLoading: () => false } });
+    return f;
+  };
+  const addYesNo = (ref, question) => {
+    const group = radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+    h.document.body.append(group);
+    return group;
+  };
+  addCombo('1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', options: ['Not selected', '$1 million CSL'], value: '$1 million CSL' });
+  h.document.body.innerText = 'The coverages have changed, please "recalculate" to see your rate.';
+
+  const cargoRow = new FakeNode('div');
+  const plus = new FakeNode('a', { attrs: { role: 'button' } });
+  plus.append(new FakeNode('span', { textContent: '+' }));
+  cargoRow.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), plus);
+  h.document.body.append(cargoRow);
+
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { clicks.push('recalculate'); h.document.body.innerText = 'Total Premium: $4,200.00'; };
+  const billPlan = addButton(h, 'View bill plan options');
+  billPlan.onclick = () => { clicks.push('billPlan'); h.context.location.search = '?pageName=ChangePaymentPlan'; };
+
+  // "+" starts a ~1.1 s XHR with pageBusy() === false; only when it returns do the cargo questions draw.
+  plus.onclick = () => {
+    clicks.push('openCargo');
+    const started = clock.Date.now() - t0;
+    setTimeout(() => {
+      observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: started, responseEnd: clock.Date.now() - t0 }] });
+      plus.remove();
+      const mobile = addYesNo('MotorTruckingCargoInput.MTCargoMobileHomesQuestion', 'Does the customer require cargo coverage for mobile/modular homes and buildings?');
+      const docs = addYesNo('MotorTruckingCargoInput.MTCargoBusinessDocumentsQuestion', 'Does the customer require cargo coverage for business documents or non-negotiable securities?');
+      const addCommodity = addButton(h, 'Add a commodity');
+      addCommodity.onclick = () => {
+        clicks.push('addCargoCommodity');
+        const cat = addCombo('216A', { caption: 'Commodity Type:', ref: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', options: ['', 'Consumer Goods'] });
+        const item = addCombo('216B', { caption: 'Commodity:', ref: 'MTCargoCommodityCategories.MTCargoListOfCommodities', options: ['', 'Other Consumer Goods'] });
+        addCombo('216F', { caption: 'Motor Trucking Cargo', ref: 'LineInput.MotorTruckingCargoLimit', options: ['Not selected', '$100k with a $1,000 Deductible'] });
+        const done = addButton(h, 'Done with this coverage');
+        done.onclick = () => {
+          clicks.push('doneCargo');
+          mobile.remove(); docs.remove(); addCommodity.remove(); cat.input.remove(); item.input.remove(); done.remove();
+        };
+      };
+    }, 1100);
+  };
+
+  const report = await h.kit.fill(plan, { maxRounds: 25, replaceChoices: true });
+  assert.deepEqual(clicks, ['openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan']);
+  assert.deepEqual(plain(report.actions.map((a) => a.id)), ['openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan']);
+  assert.ok(report.filled.some((x) => x.path === 'progressive.q2158' && x.shown === 'No'), 'mobile homes answered in the same fill');
+  assert.ok(report.filled.some((x) => x.path === 'progressive.q215A' && x.shown === 'No'), 'business documents answered in the same fill');
+  assert.ok(report.filled.some((x) => x.q === '216A' && x.shown === 'Consumer Goods'), 'category answered in the same fill');
+  assert.ok(report.filled.some((x) => x.q === '216B' && x.shown === 'Other Consumer Goods'), 'commodity answered in the same fill');
+  assert.ok(report.filled.some((x) => x.shown === '$100k with a $1,000 Deductible'), 'cargo limit answered in the same fill');
+  assert.deepEqual(plain(report.blockers), []);
+  assert.equal(report.navigatedTo, 'ChangePaymentPlan');
+
+  // Same gap on General Liability and Trailer Interchange (live recording 20261104-1707-f7c2):
+  // their "+" starts a ~1 s unmasked XHR too, and the same fill waits and answers the opened question.
+  for (const [label, coverage, extra, questionRef, questionText, expected] of [
+    ['General Liability', { cargo: false, gl: true, glLimit: '$1M/$2M', ntl: false }, {}, 'GeneralLiabilityInput.GeneralLiabilityTruckIncome', 'Does the customer earn 100% of his or her income from for hire trucking operations?', 'Yes'],
+    ['Trailer Interchange', { cargo: false, gl: false, ntl: false }, { trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000' } }, 'TrailerInterchangeInput.InterchangeAgreement', 'Does the customer have an interchange agreement requiring trailer interchange coverage?', 'Yes'],
+  ]) {
+    const rec = { ...record, coverage: { ...record.coverage, ...coverage }, ...extra };
+    const sub = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const subLiab = addExtText(sub, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+    Object.assign(subLiab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+    const row = new FakeNode('div');
+    const btn = new FakeNode('a', { attrs: { role: 'button' } });
+    btn.append(new FakeNode('span', { textContent: '+' }));
+    row.append(new FakeNode('div', { textContent: label }), btn);
+    sub.document.body.append(row);
+    let pressed = 0;
+    btn.onclick = () => {
+      pressed += 1;
+      setTimeout(() => {
+        btn.remove();
+        sub.document.body.append(radioGroup(questionText, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${questionRef}`, type: 'radio', value, attrs: { fieldref: questionRef } }))));
+      }, 1100);
+    };
+    const subReport = await sub.kit.fill(buildPlan(rec, progressive, {}), { maxRounds: 10, replaceChoices: true });
+    assert.equal(pressed, 1, `${label}: "+" clicked once`);
+    assert.ok(subReport.filled.some((x) => x.shown === expected), `${label}: first section question answered in the same fill`);
+  }
+});
+
+// Issue #585: if cargo's "+" starts a request that fails or the page never draws the cargo section,
+// the fill must click once, end within its limits (no hang), leave Continue unclicked, and report
+// both the unrevealed opener and the downstream Rates blockers.
+test('Progressive CoveragesRates: a "+" whose section never appears clicks once and ends with blockers (no hang)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: true, cargoLimit: '100000', cargoDeductible: '1000', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const liab = addExtText(h, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+  Object.assign(liab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+  h.document.body.innerText = 'The coverages have changed, please "recalculate" to see your rate.';
+
+  const row = new FakeNode('div');
+  const plus = new FakeNode('a', { attrs: { role: 'button' } });
+  plus.append(new FakeNode('span', { textContent: '+' }));
+  let clicks = 0;
+  plus.onclick = () => { clicks += 1; };
+  row.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), plus);
+  h.document.body.append(row);
+
+  addButton(h, 'Recalculate');
+  addButton(h, 'View bill plan options');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => { cont._clicked = true; };
+
+  const report = await h.kit.fill(plan, { maxRounds: 10, replaceChoices: true, advance: progressive.advance });
+  assert.equal(clicks, 1, 'clicked once, never retried');
+  assert.equal(report.halted, false, 'ended cleanly within limits');
+  assert.ok(!report.actions.some((a) => a.id === 'openCargo'), 'unverified opener is not reported as completed');
+  assert.ok(report.invalidatedActions.includes('openCargo'));
+  assert.ok(report.noData.some((x) => x.label === 'Motor truck cargo' && /Clicked once, but the page never showed what it opens/.test(x.note)), JSON.stringify(report.noData));
+  assert.ok(report.blocked.some((b) => b.id === 'openCargo'), JSON.stringify(report.blocked));
+  assert.ok(report.blocked.some((b) => b.id === 'recalculate' && /doneCargo clicked/.test(b.why)), JSON.stringify(report.blocked));
+  assert.ok(report.blocked.some((b) => b.id === 'billPlan' && /doneCargo clicked/.test(b.why)), JSON.stringify(report.blocked));
+  assert.equal(cont._clicked, undefined, 'Continue is not clicked while cargo never opened');
+  assert.equal(report.advanced, undefined);
+});
+
+// Review of PR #593: when General Liability is already open on Rates without 'openGl' in
+// doneActions (agent clicked "+" before Fill, or a slow open landed after an earlier fill) and
+// q21D1 is not yet answered, Progressive has swapped "+" for "-". `openGl.unlessSelector` recognizes
+// the open section so no false glAddNote ("add it with +") is reported and no "+" is clicked; and
+// an exhausted `loads` helper whose "+" vanished never pushes a duplicate `missing` item either.
+test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswered reports no false openGl note and clicks no "+"', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'Oil and gas equipment' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: false, gl: true, glLimit: '$1M/$2M', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const clicks = [];
+  const glRow = new FakeNode('div');
+  const minus = new FakeNode('a', { attrs: { role: 'button' } });
+  minus.append(new FakeNode('span', { textContent: '-' }));
+  glRow.append(new FakeNode('div', { textContent: 'General Liability' }), minus);
+  h.document.body.append(glRow);
+  const cargoRow = new FakeNode('div');
+  const cargoPlus = new FakeNode('a', { attrs: { role: 'button' } });
+  cargoPlus.append(new FakeNode('span', { textContent: '+' }));
+  cargoPlus.onclick = () => clicks.push('cargo+');
+  cargoRow.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), cargoPlus);
+  h.document.body.append(cargoRow);
+  const income = radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } })));
+  const oilGas = radioGroup('Does the customer haul to or from oil and gas fields?',
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'glOilGas', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas' } })));
+  h.document.body.append(income, oilGas);
+
+  const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true, doneActions: [] });
+  assert.deepEqual(clicks, [], 'no "+" clicked when GL is already open');
+  assert.ok(report.filled.some((x) => x.key === 'ref:GeneralLiabilityInput.GeneralLiabilityTruckIncome' && x.shown === 'Yes'));
+  assert.ok(!report.noData.some((x) => x.label === 'General liability'), `no false glAddNote: ${JSON.stringify(report.noData)}`);
+
+  // Same with no "+" anywhere on the page (findButton(openGl) is null): still no false glAddNote.
+  cargoPlus.remove();
+  const noPlusReport = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true, doneActions: [] });
+  assert.ok(!noPlusReport.noData.some((x) => x.label === 'General liability'), `no false glAddNote without "+": ${JSON.stringify(noPlusReport.noData)}`);
+
+  // Exhausted `loads` helper whose button disappeared (swapped for "-") without drawing anything:
+  // reports the single unrevealed `loads` item, never a duplicate `missing` item.
+  const stale = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const liab = addExtText(stale, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+  Object.assign(liab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+  const row2 = new FakeNode('div');
+  const plus2 = new FakeNode('a', { attrs: { role: 'button' } });
+  plus2.append(new FakeNode('span', { textContent: '+' }));
+  plus2.onclick = () => { plus2.remove(); };
+  row2.append(new FakeNode('div', { textContent: 'General Liability' }), plus2);
+  stale.document.body.append(row2);
+  const staleReport = await stale.kit.fill(plan, { maxRounds: 6, replaceChoices: true, doneActions: [] });
+  const glNotes = staleReport.noData.filter((x) => x.label === 'General liability');
+  assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
+  assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
 });
