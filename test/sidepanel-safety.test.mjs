@@ -13460,14 +13460,41 @@ test('fill-time quote_premium logs once across navigation/tab switch, deduplicat
   await context.recordLayout('/quote');
   await new Promise((r) => setImmediate(r));
   assert.equal(premiums().length, 3, 'GEICO layout capture deduplicates against fill-logged premium');
-  // GEICO stop step logs nothing even if a report somehow carried a premium.
+  // GEICO stop step logs nothing even if a report somehow carried a premium (both when stepKey is
+  // the stop step and when stepKey stayed 'Quote & Coverages' while stopStep is 'Final Quote Details').
   const stopReport = { ...geicoReport, stepKey: 'Final Quote Details', premium: { total: 55555, termMonths: 12, dueToday: null, payments: null, payment: null } };
   context.logFill(geicoCtx, [stopReport], [{ frameId: 0, result: stopReport }], Date.now());
-  assert.equal(premiums().length, 3, 'stop step never logs quote_premium');
+  const midStopReport = { ...geicoReport, stepKey: 'Quote & Coverages', stopStep: 'Final Quote Details', premium: { total: 66666, termMonths: 12, dueToday: null, payments: null, payment: null } };
+  context.logFill(geicoCtx, [midStopReport], [{ frameId: 0, result: midStopReport }], Date.now());
+  assert.equal(premiums().length, 3, 'stop step (including mid-fill stopStep with prior stepKey) never logs quote_premium');
 
   // 7. fillOptions passes carrier.premiumPages to the kit.
   const optsState = { ...state, tab: { id: 8, url: 'https://carrier.test/quote' }, doneSteps: new Set(), doneActions: new Set(), visitedPages: new Set(), filled: new Map(), agentKeys: new Map(), unitForms: {} };
   assert.deepEqual([...fillOptionsOf(optsState, progressive).premiumPages], ['CoveragesRates']);
   assert.deepEqual([...fillOptionsOf(optsState, geico).premiumPages], ['Quote & Coverages']);
   assert.deepEqual([...fillOptionsOf(optsState, amwins).premiumPages], []);
+
+  // 8. No-op autoFill (0 filled, 0 actions, 0 warnings, no advanceDue/held/unlisted) still logs
+  //    a brand-new quote_premium via its else noteFillPremium branch without emitting a fill_run.
+  const af = fillHarness({ carrier: progressive });
+  const afSeen = new Map();
+  af.state.tab.url = 'https://progressive.test/quote?pageName=CoveragesRates';
+  af.context.pageOf = () => 'CoveragesRates';
+  af.context.notePremium = notePremium;
+  af.context.premiumHere = premiumHere;
+  af.context.premiumsSeen = afSeen;
+  vm.runInContext(extractFunction('noteFillPremium'), af.context);
+  const noopReport = {
+    fields: 1, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [],
+    actions: [], blockers: [], invalidatedActions: [], protectedKeys: [], labels: [], choices: [], halted: false,
+    premium: readPremium('Total premium amount $14,200.00 per year'),
+  };
+  af.context.runKit = async () => [{ frameId: 0, result: noopReport }];
+  await af.context.autoFill('CoveragesRates');
+  assert.equal(af.seen.logged.filter((e) => e.type === 'fill_run').length, 0, 'no-op autoFill logs no fill_run');
+  assert.deepEqual(af.seen.logged.filter((e) => e.type === PREMIUM_EVENT).map((e) => [e.carrier, e.page, e.total, e.termMonths]),
+    [['progressive', 'CoveragesRates', 14200, 12]], 'no-op autoFill still logs quote_premium via else noteFillPremium');
+  // A second no-op autoFill with the same premium deduplicates via premiumsSeen.
+  await af.context.autoFill('CoveragesRates');
+  assert.equal(af.seen.logged.filter((e) => e.type === PREMIUM_EVENT).length, 1);
 });

@@ -221,6 +221,7 @@ export function resolveItems(report, plan) {
  * @property {boolean} resetWaited
  * @property {string} stoppedAt
  * @property {boolean} unreadStep
+ * @property {boolean} premiumRejected
  * @property {boolean} agentPressed
  */
 /**
@@ -571,18 +572,27 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   // A plan kept to steps on a page whose step bar can't be read (STEP_UNREAD_HALT): the same.
   const steppedPlan = plan.some((s) => s.steps?.length);
   state.unreadStep = false;
+  // Set when answersKept finds the carrier changed an answer during Recalculate: the rate on
+  // screen may not match the answers shown, so no premium is reported for this fill unless a later
+  // Recalculate verifies cleanly.
+  state.premiumRejected = false;
   // On a carrier's premium page (`premiumPages` from the carrier config; when omitted by a bare
   // kit caller, only where a helper checks or verifies the premium itself): read the current
-  // premium once a rating helper verifies it, right before pressing a helper or Continue out of
-  // the page, and as the fill ends while still here, so the panel logs quote_premium without
-  // racing navigation (#584, #585). Never on a stop step, in a child frame, or while busy/stale.
-  const onPremiumPage = () => window === window.top && !state.stoppedAt && !state.unreadStep
+  // premium once a rating helper verifies it cleanly, right before pressing a helper or Continue
+  // out of the page, and as the fill ends while still here, so the panel logs quote_premium without
+  // racing navigation (#584, #585). Never on a stop step, in a child frame, after an agent button
+  // press or rejected recalculation, or while busy/stale.
+  const onPremiumPage = () => window === window.top && !state.stoppedAt && !state.unreadStep && !stopStepOn(stopSteps)
     && currentPage() === startPage && !stepChanged()
     && Array.isArray(premiumPages) && premiumPages.length > 0
     && (premiumHere({ premiumPages }, startPage) || premiumHere({ premiumPages }, null, startStep ?? stepKey()));
   const snapshotPremium = (force = false) => {
+    if (state.premiumRejected || state.agentPressed || window !== window.top || state.stoppedAt || state.unreadStep
+      || stopStepOn(stopSteps) || currentPage() !== startPage || stepChanged()) {
+      delete state.report.premium;
+      return;
+    }
     if (!force && !onPremiumPage()) return;
-    if (window !== window.top || state.stoppedAt || state.unreadStep || currentPage() !== startPage || stepChanged()) return;
     const p = pageBusy() ? null : readPremium(document.body.innerText ?? '');
     if (p) state.report.premium = p;
     else delete state.report.premium;
@@ -651,16 +661,17 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // The agent's Next changes the step without a new address: on a step that is the agent's the
     // fill does nothing more, and another step is left to a fill of its own.
     state.stoppedAt = stopStepOn(stopSteps);
-    if (state.stoppedAt) { state.report.stopStep = state.stoppedAt; if (!state.report.halted) halt(STOP_STEP_HALT); break; }
-    if (stepChanged()) break;
+    if (state.stoppedAt) { delete state.report.premium; state.report.stopStep = state.stoppedAt; if (!state.report.halted) halt(STOP_STEP_HALT); break; }
+    if (stepChanged()) { delete state.report.premium; break; }
     // The page moved on under the fill (the agent's Continue: Progressive draws the next page at
     // the same document): this fill's page is gone, and the next page gets a fill of its own. The
     // fill had read Rates as its next round and clicked Print, Email, Fax as the agent did (live
     // recording, 2026-10-23).
-    if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
+    if (currentPage() !== startPage) { delete state.report.premium; state.report.navigatedTo = currentPage(); break; }
     // The step can't be read, and the fill began there (a step it began on that turns unreadable
     // is the agent's Next mid-redraw: the step changed, above). Nothing is done or read here.
     if (steppedPlan && stepBars().length && stepKey() === '') {
+      delete state.report.premium;
       state.unreadStep = true;
       // Only this halt: the panel tries an automatic fill once more rather than pausing them all.
       if (!state.report.halted) { halt(STEP_UNREAD_HALT); state.report.stepUnread = true; }
@@ -831,10 +842,18 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       judged(Math.min(thisRound.lagBound, firstOpen(allPairs, place)));
       // A lookup (Import Data) may wait on its server without changing the page for a while.
       phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
-      if (!await settle(serverBacked ? { why: 'helper' } : { quietMs: 800, maxMs: 8000, why: 'helper' })) { stalled('The helper response did not settle. Review before retrying.'); break; }
+      if (!await settle(serverBacked ? { why: 'helper' } : { quietMs: 800, maxMs: 8000, why: 'helper' })) { delete state.report.premium; stalled('The helper response did not settle. Review before retrying.'); break; }
       if (!await verifyAction()) break;
-      if (currentPage() !== startPage) { state.report.navigatedTo = currentPage(); break; }
-      if (stepChanged()) break;
+      if (currentPage() !== startPage) {
+        if (state.agentPressed || stopStepOn(stopSteps) || state.premiumRejected) delete state.report.premium;
+        state.report.navigatedTo = currentPage();
+        break;
+      }
+      if (stepChanged()) {
+        if (state.agentPressed || stopStepOn(stopSteps) || state.premiumRejected) delete state.report.premium;
+        break;
+      }
+      snapshotPremium(premiumPages == null && state.report.premium !== undefined);
       continue;
     }
     const pairs = assign(controls, plan).filter(({ step, control }) => !state.handled.has(step.id) && !skippedField(control));
@@ -880,7 +899,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       const later = [];
       for (const pair of thisRound.todo) {
         const { step: planned, control: c, how, reworded } = pair;
-        if (stepChanged() || stopStepOn(stopSteps)) { thisRound.stepMoved = true; break; }
+        if (stepChanged() || stopStepOn(stopSteps)) { delete state.report.premium; thisRound.stepMoved = true; break; }
         const at = place.get(c);
         const provisional = at >= thisRound.bound;
         // Not judged this pass: kept for the second.
@@ -1122,6 +1141,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         let result;
         // The field as read after the answer (a redraw's own), for how it holds the answer.
         let judged = c;
+        // Any answer written to the page can invalidate an earlier rate snapshot.
+        delete state.report.premium;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, code: 'kit.exception', reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
         if (result.ok && batch) {
@@ -1381,6 +1402,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     const rates = thisRound.helperClicked && state.pendingAction?.verify === 'premium';
     if (thisRound.helperClicked) phase('helper', state.pendingAction?.label ?? state.report.actions.at(-1)?.text ?? null);
     if ((thisRound.helperClicked || batch) && !await settle(serverBacked ? { why: 'round' } : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000, why: 'round' })) {
+      delete state.report.premium;
       traceEnd(state.pendingAction);
       stalled(loads ? LOAD_HALT : 'The page did not settle after the helper.');
       break;
@@ -1408,8 +1430,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       } finally {
         mo.disconnect();
       }
-      if (state.report.halted) { traceEnd(state.pendingAction); break; }
-      if (!await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'load' })) { stalled(LOAD_HALT); break; }
+      if (state.report.halted) { delete state.report.premium; traceEnd(state.pendingAction); break; }
+      if (!await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'load' })) { delete state.report.premium; stalled(LOAD_HALT); break; }
     }
     // One that rates the quote on a page that isn't ExtJS (GEICO's Recalculate) shows nothing
     // busy at first: GEICO's loader shows only 3 s into a load. GEICO rated the fill's click 13 to
@@ -1425,26 +1447,33 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       while (Date.now() < until && !rated(state.pendingAction) && !state.report.halted && currentPage() === startPage && !stepChanged()) { traceRead(state.pendingAction); await pause(500); }
       if (state.pendingAction?.trace && rated(state.pendingAction)) { state.pendingAction.trace.premiumMs = Math.round(perfNow() - state.pendingAction.trace.at); traceRead(state.pendingAction); }
       // Stopped, or the agent edited, while it rated: nothing more is done here.
-      if (state.report.halted) { traceEnd(state.pendingAction); break; }
+      if (state.report.halted) { delete state.report.premium; traceEnd(state.pendingAction); break; }
       // A Stop during GEICO's redraw after the premium ends this wait too (the maintainer, 2026-11-07):
       // nothing more is put back or read for the answers.
-      if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated' })) { traceEnd(state.pendingAction); stalled(LOAD_HALT); break; }
-      if (state.report.halted) { traceEnd(state.pendingAction); break; }
+      if (!await settle({ quietMs: state.pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'rated' })) { delete state.report.premium; traceEnd(state.pendingAction); stalled(LOAD_HALT); break; }
+      if (state.report.halted) { delete state.report.premium; traceEnd(state.pendingAction); break; }
       traceRead(state.pendingAction);
     }
     if (!await verifyAction()) break;
     if (currentPage() !== startPage) {
+      if (state.agentPressed || stopStepOn(stopSteps) || state.premiumRejected || !thisRound.helperClicked) delete state.report.premium;
       state.report.navigatedTo = currentPage();
       // The wait above held until the new page was drawn and quiet (`settledAt`).
       if (serverBacked && thisRound.helperClicked) settledAt = { at: Date.now(), page: currentPage(), sig: signature() };
       break;
     }
-    if (stepChanged()) break;
+    if (stepChanged()) {
+      if (state.agentPressed || stopStepOn(stopSteps) || state.premiumRejected || !thisRound.helperClicked) delete state.report.premium;
+      break;
+    }
+    // A helper that stayed on the page (openCargo, doneCargo) may have turned rates stale; drop
+    // its pre-click snapshot right away rather than carrying it into the next round.
+    if (thisRound.helperClicked) snapshotPremium(premiumPages == null && state.report.premium !== undefined);
   }
   // The agent's step after the last round (Next clicked during its wait): stopped there too.
   if (!state.stoppedAt) {
     state.stoppedAt = stopStepOn(stopSteps);
-    if (state.stoppedAt) { state.report.stopStep = state.stoppedAt; if (!state.report.halted) halt(STOP_STEP_HALT); }
+    if (state.stoppedAt) { delete state.report.premium; state.report.stopStep = state.stoppedAt; if (!state.report.halted) halt(STOP_STEP_HALT); }
   }
 
   function revealedNow(a) {
@@ -1467,14 +1496,27 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // Clicked once a quote (`once`: GEICO's Recalculate, W43-31): never again, also when its
     // result didn't show; from here it is the agent's, and they're told.
     if (!accepted && a.once) {
+      delete state.report.premium;
       state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, code: 'action.unverified', reason: ONCE_UNVERIFIED });
       traceEnd(a);
       return false;
     }
-    if (accepted && a.verify === 'premium') snapshotPremium(premiumPages == null);
     // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
     // watched until KEPT_WATCH_MS after the click when they held.
-    if (accepted && a.kept && !await answersKept(a)) await watchKept(a);
+    let keptBroken = false;
+    if (accepted && a.kept) {
+      keptBroken = await answersKept(a);
+      if (!keptBroken) keptBroken = await watchKept(a);
+    }
+    if (accepted && a.verify === 'premium') {
+      if (keptBroken || state.report.halted) {
+        if (keptBroken) state.premiumRejected = true;
+        delete state.report.premium;
+      } else {
+        state.premiumRejected = false;
+        snapshotPremium(premiumPages == null);
+      }
+    }
     traceEnd(a);
     // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
     // screen but disabled is not gone.
@@ -1666,6 +1708,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     traceRead(a, now);
     const changed = keptChanged(a, now);
     if (!changed.length) return false;
+    // The page changed an answer during Recalculate: the rate on screen may not match the answers
+    // shown, even when no DOM put-back runs (an agent's answer was reset).
+    state.premiumRejected = true;
+    delete state.report.premium;
     const pairs = assign([...now.values()], plan);
     const given = new Set();
     // What the page showed instead, before anything is put back.
@@ -1720,9 +1766,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       traceRead(a, now);
       if (!keptChanged(a, now).length) continue;
       await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'kept' });
-      await answersKept(a);
-      return;
+      return await answersKept(a);
     }
+    return false;
   }
 
   // A choice never offered once the helper that shows every option was clicked (`orMost`: GEICO's
@@ -2037,6 +2083,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           // Its time spent meanwhile: nothing more is written.
           if (thisFill.timeUp()) return false;
           state.nudged.add(a.action);
+          delete state.report.premium;
           // A widget is picked again its own way (the page adapter's reselect), a field set again.
           const { widget } = pair.control;
           if (widget) adapter().reselect(widget, pair.control.el);
@@ -2359,6 +2406,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       const now = collectControls();
       const nowPairs = assign(now, plan);
       reconcile(now, nowPairs);
+      // Re-check the premium after the continue wait: if rates turned stale (or the page/step
+      // moved) while hold, halted, or changedSinceFilled skips pressButton below, drop it.
+      snapshotPremium(premiumPages == null && state.report.premium !== undefined);
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
       // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
       if (state.report.halted) {
@@ -2368,6 +2418,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // answer whose field no longer shows it is the agent's to check (no retry here): it moves
         // to `failed`, is marked, and Continue waits.
         const changed = changedSinceFilled(nowPairs);
+        if (changed.length) delete state.report.premium;
         for (const { previous, pair } of changed) {
           const item = { ...previous, code: /** @type {FailCode} */ ('answer.changed'), reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
           const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);

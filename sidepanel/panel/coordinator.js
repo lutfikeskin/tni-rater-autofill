@@ -606,6 +606,7 @@ const premiumsSeen = new Map();
 /** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames @param {any[]} results */
 function noteFillPremium(ctx, frames, results) {
   if (ctx.carrier.practice) return;
+  if (frames.some((f) => f?.stopStep)) return;
   const session = ctx.ids?.session ?? usage.currentSession()?.id;
   if (!session) return;
   const top = results?.find?.((r) => r.frameId === 0)?.result;

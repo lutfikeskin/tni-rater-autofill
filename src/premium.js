@@ -6,8 +6,9 @@
 //
 // Removable as one piece: this file, its imports and calls in sidepanel/panel/coordinator.js
 // (captureLayout, noteFillPremium) and src/kit/cursor.js, `quote_premium` in server/index.mjs
-// (EVENT_FIELDS and its check), and `quote_premiums` in scripts/lib/warehouse.mjs. Nothing else
-// reads the event. src/rates.js stays: the fill engine reads it too.
+// (EVENT_FIELDS and its check), and `quote_premiums` in scripts/lib/warehouse.mjs; src/kit/adapter.js
+// (`premiumReady`) also imports `readPremium` here and would restore its own check if this file
+// were removed. Nothing else reads the event. src/rates.js stays: the fill engine reads it too.
 
 // Rates the page itself says are out of date: no premium.
 import { RATES_STALE as STALE } from './rates.js';

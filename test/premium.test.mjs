@@ -16,8 +16,9 @@ test('the premium a carrier page quotes is read with its term and payments', () 
   // Words between the total, Due Today and the payments (a plan's label).
   assert.deepEqual(readPremium('12 Month Total Premium: $9,000.00\nPay plan: Monthly\nDue Today $1,500.00\nThen\n10 Additional Payments of $750.00'), { total: 9000, termMonths: 12, dueToday: 1500, payments: 10, payment: 750 });
   assert.deepEqual(readPremium('Estimated premium: $3,100'), { total: 3100, termMonths: null, dueToday: null, payments: null, payment: null });
-  // GEICO's bottom sticky bar (when 12 Month Total Premium isn't shown, e.g. Pay in Full).
+  // GEICO's bottom sticky bar (when 12 Month Total Premium isn't shown, e.g. Pay in Full or multi-pay).
   assert.deepEqual(readPremium('Quote\n$1,777.00\nDue Today\n$1,777.00\nTotal\nPrint Quote Proposal'), { total: 1777, termMonths: null, dueToday: 1777, payments: null, payment: null });
+  assert.deepEqual(readPremium('Quote\n$1,234.56\nDue Today\n$12,345.67\nTotal\nPrint Quote Proposal'), { total: 12345.67, termMonths: null, dueToday: 1234.56, payments: null, payment: null });
   // Full summary still wins over the sticky bar when both appear.
   assert.deepEqual(readPremium(`${GEICO}\nQuote $16,908.71 Due Today $101,287.00 Total`), { total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 });
 });
