@@ -499,6 +499,7 @@ const NTL_HOLD = ['ntlStillAdded'];
 // while the section is closed (saved Rates pages, 2026-10).
 const CARGO_SECTION = '[fieldref^="MotorTruckingCargoInput."]';
 const COMMODITY_ROW = '[fieldref="MTCargoCommodityCategories.MTCargolistOfCommodityCategories"], [fieldref="MTCargoCommodityCategories.MTCargoListOfCommodities"]';
+const GL_SECTION = '[fieldref^="GeneralLiabilityInput."]';
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -731,7 +732,7 @@ export const progressive = {
     // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
     // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
     // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).
-    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), loads: true, quietMs: 250, verify: 'revealed', label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
+    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], unlessSelector: GL_SECTION, afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), loads: true, quietMs: 250, verify: 'revealed', label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: { closed: 'gl' }, when: (r) => glRequested(r) && notNtl(r) },
     // Trailer interchange on the intake (TNI, 2026-10-28): once cargo and GL are done, the "+" in its
     // row, its questions, the trailer type tile once the number of non-owned trailers is in (a limit

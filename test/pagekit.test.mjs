@@ -11190,3 +11190,62 @@ test('Progressive CoveragesRates: a "+" whose section never appears clicks once 
   assert.equal(cont._clicked, undefined, 'Continue is not clicked while cargo never opened');
   assert.equal(report.advanced, undefined);
 });
+
+// Review of PR #593: when General Liability is already open on Rates without 'openGl' in
+// doneActions (agent clicked "+" before Fill, or a slow open landed after an earlier fill) and
+// q21D1 is not yet answered, Progressive has swapped "+" for "-". `openGl.unlessSelector` recognizes
+// the open section so no false glAddNote ("add it with +") is reported and no "+" is clicked; and
+// an exhausted `loads` helper whose "+" vanished never pushes a duplicate `missing` item either.
+test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswered reports no false openGl note and clicks no "+"', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'Oil and gas equipment' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: false, gl: true, glLimit: '$1M/$2M', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const clicks = [];
+  const glRow = new FakeNode('div');
+  const minus = new FakeNode('a', { attrs: { role: 'button' } });
+  minus.append(new FakeNode('span', { textContent: '-' }));
+  glRow.append(new FakeNode('div', { textContent: 'General Liability' }), minus);
+  h.document.body.append(glRow);
+  const cargoRow = new FakeNode('div');
+  const cargoPlus = new FakeNode('a', { attrs: { role: 'button' } });
+  cargoPlus.append(new FakeNode('span', { textContent: '+' }));
+  cargoPlus.onclick = () => clicks.push('cargo+');
+  cargoRow.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), cargoPlus);
+  h.document.body.append(cargoRow);
+  const income = radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } })));
+  const oilGas = radioGroup('Does the customer haul to or from oil and gas fields?',
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'glOilGas', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas' } })));
+  h.document.body.append(income, oilGas);
+
+  const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true, doneActions: [] });
+  assert.deepEqual(clicks, [], 'no "+" clicked when GL is already open');
+  assert.ok(report.filled.some((x) => x.key === 'ref:GeneralLiabilityInput.GeneralLiabilityTruckIncome' && x.shown === 'Yes'));
+  assert.ok(!report.noData.some((x) => x.label === 'General liability'), `no false glAddNote: ${JSON.stringify(report.noData)}`);
+
+  // Same with no "+" anywhere on the page (findButton(openGl) is null): still no false glAddNote.
+  cargoPlus.remove();
+  const noPlusReport = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true, doneActions: [] });
+  assert.ok(!noPlusReport.noData.some((x) => x.label === 'General liability'), `no false glAddNote without "+": ${JSON.stringify(noPlusReport.noData)}`);
+
+  // Exhausted `loads` helper whose button disappeared (swapped for "-") without drawing anything:
+  // reports the single unrevealed `loads` item, never a duplicate `missing` item.
+  const stale = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const liab = addExtText(stale, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+  Object.assign(liab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+  const row2 = new FakeNode('div');
+  const plus2 = new FakeNode('a', { attrs: { role: 'button' } });
+  plus2.append(new FakeNode('span', { textContent: '+' }));
+  plus2.onclick = () => { plus2.remove(); };
+  row2.append(new FakeNode('div', { textContent: 'General Liability' }), plus2);
+  stale.document.body.append(row2);
+  const staleReport = await stale.kit.fill(plan, { maxRounds: 6, replaceChoices: true, doneActions: [] });
+  const glNotes = staleReport.noData.filter((x) => x.label === 'General liability');
+  assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
+  assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
+});

@@ -387,8 +387,8 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const openCargo = glActions.find((s) => s.action === 'openCargo');
   assert.deepEqual([openCargo.loads, openCargo.quietMs, openCargo.verify, openCargo.label], [true, 250, 'revealed', 'Motor truck cargo']);
   const openGl = glActions.find((s) => s.action === 'openGl');
-  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label, openGl.loads, openGl.quietMs, openGl.verify],
-    ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability', true, 250, 'revealed']);
+  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.unlessSelector, openGl.label, openGl.loads, openGl.quietMs, openGl.verify],
+    ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], '[fieldref^="GeneralLiabilityInput."]', 'General liability', true, 250, 'revealed']);
   // FL live run, 2026-10-28: written '^\+$' it was /^+$/, which doesn't compile; the fill stopped there.
   assert.ok(new RegExp(openGl.text, 'i').test('+') && !new RegExp(openGl.text, 'i').test('x'));
   // Every helper's words compile, whichever carrier (a throw ends the whole fill on that page).
