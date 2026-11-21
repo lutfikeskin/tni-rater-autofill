@@ -93,3 +93,19 @@ test('mountClient draws before it returns', () => {
   });
   host.remove();
 });
+
+test("Escape cancels the file popover with focus outside it, and the panel's Escape never sees it", () => {
+  const calls = [];
+  render(<ClientHead act={acts(calls)} />);
+  act(() => { state.client = { name: 'Acme', title: '', meta: '', pdf: true, ask: { text: 'Clear Acme? Your corrections, checks and reports go.', yes: 'Clear this client' } }; });
+  let bubbled = 0;
+  const onBubble = () => { bubbled += 1; };
+  document.addEventListener('keydown', onBubble);
+  try {
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+  } finally {
+    document.removeEventListener('keydown', onBubble);
+  }
+  expect(calls).toEqual(['cancel']);
+  expect(bubbled).toBe(0);
+});

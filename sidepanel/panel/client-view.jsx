@@ -53,8 +53,11 @@ function usePopover(open, from, cancel) {
       if (box.current?.contains(e.target) || (from && document.getElementById(from)?.contains(e.target))) return;
       cancel();
     };
+    // Escape anywhere is Cancel while it is open, before the panel's own Escape (Settings) sees it.
+    const escape = (e) => { if (e.key === 'Escape') { e.stopPropagation(); cancel(); } };
     document.addEventListener('pointerdown', outside, true);
-    return () => document.removeEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape, true);
+    return () => { document.removeEventListener('pointerdown', outside, true); document.removeEventListener('keydown', escape, true); };
   }, [open, from, cancel]);
   return box;
 }
