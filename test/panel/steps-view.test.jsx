@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { Dock, Steps, mountDock, mountSteps } from '../../sidepanel/panel/steps-view.jsx';
 
-// Compact opposite-view link in #steps and the dock in React: what renderSteps and renderDock say
+// The two view tabs in #steps and the dock in React: what renderSteps and renderDock say
 // of them (state.steps, state.dock), and what their buttons ask the panel to do.
 
 let state;

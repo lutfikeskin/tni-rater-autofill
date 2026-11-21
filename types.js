@@ -1551,7 +1551,7 @@
  * @property {string} [progressSaid] accessible announcement string for the progress bar
  * @property {boolean} [hidden] whether `#dock` is hidden while Settings is open (`settingsOpen && button !== 'fill-stop'`)
  * @property {string} [report] report status attribute mirrored to `#dock[data-report]`
- * @property {boolean} [busy] mirrored to `#dock[aria-busy]` while a fill runs
+ * @property {boolean} [busy] while a fill runs: the dock's buttons other than Stop are disabled
  * @property {string} [paused] footer note when automatic filling is paused on the active tab
  */
 

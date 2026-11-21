@@ -1,5 +1,5 @@
-// Compact opposite-view link in #steps and the dock in React, drawn from what the panel says of
-// them: the intake/page link's tone, note and which view is shown (state.steps, renderSteps in
+// The two view tabs in #steps and the dock in React, drawn from what the panel says of
+// them: each tab's tone and note and which view is shown (state.steps, renderSteps in
 // coordinator.js), and the dock's one next thing to do and its button (state.dock, renderDock from
 // dockFor; #dock-eyebrow and #dock-title stay in the DOM with aria-hidden while #screen-head is
 // shown, and lift sr-only when #screen-title scrolls out of #view).
@@ -14,13 +14,10 @@ import { useAnnounce } from './announce.js';
 import { CHECKS } from './messages.js';
 import { headShown } from './screen-view.jsx';
 
-// Only the opposite-view link shows in #steps (no two-tab bar). On the page view (`!check.current`),
-// #step-check shows as a compact hairline link ("3 intake checks left" while open > 0, "Intake checks"
-// when all checked; #check-summary stays in the DOM for harnesses, sr-only + aria-hidden when open > 0
-// so the count isn't read twice) and #step-fill hides. On the check view (`check.current`), #step-fill
-// shows as a back link ("This page" with #fill-summary beside it) and #step-check hides. Once the page
-// is filled (`review`), #step-fill asks the panel to read the page again (act.confirm); before, it only
-// shows the page (act.fill).
+// Both tabs always show in #steps: #step-check ("Intake checks", its note #check-summary "N to check"
+// while checks are open) and #step-fill ("This page", its note #fill-summary); the tab in view wears
+// aria-current="page". Once the page is filled (`review`), #step-fill asks the panel to read the page
+// again (act.confirm); before, it only shows the page (act.fill).
 function Steps({ act }) {
   const said = useStore(panelStore, (s) => s.steps);
   const checksOpen = useStore(panelStore, (s) => s.checks?.open);
