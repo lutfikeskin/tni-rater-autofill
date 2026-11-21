@@ -356,3 +356,27 @@ test("the Review row keeps a refused AI answer amber, and a pending pick marked 
   const e = byLabel('Entity structure');
   expect(e.querySelector('.review-row-val')?.textContent).toBe('Corporation');
 });
+
+test("a pending AI pick the agent answered on the page shows the agent's answer in the Review row", () => {
+  const rec = mkNeed('Business entity');
+  rec.pending = true;
+  rec.aiCard = { kind: 'picked', choice: 'LLC' };
+  settleRow(rec, 'answered', null, 'Corporation');
+
+  state.reportFor = {
+    key: '1|/BusinessInfo||Business Info',
+    step: 'Business Info',
+    filled: 4,
+    list: [rec],
+    drawn: 0,
+  };
+
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), {
+    showAll: () => setAllAnswers(true),
+    showReview: () => setAllAnswers(false),
+  });
+
+  const row = /** @type {HTMLElement} */ (document.querySelector('#review-needs .review-row'));
+  expect(row.querySelector('.review-row-val')?.textContent).toBe('Corporation');
+  expect(row.textContent).not.toContain('LLC');
+});

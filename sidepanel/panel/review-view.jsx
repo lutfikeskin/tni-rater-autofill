@@ -64,7 +64,7 @@ function ReviewRow({ rec, group, onOpen }) {
       sub = rec.x?.why ?? '';
     }
     if (aiTone && aiKind !== 'rejected') {
-      shownVal = rec.pending ? (rec.aiCard?.choice || head.value || '') : (rec.aiPick || rec.aiCard?.choice || '');
+      shownVal = rec.pending ? ((rec.settled === 'marked' ? rec.aiCard?.choice : null) || head.value || '') : (rec.aiPick || rec.aiCard?.choice || '');
     }
   } else if (isMarked) {
     shownVal = REVIEW.markedValue;
