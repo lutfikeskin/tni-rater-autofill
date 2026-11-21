@@ -275,3 +275,48 @@ test('See all answers, Back to summary, opening a Review row via toggleRow, and 
   unmountRows();
   void Review;
 });
+
+test("the Review row says an unconfirmed AI pick as unconfirmed, keeps a tip amber, and shows a suggestion's choice", () => {
+  const rowA = mkNeed('Business entity');
+  rowA.pending = true;
+  rowA.aiCard = { kind: 'unconfirmed', choice: 'LLC' };
+  rowA.head = { value: 'LLC', tag: null };
+
+  const rowB = mkNeed('Prior carrier');
+  rowB.aiCard = { kind: 'tip', says: 'The AI assistant leaves this one to you.' };
+
+  const rowC = mkNeed('Entity structure');
+  rowC.aiCard = { kind: 'suggest', choice: 'Corporation' };
+  rowC.aiPick = 'Corporation';
+
+  state.reportFor = {
+    key: '1|/BusinessInfo||Business Info',
+    step: 'Business Info',
+    filled: 4,
+    list: [rowA, rowB, rowC],
+    drawn: 0,
+  };
+
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), {
+    showAll: () => setAllAnswers(true),
+    showReview: () => setAllAnswers(false),
+  });
+
+  const rows = [...document.querySelectorAll('#review-needs .review-row')];
+  const byLabel = (label) => /** @type {HTMLElement} */ (rows.find((r) => r.querySelector('.review-row-label')?.textContent === label));
+
+  const a = byLabel('Business entity');
+  expect(a.getAttribute('data-tone')).toBe('ai');
+  expect(a.textContent).toContain('AI answer sent, not confirmed: check the page');
+  expect(a.textContent).toContain('LLC');
+  expect(a.textContent).not.toContain('waiting for you');
+
+  const b = byLabel('Prior carrier');
+  expect(b.getAttribute('data-tone')).toBe('amber');
+  expect(b.querySelector('.review-row-val')).toBeNull();
+
+  const c = byLabel('Entity structure');
+  expect(c.getAttribute('data-tone')).toBe('ai');
+  expect(c.querySelector('.review-row-val')?.textContent).toBe('Corporation');
+  expect(c.textContent).not.toContain('Needs your answer');
+});

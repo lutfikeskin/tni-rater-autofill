@@ -228,6 +228,7 @@ export const REVIEW = {
   backToReview: '\u2039 Back to summary',
   fallbackLabel: 'Question',
   aiPickSub: 'The AI assistant\u2019s pick, waiting for you',
+  aiUnconfirmedSub: 'AI answer sent, not confirmed: check the page',
   aiRejectedSub: 'AI choice rejected \u2014 set or confirm on the page',
   aiSuggestSub: 'The AI assistant has a suggestion',
   markedValue: 'Marked done',
