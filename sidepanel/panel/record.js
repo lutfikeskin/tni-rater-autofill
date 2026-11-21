@@ -228,7 +228,7 @@ async function toggleDone(i, isDone) {
   flushSync(renderWarnings);
   renderSections();
   // Keyboard focus stays where the agent was: on the row's Undo (full list), the next open card's
-  // first control (focus mode), or the opposite-view link.
+  // first control (focus mode), or the view tabs.
   const row = document.querySelector(`#warnings [data-check="${i}"]`);
   (row?.querySelector('button') ?? document.querySelector('#warnings :is(input, select, textarea, button)') ?? $('step-fill') ?? $('step-check'))?.focus();
 }
