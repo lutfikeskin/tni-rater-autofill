@@ -13187,6 +13187,7 @@ test('wire() connects tabs.onRemoved, pagehide and visibilitychange to flushPend
     captureFromShortcut: noop, noteCaptured: noop, toggleRecording: noop, onTraceMessage: noop,
     recordedTabUpdated: noop, recordedTabRemoved: noop, renderUnfinished: noop, wireUsage: noop, noteStep: noop,
     onRecorderMessage: noop, noteLiveItems: noop, onPanelMessage: noop, refreshTab: noop, onTabUpdated: noop,
+    mountSiteRule: noop, setJumpToPath: noop, mountReview: noop, mountScreen: noop, flushSync: (fn) => fn(), jumpTo: noop, scrollBehavior: noop, setAllAnswers: noop, setChecksAll: noop, summaryNow: noop, toggleRow: noop,
     startRecording: noop, noteRecording: noop, stopRecording: noop, recoverRecording: noop, discardUnfinished: noop,
   };
   vm.runInNewContext(`${extractFunction('wire')}\nwire();`, wireCtx);
