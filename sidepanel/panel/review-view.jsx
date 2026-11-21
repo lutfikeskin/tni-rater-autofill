@@ -46,7 +46,7 @@ function ReviewRow({ rec, group, onOpen }) {
   const head = reviewRowHead(rec);
   const isMarked = rec.type === 'need' && rec.settled === 'marked';
   const aiKind = rec.aiCard?.kind;
-  const aiTone = group === 'needs' && Boolean(rec.pending || rec.aiPick || ['picked', 'unconfirmed', 'suggest', 'rejected'].includes(aiKind));
+  const aiTone = group === 'needs' && aiKind !== 'error' && Boolean(rec.pending || rec.aiPick || ['picked', 'unconfirmed', 'suggest', 'rejected'].includes(aiKind));
 
   let sub = '';
   let shownVal = '';
@@ -58,13 +58,13 @@ function ReviewRow({ rec, group, onOpen }) {
       sub = REVIEW.aiPickSub;
     } else if (aiKind === 'rejected') {
       sub = REVIEW.aiRejectedSub;
-    } else if (rec.aiPick || aiKind === 'suggest') {
+    } else if ((rec.aiPick && aiKind !== 'error') || aiKind === 'suggest') {
       sub = REVIEW.aiSuggestSub;
     } else {
       sub = rec.x?.why ?? '';
     }
     if (aiTone && aiKind !== 'rejected') {
-      shownVal = rec.pending ? (head.value || '') : (rec.aiPick || rec.aiCard?.choice || '');
+      shownVal = rec.pending ? (rec.aiCard?.choice || head.value || '') : (rec.aiPick || rec.aiCard?.choice || '');
     }
   } else if (isMarked) {
     shownVal = REVIEW.markedValue;

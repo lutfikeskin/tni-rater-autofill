@@ -320,3 +320,39 @@ test("the Review row says an unconfirmed AI pick as unconfirmed, keeps a tip amb
   expect(c.querySelector('.review-row-val')?.textContent).toBe('Corporation');
   expect(c.textContent).not.toContain('Needs your answer');
 });
+
+test("the Review row keeps a refused AI answer amber, and a pending pick marked done still shows the AI's choice", () => {
+  const rowD = mkNeed('Business entity', { why: 'The page refused the answer' });
+  rowD.aiCard = { kind: 'error', text: "The page didn't take the AI answer (refused). Answer it on the page." };
+  rowD.aiPick = 'LLC';
+
+  const rowE = mkNeed('Entity structure');
+  rowE.pending = true;
+  rowE.aiCard = { kind: 'picked', choice: 'Corporation' };
+  settleRow(rowE, 'marked');
+
+  state.reportFor = {
+    key: '1|/BusinessInfo||Business Info',
+    step: 'Business Info',
+    filled: 4,
+    list: [rowD, rowE],
+    drawn: 0,
+  };
+
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), {
+    showAll: () => setAllAnswers(true),
+    showReview: () => setAllAnswers(false),
+  });
+
+  const rows = [...document.querySelectorAll('#review-needs .review-row')];
+  const byLabel = (label) => /** @type {HTMLElement} */ (rows.find((r) => r.querySelector('.review-row-label')?.textContent === label));
+
+  const d = byLabel('Business entity');
+  expect(d.getAttribute('data-tone')).toBe('amber');
+  expect(d.textContent).toContain('The page refused the answer');
+  expect(d.textContent).not.toContain('has a suggestion');
+  expect(d.querySelector('.review-row-val')).toBeNull();
+
+  const e = byLabel('Entity structure');
+  expect(e.querySelector('.review-row-val')?.textContent).toBe('Corporation');
+});
