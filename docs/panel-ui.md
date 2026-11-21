@@ -33,9 +33,9 @@ Don't add `role="status"` to an element that is drawn hidden or mounted with its
 
 ## Over the panel
 
-Four things cover part of the panel: the PDF sheet, the quote summary and client details (sheets, `role="dialog"` with `aria-modal="true"`), and Settings, which covers the view but leaves the header in use. The keyboard over them is one function, `overlayKey` in [overlay-keys.js](../sidepanel/panel/overlay-keys.js), which `sidepanel.js` calls on every keydown with the layers in that order:
+Five things cover part of the panel: the PDF sheet, the quote summary and client details (sheets, `role="dialog"` with `aria-modal="true"`), the file popover (`#file-confirm`, counted only while it shows: Settings hides it), and Settings, which covers the view but leaves the header in use. The keyboard over them is one function, `overlayKey` in [overlay-keys.js](../sidepanel/panel/overlay-keys.js), which `sidepanel.js` calls on every keydown with the layers in that order:
 
-- Escape closes the topmost layer open, and only that one, through the panel's own close (`closePdf`, `closeSummary`, `closeDetails`, `closeSettings`), which gives focus back to the button that opened it.
+- Escape closes the topmost layer open, and only that one, through the panel's own close (`closePdf`, `closeSummary`, `closeDetails`, the popover's Cancel, `closeSettings`), which gives focus back to the button that opened it.
 - Tab and Shift+Tab stay inside an open sheet, wrapping at its ends; Tab from outside it goes to its first stop. The stops are links, enabled buttons and boxes, `summary` and elements with a `tabindex`, that are shown (`checkVisibility`). Settings isn't modal: Tab leaves it as it would anywhere.
 - Opening a sheet moves focus into it (`openDetails`, `openSummary`, `openPdf`). Opening Settings leaves focus on its button, which says `aria-expanded="true"`; the next Tab goes into it.
 - Settings closed with focus inside it gives focus back to `#settings-btn`, however it closed: Done, Escape, its button (`closeSettings`), or a new intake loaded while it was open (`showScreen`).

@@ -95,6 +95,8 @@ function wire() {
   // answers go in is refused (file-drop.js). Clear, and New quote: always asked first.
   const replacing = fileReplacer({ state, load: (file) => loadFile(file), pick: () => $('file').click(), ask: (text, yes) => askFile('replace', text, yes),
     note: (text) => clientNote(text), work: workSaid });
+  // The file popover's Cancel (its button, a click outside it, and Escape in overlayKey's list below).
+  const cancelAskFile = () => { state.fileConfirm = null; replacing.answered(false); render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); };
   mountClient($('client-root'), {
     details: () => (state.detailsOpen ? closeDetails() : openDetails()),
     pdf: () => openPdf(),
@@ -108,7 +110,7 @@ function wire() {
       const name = state.intake?.record.applicant.name || state.intake?.record.applicant.owner1 || 'this client';
       askFile('clear', `Clear ${name}? Your corrections, checks and reports go. The carrier's site isn't changed.`, 'Clear this client');
     },
-    cancel: () => { state.fileConfirm = null; replacing.answered(false); render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); },
+    cancel: cancelAskFile,
     yes: () => {
       const what = state.fileConfirm;
       state.fileConfirm = null;
@@ -190,12 +192,14 @@ function wire() {
     if (w !== width && state.pdf && width) drawPdf();
     width = w;
   }).observe($('pdf-scroll'));
-  // Escape closes the PDF sheet, the quote summary, the client details drawer, then Settings; the
+  // Escape closes the PDF sheet, the quote summary, the client details drawer, the file popover
+  // (while it shows: Settings hides it), then Settings; the
   // sheet or the drawer keeps keyboard focus while it's open (overlay-keys.js).
   document.addEventListener('keydown', (e) => overlayKey(e, [
     { el: $('pdf-view'), open: !!state.pdf, close: closePdf, modal: true },
     { el: $('summary-view'), open: !!state.summary, close: closeSummary, modal: true },
     { el: $('details-view'), open: !!state.detailsOpen, close: closeDetails, modal: true },
+    { el: $('file-confirm'), open: !!state.fileConfirm && !$('file-confirm')?.closest('[hidden]'), close: cancelAskFile },
     { el: $('settings'), open: !!state.settingsOpen, close: closeSettings },
   ]));
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });

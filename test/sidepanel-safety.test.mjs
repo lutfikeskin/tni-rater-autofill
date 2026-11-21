@@ -10988,6 +10988,9 @@ test('the PDF sheet: what openPdf and drawPdf say, the page copied onto the shee
   assert.match(wire, /mountPdf\(\$\('pdf-view'\), \{\s+close: \(\) => closePdf\(\),\s+tab: \(\) => openPdfInTab\(\),\s+focus: \(\) => pdfZoom\(Math\.max\(state\.pdf\?\.zoom \?\? 1, PDF_FOCUS_ZOOM\), \{ focus: true \}\),\s+page: \(step\) => pdfPage\(step\),\s+zoomIn: \(\) => pdfZoom\(PDF_ZOOMS\.find\(\(z\) => z > state\.pdf\?\.zoom\)\),\s+zoomOut: \(\) => pdfZoom\(PDF_ZOOMS\.findLast\(\(z\) => z < state\.pdf\?\.zoom\)\),\s+fit: \(\) => pdfZoom\(1\),\s+\}\);\s+pdfPan\(\$\('pdf-scroll'\)\);/);
   // The sheet keeps focus and Escape closes it, as before: #pdf-view stays the page's host.
   assert.match(wire, /document\.addEventListener\('keydown', \(e\) => overlayKey\(e, \[\n\s+\{ el: \$\('pdf-view'\), open: !!state\.pdf, close: closePdf, modal: true \},/);
+  // The file popover is a layer too, after the sheets and before Settings, counted only while it shows.
+  assert.match(wire, /\{ el: \$\('details-view'\), open: !!state\.detailsOpen, close: closeDetails, modal: true \},\n\s+\{ el: \$\('file-confirm'\), open: !!state\.fileConfirm && !\$\('file-confirm'\)\?\.closest\('\[hidden\]'\), close: cancelAskFile \},\n\s+\{ el: \$\('settings'\),/);
+  assert.match(wire, /cancel: cancelAskFile,/);
 });
 
 // The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three
