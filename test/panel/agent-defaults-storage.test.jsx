@@ -1,4 +1,7 @@
 // @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
 import { expect, test, vi } from 'vitest';
 
 // Agents' own defaults when Chrome's storage refuses a write (docs/agent-defaults-spec.md, phase 5):
@@ -32,6 +35,17 @@ const usage = await import('../../sidepanel/usage-log.js');
 const { answerDefaults, defaultsActs, defaultsHold, initialsChanged, loadDefaults, quoteStarting, refreshDefaults, setDefaultsShown } = await import('../../sidepanel/panel/agent-defaults/store.js');
 const { overlayFor } = await import('../../src/agent-defaults/index.js');
 
+function extractLoadFile() {
+  const src = fs.readFileSync(path.resolve(process.cwd(), 'sidepanel/panel/intake.js'), 'utf8');
+  const start = src.indexOf('async function loadFile(');
+  let depth = 0, i = src.indexOf(') {', start) + 2;
+  for (; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}' && --depth === 0) break;
+  }
+  return src.slice(start, i + 1);
+}
+
 test('a write Chrome refuses changes nothing: the quote stays held, and the overlay follows what was saved', async () => {
   await usage.saveSettings({ agent: 'JK' });
   await loadDefaults();
@@ -60,6 +74,7 @@ test('a write Chrome refuses changes nothing: the quote stays held, and the over
   expect(overlayFor('geico')).toBeNull();
   failing.delete('agentDefaultsQuote');
   await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
   expect(overlayFor('geico')).toBeTypeOf('function');
 
   // An amount that can't be saved: the panel keeps the saved one, and so does the quote.
@@ -158,4 +173,102 @@ test('the developer\'s switch: a refused write changes nothing, a refused read d
   }
   expect(panelState.defaultsOn).toBe(true);
   await setDefaultsShown(true);
+});
+
+test('loadFile holds defaults while loading and releases the loading hold when an awaited step after quoteStarting rejects', async () => {
+  failing.clear();
+  await usage.saveSettings({ agent: 'JK' });
+  await loadDefaults();
+  expect(panelState.defaultsOn).toBe(true);
+  const acts = defaultsActs();
+  await acts.create('Jordan K.');
+  await acts.set('medPay', 2_000);
+  panelState.intake = { record: {} };
+  usage.startSession('intake-before');
+  refreshDefaults();
+  await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
+
+  const runLoad = (intakeId, overrides = {}) => {
+    const context = {
+      state: panelState,
+      usage,
+      quoteStarting,
+      refreshDefaults,
+      $: () => ({ hidden: false }),
+      showLoadError: (msg) => { throw new Error(msg); },
+      pdfjs: {},
+      readIntakeFields: async () => ({ synthetic: true }),
+      readIntakePlaces: async () => null,
+      readIntake: () => ({ record: {}, warnings: [] }),
+      intakeSummary: async () => ({ intakeId }),
+      testIntakes: { get: async () => [] },
+      stopFillFirst: async () => {},
+      flushPendingTextChanges: () => {},
+      profileTimer: null,
+      logProfile: () => false,
+      stopRecording: async () => {},
+      settleQuoteEntries: async () => {},
+      clearTimeout: () => {},
+      forgetJournals: async () => {},
+      cancelLayouts: () => {},
+      holdLayouts: () => {},
+      resetViews: () => {},
+      fillsHeld: async () => false,
+      keepWork: () => {},
+      forgetKeptWork: async () => {},
+      keptWorkCleared: async () => null,
+      restoreKeptWork: async () => null,
+      holdKeptWork: () => {},
+      firstView: () => 'all',
+      dropReports: () => {},
+      workSaid: () => '',
+      clientNote: () => {},
+      keepPdf: async () => {},
+      firstUnits: () => ({ vehicles: 0, drivers: 0, trailers: 0 }),
+      doneRestored: new Set(),
+      discardAiSuggestions: () => {},
+      store: { set: async () => {} },
+      persistAiPending: async () => {},
+      restoreAiPending: async () => {},
+      pruneAgentRecords: async () => [],
+      platformOf: () => ({ os: null, chrome: null }),
+      logSettings: async () => {},
+      uploadNow: () => {},
+      save: async () => {},
+      render: () => {},
+      refreshTab: () => {},
+      reviewIntake: () => {},
+      ...overrides,
+    };
+    vm.runInNewContext(extractLoadFile(), context);
+    return context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
+  };
+
+  // 1) A step after quoteStarting() rejects before startSession: held while in flight, then released.
+  let enteredKeepPdf, rejectKeepPdf;
+  const keepPdfReached = new Promise((resolve) => { enteredKeepPdf = resolve; });
+  const keepPdfGate = new Promise((_, reject) => { rejectKeepPdf = reject; });
+  const failedBeforeSession = runLoad('intake-reject-1', {
+    keepPdf: () => { enteredKeepPdf(); return keepPdfGate; },
+  });
+  await keepPdfReached;
+  // Intended hold while the load is in progress: defaultsHold() is true with no card yet.
+  expect(defaultsHold()).toBe(true);
+  expect(overlayFor('geico')).toBeNull();
+  expect(panelState.cards.defaults).toBeNull();
+  rejectKeepPdf(new Error('keepPdf failed'));
+  await expect(failedBeforeSession).rejects.toThrow('keepPdf failed');
+  // Previously deadlocked: defaultsHold() stayed true with panelState.cards.defaults === null.
+  expect({ hold: defaultsHold(), card: panelState.cards.defaults }).toEqual({ hold: false, card: null });
+
+  // 2) A step after quoteStarting() and startSession rejects (e.g. save()): the new quote's card
+  // is shown instead of leaving defaultsHold() stuck true with no card to answer.
+  await expect(runLoad('intake-reject-2', {
+    save: async () => { throw new Error('save failed'); },
+  })).rejects.toThrow('save failed');
+  expect(defaultsHold()).toBe(true);
+  expect(panelState.cards.defaults?.title).toBe('Fill this quote with Jordan K.\'s defaults?');
+  await answerDefaults('mine');
+  expect(defaultsHold()).toBe(false);
 });

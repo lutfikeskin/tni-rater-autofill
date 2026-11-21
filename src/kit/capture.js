@@ -4,10 +4,10 @@
 import { oneLine } from './text.js';
 import {
   deepQueryAll, collectControls, fieldKey, shownNow, hasValue, describe, optionsOf,
-  labelFor, sectionOf, cssPath, selectedText, otherStep, getHiddenOk, setHiddenOk,
+  labelFor, sectionOf, cssPath, selectedText, getHiddenOk, setHiddenOk, stepKey,
   keyIndex, controlOf, hiddenKeys, isVisible, buttonText,
 } from './dom.js';
-import { adapter, withAdapter, currentPage, stepKey } from './adapter.js';
+import { adapter, withAdapter, currentPage } from './adapter.js';
 import { redactionPattern } from '../redaction.js';
 import { agreesWith, assign } from './apply.js';
 import { getRunning } from './cursor.js';
@@ -120,32 +120,6 @@ export function capture(plan, redact = []) {
 }
 
 /**
- * Computes a 53-bit cyrb53 fingerprint receipt of visible control states in the top frame.
- * @returns {string | null}
- */
-export function receipt() {
-  if (window !== window.top) return null;
-  const fillHidden = getHiddenOk();
-  let controls;
-  try {
-    setHiddenOk([]);
-    controls = collectControls();
-  } finally {
-    setHiddenOk(fillHidden);
-  }
-  const text = controls.filter((c) => !otherStep(c.el)).map((c) => `${fieldKey(c)}\u0001${c.label ?? ''}\u0001${shownNow(c)}`).join('\u0002');
-  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return `r1-${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
-}
-
-/**
  * Reads back field values and agreement for a set of items.
  * @param {Array<{ key: string, label?: string, stepId?: string | null }>} items
  * @param {PlanStep[]} [steps]
@@ -190,14 +164,6 @@ export function present(items, hidden = [], steps = []) {
       ...(sure ? {} : { current: null, shown: null, agrees: null, shared: true }),
     }]);
   });
-}
-
-/**
- * Builds a string signature of all visible controls on screen.
- * @returns {string}
- */
-export function signature() {
-  return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
 }
 
 /**

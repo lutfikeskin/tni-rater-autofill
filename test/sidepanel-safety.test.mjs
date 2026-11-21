@@ -10,25 +10,29 @@ import { fileURLToPath } from 'node:url';
 import { assistContextKey, pseudonymizeChoices, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { RELEASED_TO_AGENTS, setAgentDefaultsOn, setActiveDefaults } from '../src/agent-defaults/index.js';
-import { fillEvents, loggedTimeline, sha256Hex, knownStep } from '../src/usage.js';
+import { fieldChangeEvent, fillEvents, loggedTimeline, redactor, sha256Hex, knownStep } from '../src/usage.js';
+import { notePremium, premiumHere, readPremium, PREMIUM_EVENT } from '../src/premium.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, unitExtraRowsItem, advanceFor } from '../src/units.js';
 import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
-import { checkHolds, intakeNotes, rederive } from '../src/normalize.js';
+import { checkHolds, intakeNotes, noNumberEdit, normalizeIntake, rederive } from '../src/normalize.js';
 import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
 import { get as getPath, set as setPath } from '../src/util.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
+import { productOf } from '../src/products.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
+import { layoutTransitions } from '../scripts/lib/transitions.mjs';
+import * as realUsageLog from '../sidepanel/usage-log.js';
 import { PANEL_SOURCE } from './panel-source.mjs';
 
 // What the panel says (sidepanel/panel/messages.js) is in every vm context the tests run a panel
 // function in, as the panel's other imports are given there: the real words, not stubs. A context's
 // own value of a name wins.
-const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, ...context });
+const withMessages = (context = {}) => Object.assign(context, { ...MESSAGES, productOf, ...context });
 const vm = { ...nodeVm,
   createContext: (context, ...rest) => nodeVm.createContext(withMessages(context), ...rest),
   runInNewContext: (code, context, ...rest) => nodeVm.runInNewContext(code, withMessages(context), ...rest) };
@@ -157,13 +161,20 @@ function extractFunction(name) {
           keepJournal: '() => Promise.resolve()', forgetJournals: '() => Promise.resolve()', restoreJournal: 'async () => {}',
           // The agent's corrections and checks kept on this computer (FLOW-17) have their own test:
           // elsewhere nothing is kept or brought back.
-          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
+          forgetKeptWork: 'async () => []', restoreKeptWork: 'async () => null', keepKeptWork: 'async () => {}', editChecks: '() => {}', ownerDrivesAnswered: '() => false', noNumberEdit: '() => false', clearKeptWork: 'async () => "cleared"', keptWorkCleared: 'async () => ({ known: true, after: -Infinity })', holdKeptWork: '() => {}',
           // A page a hold kept back (resumeHeldFill) has its own test: elsewhere none waits.
-          resumeHeldFill: '() => {}' };
+          resumeHeldFill: '() => {}',
+          // Settled free-text field_change coalescing (#587) has its own tests; unrelated extracted
+          // functions no-op unless the harness provides flushPendingTextChanges.
+          flushPendingTextChanges: '() => {}',
+          // Fill-time premium logging (#584, #585) has its own tests; unrelated extracted logFill /
+          // autoFill tests no-op unless the harness provides noteFillPremium.
+          noteFillPremium: '() => {}' };
+        if ((name === 'onRecorderMessage' || name === 'logFieldChanges' || name === 'registerTextChangeFlush') && !/function flushPendingTextChanges\(/.test(source)) source += `\n${extractFunction('flushPendingTextChanges')}`;
         for (const [stub, fallback] of Object.entries(defaultsStubs)) {
           // Right after the function, before its helpers, so a test keeping only its first function
           // (split at a new line's `function `) keeps it.
-          if (new RegExp(`\\b${stub}\\(`).test(source)) source += `\nvar ${stub} = globalThis.${stub} ?? (${fallback});`;
+          if (name !== stub && new RegExp(`\\b${stub}\\(`).test(source) && !new RegExp(`function ${stub}\\(`).test(source)) source += `\nvar ${stub} = globalThis.${stub} ?? (${fallback});`;
         }
         if (name !== 'persistGuardedEdits' && /\bpersistGuardedEdits\(/.test(source)) source += `\n${extractFunction('persistGuardedEdits')}`;
         // The filling switches are read through switchOn (the harness's boxes stand in for Settings).
@@ -176,9 +187,11 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey', 'logFieldChanges', 'isCoalescedText', 'formsKeyOf', 'samePendingText', 'shouldFlushBefore']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
+        // Free-text field_change coalescer state (sidepanel/panel/usage.js, #587).
+        if (/\bpendingText\b/.test(source) && !/let pendingText =/.test(source)) source += '\nvar TEXT_SETTLE_MS = globalThis.TEXT_SETTLE_MS ?? 4000;\nvar pendingText = null;\nvar pendingTextTimer = null;';
         // A carrier's own rules fingerprint is the build's (CARR-14): none here, unless the harness gives one.
         if (source.includes('carrierRulesOf(') && !source.includes('const carrierRulesOf =')) source += '\nvar carrierRulesOf = globalThis.carrierRulesOf ?? (() => undefined);';
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -2357,7 +2370,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
-    normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
+    readIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     profileTimer: null, logProfile: () => false,
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {}, fillsHeld: async () => false };
@@ -2916,6 +2929,198 @@ test('a correction brought back after a restart raises its own checks again, and
   await context.restoreKeptWork(again);
   assert.deepEqual(JSON.parse(JSON.stringify([again.warnings.map((w) => w.code), [...again.done].sort()])), [['drivers.owner-excluded', 'coverage.ntl-cargo'], [0, 1]]);
   assert.deepEqual(JSON.parse(JSON.stringify(replayed)), [['answer', 'coverage.ntl'], ['primary'], ['owner', { check: { i: 0, done: true } }]]);
+});
+
+// Typing "No" / "None" / "N/A" into USDOT or MC empties the box and sets noDot/noMc + dot.none/mc.none
+// (noNumberEdit). Kept work keeps the No as 'No' so a browser-restart restore reproduces the record
+// state, the "No" intake note (whatever word was typed), and carrier answers — while a number or an
+// emptied box keeps its own meaning.
+test('USDOT or MC typed as No survives kept-work restore with its "No" note and carrier answers; a number or emptied box keeps its own meaning', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); },
+    remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = {
+    keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf,
+    get: getPath, set: setPath, noNumberEdit, rederive, JSON, Date, structuredClone, keptHeld: new Set(),
+  };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork', 'changedFromRead'].map(extractFunction).join('\n'), context);
+
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { readIntakeFields } = await import('../src/intake.js');
+  const sampleRaw = await readIntakeFields(pdfjs, new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url))));
+  const baseRaw = { ...sampleRaw, dot_number: '', mc_number: '', mc_dot_60days: '' };
+  const load = (id, overrides = {}) => {
+    const res = normalizeIntake({ ...baseRaw, ...overrides }, { today: new Date('2026-09-30') });
+    return { ...res, intakeId: id, done: [], agentEdited: [], intakeRecord: structuredClone(res.record) };
+  };
+  const editLive = (intake, path, value) => {
+    setPath(intake.record, path, value);
+    noNumberEdit(intake, path);
+    const edited = new Set(intake.agentEdited);
+    edited.add(path);
+    intake.agentEdited = [...edited];
+    rederive(intake.record, path, { keep: edited, intake });
+  };
+  const progressiveDot = (r) => buildPlan(r, progressive).find((s) => s.q === '1ED')?.value;
+  const geicoDot = (r) => buildPlan(r, geico).find((s) => s.name === 'Has a USDOT number')?.value;
+  const amwinsMc = (r) => buildPlan(r, amwins).find((s) => s.selector === '#hasMcNumber')?.value;
+
+  // 1. Typed "No", "None", "N/A" into USDOT: restored as 'No' with the "No" note whatever word was typed.
+  for (const typed of ['No', 'None', 'N/A']) {
+    const id = `dot-${typed}`;
+    const live = load(id);
+    editLive(live, 'applicant.dot', typed);
+    await context.keepKeptWork(live);
+    assert.deepEqual(memory[`${KEPT_WORK_PREFIX}${id}`].edits, [['applicant.dot', 'No']], typed);
+    const restored = load(id);
+    const counts = await context.restoreKeptWork(restored);
+    assert.deepEqual(JSON.parse(JSON.stringify(counts)), { edits: 1, checks: 0 }, typed);
+    assert.deepEqual([restored.record.applicant.dot, restored.record.applicant.noDot], [null, true], typed);
+    assert.deepEqual([...restored.agentEdited], ['applicant.dot'], typed);
+    assert.equal(restored.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.', typed);
+    assert.equal(progressiveDot(restored.record), 'No - and the customer will not have a USDOT number', typed);
+    assert.equal(geicoDot(restored.record), 'No', typed);
+  }
+
+  // 2. Typed "None" into MC: restored as 'No' with the "No" note and AmWINS answer false.
+  const liveMc = load('mc-none');
+  editLive(liveMc, 'applicant.mc', 'None');
+  await context.keepKeptWork(liveMc);
+  assert.deepEqual(memory[`${KEPT_WORK_PREFIX}mc-none`].edits, [['applicant.mc', 'No']]);
+  const restoredMc = load('mc-none');
+  await context.restoreKeptWork(restoredMc);
+  assert.deepEqual([restoredMc.record.applicant.mc, restoredMc.record.applicant.noMc], [null, true]);
+  assert.equal(restoredMc.warnings.find((w) => w.code === 'mc.none')?.msg, 'MC # "No": the client has no MC number.');
+  assert.equal(amwinsMc(restoredMc.record), false);
+
+  // 3. Counterexample: a real USDOT number restored (over a PDF that said "No").
+  const liveNum = load('dot-num-over-no', { dot_number: 'No' });
+  editLive(liveNum, 'applicant.dot', '7654321');
+  await context.keepKeptWork(liveNum);
+  const restoredNum = load('dot-num-over-no', { dot_number: 'No' });
+  await context.restoreKeptWork(restoredNum);
+  assert.deepEqual([restoredNum.record.applicant.dot, restoredNum.record.applicant.noDot], ['7654321', null]);
+  assert.match(restoredNum.warnings.find((w) => w.code === 'dot.none')?.msg ?? '', /^No longer applies after your edit:/);
+  assert.equal(progressiveDot(restoredNum.record), 'Yes - the customer has a USDOT number');
+
+  // 4. Counterexample: emptying the USDOT box when the PDF had a number leaves noDot null and adds no note.
+  const liveCleared = load('dot-cleared', { dot_number: '1234567' });
+  editLive(liveCleared, 'applicant.dot', null);
+  await context.keepKeptWork(liveCleared);
+  assert.deepEqual(memory[`${KEPT_WORK_PREFIX}dot-cleared`].edits, [['applicant.dot', null]]);
+  const restoredCleared = load('dot-cleared', { dot_number: '1234567' });
+  await context.restoreKeptWork(restoredCleared);
+  assert.deepEqual([restoredCleared.record.applicant.dot, restoredCleared.record.applicant.noDot], [null, null]);
+  assert.equal(restoredCleared.warnings.find((w) => w.code === 'dot.none'), undefined);
+
+  // 5. Counterexample: emptying a box whose PDF already said "No" keeps the earlier No,
+  //    and legacy kept work (['applicant.dot', null]) written by the released build also restores cleanly.
+  const liveEmptyOnNo = load('dot-empty-on-no', { dot_number: 'No' });
+  editLive(liveEmptyOnNo, 'applicant.dot', null);
+  await context.keepKeptWork(liveEmptyOnNo);
+  const restoredEmptyOnNo = load('dot-empty-on-no', { dot_number: 'No' });
+  await context.restoreKeptWork(restoredEmptyOnNo);
+  assert.deepEqual([restoredEmptyOnNo.record.applicant.dot, restoredEmptyOnNo.record.applicant.noDot], [null, true]);
+  assert.equal(restoredEmptyOnNo.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.');
+
+  memory[`${KEPT_WORK_PREFIX}legacy-null`] = { at: Date.now(), edits: [['applicant.dot', null]], checks: [] };
+  const legacyRestored = load('legacy-null', { dot_number: 'No' });
+  await context.restoreKeptWork(legacyRestored);
+  assert.deepEqual([legacyRestored.record.applicant.dot, legacyRestored.record.applicant.noDot], [null, true]);
+  assert.equal(legacyRestored.warnings.find((w) => w.code === 'dot.none')?.msg, 'USDOT # "No": the client has no USDOT number.');
+});
+
+// restoreKeptWork must pass intake to rederive (as agentEdit does) so fixed checks (id.invalid,
+// phone.invalid, dob.invalid, claims.blank, etc.) retire to info instead of staying open after a
+// browser restart, and derived warnings (like prior.carrier-is-quoted) are raised again.
+test('a correction brought back after a restart settles its intake checks and re-raises derived warnings as agentEdit does', async () => {
+  const memory = {};
+  const local = {
+    get: async (k) => Object.fromEntries([].concat(k).filter((x) => x in memory).map((x) => [x, structuredClone(memory[x])])),
+    set: async (o) => { Object.assign(memory, structuredClone(o)); },
+    remove: async (k) => { for (const x of k) delete memory[x]; },
+  };
+  const context = {
+    keptWorkLocal: local, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf,
+    get: getPath, set: setPath, noNumberEdit, rederive, checkHolds, quotedCarrierPolicy,
+    state: { tab: { carrier: { id: 'progressive' } } },
+    JSON, Date, structuredClone, keptHeld: new Set(),
+  };
+  vm.runInNewContext(['keepKeptWork', 'restoreKeptWork', 'changedFromRead', 'followChecks', 'checkShown', 'firstView'].map(extractFunction).join('\n'), context);
+
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const { readIntakeFields } = await import('../src/intake.js');
+  const sampleRaw = await readIntakeFields(pdfjs, new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url))));
+  const rawWithChecks = {
+    ...sampleRaw,
+    garaging_address: '125 Maple Leaf Dr, Springfield, IL 62704',
+    phone_number: '555-123',
+    dot_number: 'pending',
+    mc_number: '',
+    mc_dot_60days: '',
+    drv_first_1: 'Jordan',
+    drv_dob_1: '13/45/1980',
+    drv_dob_2: '07/09/1995',
+    drv_cdl_yr_1: '',
+    veh_vin_2: '1FTBR3X87MKA12345',
+    veh_ownership: 'Owned',
+    ins_type_1: 'Commercial Auto', ins_carrier_1: 'Travelers', ins_limit_1: '$1M CSL', ins_exp_1: '10/31/2026',
+    claims_details: '',
+  };
+  const load = () => {
+    const res = normalizeIntake(rawWithChecks, { today: new Date('2026-09-30') });
+    return { ...res, intakeId: 'checks-1', done: [], agentEdited: [], intakeRecord: structuredClone(res.record) };
+  };
+
+  // Sanity check: the fresh PDF opens with all four checks active.
+  const initial = load();
+  for (const code of ['id.invalid', 'phone.invalid', 'dob.invalid', 'claims.blank']) {
+    assert.equal(initial.warnings.find((w) => w.code === code)?.level, 'check', `fresh PDF should have ${code}`);
+  }
+  assert.equal(initial.warnings.find((w) => w.code === 'prior.carrier-is-quoted'), undefined);
+
+  // Simulate live agentEdit fixing all four checks and editing prior carrier to Progressive,
+  // then marking the resulting prior.carrier-is-quoted alert done.
+  const live = load();
+  const liveEdits = [
+    ['applicant.dot', '1234567'],
+    ['applicant.phone', '305-555-1234'],
+    ['drivers[0].dob', '04/12/1980'],
+    ['claims.text', 'No claims'],
+    ['priorInsurance[0].carrier', 'Progressive'],
+  ];
+  const edited = new Set();
+  for (const [path, value] of liveEdits) {
+    setPath(live.record, path, value);
+    noNumberEdit(live, path);
+    edited.add(path);
+    live.agentEdited = [...edited];
+    context.followChecks(live, path, value);
+    rederive(live.record, path, { keep: edited, intake: live });
+  }
+  const quotedIdx = live.warnings.findIndex((w) => w.code === 'prior.carrier-is-quoted');
+  assert.ok(quotedIdx >= 0, 'live edit raises prior.carrier-is-quoted');
+  live.done = [...new Set([...live.done, quotedIdx])];
+
+  // Keep work and restore on a fresh PDF after a simulated browser restart.
+  await context.keepKeptWork(live);
+  const restored = load();
+  await context.restoreKeptWork(restored);
+
+  for (const code of ['id.invalid', 'phone.invalid', 'dob.invalid', 'claims.blank']) {
+    const w = restored.warnings.find((x) => x.code === code);
+    assert.equal(w?.level, 'info', `${code} should be retired to info after restore`);
+    assert.match(w?.msg ?? '', /^No longer applies after your edit:/, code);
+    assert.equal(context.checkShown(w, restored), false, `${code} must not show as an open check`);
+  }
+  const restoredQuotedIdx = restored.warnings.findIndex((w) => w.code === 'prior.carrier-is-quoted');
+  assert.ok(restoredQuotedIdx >= 0, 'derived prior.carrier-is-quoted warning is re-raised on restore');
+  assert.ok(restored.done.includes(restoredQuotedIdx), 'Looks right on derived warning survives restore');
+  assert.equal(context.firstView(restored), context.firstView(live), 'firstView matches live edit');
+  assert.equal(context.firstView(restored), 'page');
 });
 
 // W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
@@ -5951,7 +6156,7 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(extractFunction('loadFile'), /doneRestored\.clear\(\);/);
   assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
   assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
-  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,900}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
+  assert.match(extractFunction('clearClient'), /^async function clearClient\(\) \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,1200}usage\.restoreSession\(null\);[\s\S]{0,500}await clearAgentKeys\(scope\);/);
   assert.match(SIDEPANEL, /if \(what === 'clear'\) clearClient\(\)\.catch\(storageSaid\);/, 'Clear runs once the agent confirms it');
 });
 
@@ -7506,7 +7711,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
       },
       pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
       profileTimer: null, logProfile: () => false,
-      readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
+      readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, readIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
       store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, reviewIntake() {}, refreshTab() {}, fillsHeld: async () => false,
@@ -7599,7 +7804,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       unitFormsStore: { get: async (id, tab) => forms.get(`${id}|${tab}`) ?? null,
         set: async (id, tab, value) => { forms.set(`${id}|${tab}`, structuredClone(value)); } },
       $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
-      normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+      readIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       profileTimer: null, logProfile: () => false,
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
@@ -9089,6 +9294,20 @@ test('a GEICO edit on a unit step is filed by the unit forms on screen with it; 
   }
 });
 
+test('editScope and changeScopes use the active units passed in on per-unit pages, not state.active', () => {
+  const state = { tab: { id: 1, carrier: null }, active: { vehicles: 1, drivers: 2, trailers: 1 }, tabSteps: new Map(), unitShown: null, unitForms: {} };
+  const context = { state };
+  vm.runInNewContext(extractFunction('changeScopes'), context);
+  const progressive = { vehiclePages: ['AddVehicle'], trailerPages: ['AddTrailer'], driverPage: 'AddDriver' };
+  const active = { vehicles: 0, drivers: 0, trailers: 0 };
+  assert.equal(context.editScope('AddVehicle', progressive, undefined, { active }), 'AddVehicle|v0');
+  assert.equal(context.editScope('AddTrailer', progressive, undefined, { active }), 'AddTrailer|tr0');
+  assert.equal(context.editScope('AddDriver', progressive, undefined, { active }), 'AddDriver|d0');
+  assert.deepEqual([...context.changeScopes('AddVehicle', progressive, undefined, null, { active })], ['AddVehicle|v0']);
+  assert.deepEqual([...context.changeScopes('AddTrailer', progressive, undefined, null, { active })], ['AddTrailer|tr0']);
+  assert.deepEqual([...context.changeScopes('AddDriver', progressive, undefined, null, { active })], ['AddDriver|d0']);
+});
+
 test('the recorder\'s field_changes file a GEICO edit under each scope its forms give, the tab\'s latest form when it names none', () => {
   const state = { intake: { record: {} }, tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, filled: new Map(), labels: new Map(), choices: new Map(),
     agentKeys: new Map(), visitedPages: new Set(), autoPages: new Set(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), quoteStates: new Map(),
@@ -10051,7 +10270,7 @@ test('a profile still waiting when another intake is loaded goes to its own quot
     aiPendingStore: { get: async () => [], set: async () => {} },
     usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log: (e) => logged.push({ ...e, session: session?.id }) },
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
-    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    readIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
     PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms, fillsHeld: async () => false,
@@ -10295,7 +10514,7 @@ test('loading another client\'s intake stops and saves the recording, redacted w
     aiPendingStore: { get: async () => [], set: async () => {} },
     usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log() {} },
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
-    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    readIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
     store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
     PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {}, fillsHeld: async () => false,
@@ -10332,7 +10551,7 @@ function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
     aiPendingStore: { get: async () => [], set: async () => {} },
     usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: 's2', intakeId }), restoreSession: (s) => { session = s; }, log: (e) => seen.order.push([e.type, state.resetting]) },
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, forgetPdf: async () => {},
-    normalizeIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
+    readIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
     store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
     platformOf: () => ({ os: null, chrome: null }), uploadNow() {}, save: async () => {}, render() {}, renderSite() {}, renderSteps() {}, refreshTab() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
     profileTimer: null, logProfile() {}, stopRecording: async () => {}, worldFor: () => 'ISOLATED', fillsHeld: async () => false, holdFills: async () => true, releaseFills: async () => {}, FILLS_HELD_NOTE: 'held',
@@ -12253,4 +12472,1029 @@ test('the header carrier logo has its own class, sized by one rule without paddi
   assert.equal(rules.length, 1, 'one rule styles the header logo');
   assert.doesNotMatch(rules[0], /padding/);
   assert.ok(Number(rules[0].match(/(?:^|;)\s*height:\s*(\d+)px/)?.[1]) >= 20, rules[0]);
+});
+
+// Issue #587: free-text typing coalesces into one settled field_change usage event while keeping
+// agent-edit bookkeeping immediate, choice/date controls unchanged, and causal log ordering intact.
+function textCoalesceHarness({ carrier = { id: 'amwins', layoutSteps: amwins.layoutSteps, autoFillUrl: /amwins\.test/ }, record = { applicant: { email: 'jordan@avery.test', name: 'Avery Freight' }, operations: {}, vehicles: [], trailers: [], drivers: [], coverage: {} }, filled = new Map(), session = { id: 'sess-1', intakeId: 'int-1', keySalt: 'salt-1' }, extraFns = [], overrides = {}, useRealUsageLog = false } = {}) {
+  const logged = [];
+  const taps = new Set();
+  const beforeHooks = new Set();
+  let flushingBefore = false;
+  let seq = 0;
+  const timers = new Map();
+  let nextTimer = 1;
+  let currentSession = session;
+  let clock = Date.parse('2026-11-19T12:00:00.000Z');
+  const persistedKeys = [];
+  const answered = [];
+  const replies = [];
+  const recorderCmds = [];
+  const state = {
+    intake: { record, intakeId: session?.intakeId ?? 'int-1' },
+    tab: { id: 1, url: 'https://amwins.test/application/businessauto', carrier },
+    active: { drivers: 0, vehicles: 0, trailers: 0 },
+    switches: { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false },
+    filled,
+    labels: new Map(),
+    choices: new Map(),
+    agentKeys: new Map(),
+    visitedPages: new Set(),
+    autoPages: new Set(['/application/businessauto']),
+    autoPaused: false,
+    autoPending: false,
+    autoDrawn: null,
+    autoTimer: null,
+    layoutReadyTabs: new Set([1]),
+    layoutNewTabs: new Set(),
+    layoutHold: false,
+    lastLayouts: new Map(),
+    layoutChain: Promise.resolve(),
+    layoutTimer: null,
+    layoutPending: null,
+    layoutLatest: null,
+    layoutGeneration: 0,
+    layoutErrors: 0,
+    layoutErrorsLogged: new Set(),
+    intakeRevision: 0,
+    quoteStates: new Map(),
+    tabSteps: new Map([[1, 'Insured Info']]),
+    stopScreens: new Map(),
+    tabSessions: new Map(),
+    doneActions: new Set(),
+    doneSteps: new Set(),
+    advanceRetried: new Set(),
+    unitForms: { vehicles: {}, drivers: {}, trailers: {} },
+    unitShown: null,
+    reports: new Map([['1|/application/businessauto|Insured Info', { fields: 5, filled: 5 }]]),
+    reportFor: null,
+    lastRuns: new Map(),
+    recording: null,
+    filling: false,
+    fillingKind: null,
+    fillingFor: null,
+    closing: false,
+    resetting: false,
+    resetDepth: 0,
+    newQuoteFailed: false,
+    aiDocks: new Map(),
+    staleFills: [],
+    cards: {},
+  };
+  let logDelay = null;
+  const mockUsage = {
+    beforeLog: (fn) => { beforeHooks.add(fn); return () => beforeHooks.delete(fn); },
+    onLogged: (fn) => { taps.add(fn); return () => taps.delete(fn); },
+    currentSession: () => currentSession,
+    startSession: (intakeId) => { currentSession = { id: `sess-${intakeId}`, intakeId, keySalt: `salt-${intakeId}` }; return currentSession; },
+    restoreSession: (s) => { currentSession = s; },
+    log: (...events) => {
+      if (!flushingBefore && beforeHooks.size) {
+        flushingBefore = true;
+        try { for (const fn of beforeHooks) fn(events); } finally { flushingBefore = false; }
+      }
+      const fallbackT = new Date(clock).toISOString();
+      const sid = currentSession?.id ?? null;
+      const iid = currentSession?.intakeId ?? null;
+      const stamped = events.map((e) => ({ seq: ++seq, t: fallbackT, session: sid, intakeId: iid, ...e }));
+      for (const fn of taps) fn(stamped, { t: fallbackT, session: sid });
+      logged.push(...stamped);
+      return logDelay ? logDelay() : Promise.resolve();
+    },
+  };
+  const usage = useRealUsageLog ? realUsageLog : mockUsage;
+  class FakeDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [clock])); }
+    static now() { return clock; }
+  }
+  const context = {
+    state,
+    URL,
+    Date: FakeDate,
+    Number,
+    Array,
+    Map,
+    Set,
+    Promise,
+    JSON,
+    Object,
+    crypto: { randomUUID },
+    chrome: { tabs: { sendMessage: async (tabId, msg) => { recorderCmds.push({ tabId, ...msg }); }, get: async (id) => ({ id, url: state.tab?.url ?? '' }) } },
+    rulesVersion: null,
+    fillDefaultsHash: () => undefined,
+    fillProblem() {},
+    setTimeout: (fn, ms) => {
+      const id = nextTimer++;
+      timers.set(id, { fn, ms, due: clock + ms });
+      return id;
+    },
+    clearTimeout: (id) => { timers.delete(id); },
+    clearInterval: () => {},
+    $: () => ({ checked: false, hidden: false }),
+    usage,
+    redactor,
+    redactionTerms: () => [],
+    fieldChangeEvent,
+    knownStep,
+    sha256Hex,
+    fillEvents,
+    viewOf: (tabId, page) => `t${tabId}:${page === 'AddVehicle' ? `v${state.active.vehicles}` : 'top'}`,
+    scheduleLayout() {},
+    scheduleAutoFill() {},
+    agentHelperDone() {},
+    quoteStatePick: () => undefined,
+    persistAgentKeys: () => persistedKeys.push(new Map([...state.agentKeys].map(([k, v]) => [k, new Set(v)]))),
+    persistUnitForms() {},
+    persistAiPending: async () => {},
+    restoreAiPending: async () => {},
+    pruneAgentRecords: async () => {},
+    clearAgentKeys: async () => {},
+    settleRejectedAi: async () => false,
+    retireAiOrigins: async () => {},
+    answeredOnPage: (page, list) => answered.push({ page, keys: list.map((c) => c.key) }),
+    renderSite() {},
+    renderSteps() {},
+    renderPickers() {},
+    render() {},
+    refreshAnswers() {},
+    renderDevrec() {},
+    devrecSaid() {},
+    saveRecording: async () => {},
+    save: async () => {},
+    stopPageIsOurs: () => false,
+    onQuotePage: () => true,
+    quoteOwnerIssue: () => false,
+    portalHold: () => false,
+    defaultsHold: () => false,
+    stateIssue: () => null,
+    pickListItem: async () => {},
+    planFor: () => [],
+    fillOptions: () => ({}),
+    watchFill: () => () => {},
+    noteMissingUnit() {},
+    rememberFill: () => false,
+    afterFill: () => false,
+    runPendingPage() {},
+    resumeHeldFill() {},
+    showFinish() {},
+    assistAfterFill() {},
+    remarkAi: async () => {},
+    bindQuoteTab() {},
+    reportShown: () => false,
+    recordLayout() {},
+    ensureRecorder: async () => {},
+    ...overrides,
+  };
+  vm.createContext(context);
+  const fns = ['onRecorderMessage', 'registerTextChangeFlush', 'tellRecorder', 'noteStep', 'copyUsage', 'stopRecording', ...extraFns];
+  vm.runInContext(`${PAGE_HELPERS}\n${fns.map(extractFunction).join('\n')}`, context);
+  const unhook = context.registerTextChangeFlush();
+  const advance = async (ms) => {
+    const target = clock + ms;
+    for (;;) {
+      const next = [...timers.entries()].filter(([, e]) => e.due <= target).sort((a, b) => a[1].due - b[1].due)[0];
+      if (!next) break;
+      const [id, entry] = next;
+      timers.delete(id);
+      clock = entry.due;
+      await entry.fn();
+      for (let k = 0; k < 4; k++) await new Promise((r) => setImmediate(r));
+    }
+    clock = target;
+  };
+  const send = (msg, sender = { tab: { id: 1 }, frameId: 0 }) => context.onRecorderMessage({ ra: 'usage', ...msg }, sender, (r) => replies.push(r));
+  return {
+    context, state, logged, timers, advance, send, persistedKeys, answered, replies, recorderCmds, unhook,
+    setSession: (s) => { currentSession = s; },
+    setLogDelay: (fn) => { logDelay = fn; },
+    now: () => clock,
+    setNow: (ms) => { clock = ms; },
+  };
+}
+
+test('real scheduleAutoFill/autoFill (including no-op auto fills that log fill_run on unfamiliar/held/advanceDue) does not split multi-tick free-text typing, while alternating step and no-step ticks coalesce with the known step', async () => {
+  const filled = new Map([['desc', { path: 'operations.whatHaul', shown: 'General freight' }]]);
+  let runKitCalls = 0;
+  let kitResult = () => ({
+    frameId: 0,
+    result: {
+      fields: 5, filled: [], kept: [{ key: 'desc' }], failed: [], noData: [], leftRequired: [],
+      // Real conditions that force autoFill to call logFill even when filled/clicked are 0:
+      unknown: [{ key: 'u1', label: 'Extra question', controlKind: 'text' }],
+      held: 'check', advanceDue: 'none', actions: [], blockers: [],
+    },
+  });
+  const h = textCoalesceHarness({
+    filled,
+    extraFns: ['reportKey', 'stepScope', 'scheduleAutoFill', 'autoFill'],
+    overrides: {
+      renderReport() {},
+      runKit: async () => { runKitCalls++; return [kitResult()]; },
+    },
+  });
+  h.state.switches.autoAdvance = true;
+  h.state.switches.checkBeforeContinue = true;
+  h.state.reports.set(h.context.reportKey(1, '/application/businessauto', h.state.tab.carrier), { fields: 5, filled: 5 });
+
+  // Alternating stepped and step-less ticks (real AmWINS/GEICO behavior) + autoFill logging fill_run every tick!
+  const ticks = [
+    ['General freight', 'General freight - ', 'Insured Info'],
+    ['General freight - ', 'General freight - dry', undefined],
+    ['General freight - dry', 'General freight - dry van', 'Insured Info'],
+    ['General freight - dry van', 'jordan@', undefined],
+    ['jordan@', 'jordan@avery.test', undefined],
+  ];
+  let lastTickIso = '';
+  for (let i = 0; i < ticks.length; i++) {
+    const [before, after, step] = ticks[i];
+    if (i === ticks.length - 1) h.state.labels.set('desc', 'Updated Operations Description');
+    lastTickIso = new Date(h.now()).toISOString();
+    h.send({ event: 'field_changes', page: '/application/businessauto', ...(step ? { step } : {}),
+      changes: [{ key: 'desc', q: null, label: 'Operations Description', kind: 'text', before, after, agent: true }] });
+    if (i === 0) {
+      assert.equal(h.state.agentKeys.get('/application/businessauto')?.has('desc'), true, 'agent key protected immediately on tick 1');
+    }
+    if (i < ticks.length - 1) await h.advance(1500);
+  }
+  assert.ok(runKitCalls >= 4, `real autoFill ran between typing ticks (${runKitCalls} calls)`);
+  assert.ok(h.logged.filter((e) => e.type === 'fill_run' && e.auto === true).length >= 4, 'no-op autoFill logged fill_run on unfamiliar/held/advanceDue');
+  assert.equal(h.logged.filter((e) => e.type === 'field_change').length, 0, 'no partial field_change written despite auto fill_run logging and missing steps');
+  assert.equal(h.persistedKeys.length, ticks.length, 'persistAgentKeys ran on every tick');
+  assert.equal(h.answered.length, ticks.length, 'answeredOnPage ran on every tick');
+  assert.equal(h.replies.filter((r) => r?.ok).length, ticks.length, 'every recorder message acknowledged immediately');
+
+  // Quiet interval (4 s) flushes the one settled event, keeping the known step and last tick's timestamp
+  await h.advance(4000);
+  const fc = h.logged.filter((e) => e.type === 'field_change');
+  assert.equal(fc.length, 1, 'exactly one field_change event after settling');
+  assert.equal(fc[0].page, '/application/businessauto');
+  assert.equal(fc[0].step, 'Insured Info', 'known step preserved when trailing ticks had no step');
+  assert.equal(fc[0].label, 'Updated Operations Description', 'refreshed label on later tick is used');
+  assert.equal(fc[0].change, 'edited', 'derived from first before ("General freight") and final after');
+  assert.equal(fc[0].vsAutofill, 'different');
+  assert.deepEqual(fc[0].matchesIntake, ['applicant.email'], 'matchesIntake computed on the final value');
+  assert.equal(fc[0].t, lastTickIso, 'timestamp is the last recorder tick, not flush time');
+  assert.equal(fc[0].session, 'sess-1');
+  assert.equal(fc[0].intakeId, 'int-1');
+
+  // Conversely: starting step-less then gaining a step upgrades to the known step, AND an autoFill
+  // that actually fills a follow-up question flushes the pending text edit FIRST.
+  h.logged.length = 0;
+  kitResult = () => ({
+    frameId: 0,
+    result: {
+      fields: 5, filled: [{ key: 'follow', label: 'Follow-up', controlKind: 'select', shown: 'Yes' }],
+      kept: [], failed: [], noData: [], leftRequired: [], unknown: [], actions: [], blockers: [],
+    },
+  });
+  h.send({ event: 'field_changes', page: '/application/businessauto',
+    changes: [{ key: 'box2', q: null, label: 'Notes 2', kind: 'text', before: '', after: 'a', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Underwriting',
+    changes: [{ key: 'box2', q: null, label: 'Notes 2', kind: 'text', before: 'a', after: 'ab', agent: true }] });
+  await h.advance(600);
+  const seqTypes = h.logged.map((e) => e.type);
+  assert.equal(seqTypes[0], 'field_change', 'autoFill that filled a follow-up flushes pending text first');
+  assert.equal(seqTypes[1], 'fill_run');
+  assert.equal(h.logged[0].step, 'Underwriting', 'upgraded from step-less tick to known step');
+});
+
+test('real usage-log.js beforeLog and real sidepanel/panel/usage.js registration flush field_change before page_layout so layoutTransitions still sees it', async () => {
+  // Removing the module-level registration in sidepanel/panel/usage.js must fail this test.
+  const usageSrc = fs.readFileSync(new URL('../sidepanel/panel/usage.js', import.meta.url), 'utf8');
+  assert.match(usageSrc, /^registerTextChangeFlush\(\);$/m, 'sidepanel/panel/usage.js registers its beforeLog hook on load');
+
+  await realUsageLog.clearLog();
+  const realSess = realUsageLog.startSession('int-real-1');
+  let controls = [{ q: '2A1', kind: 'text', label: 'Commodity notes', pageHasValue: false }];
+  const h = textCoalesceHarness({
+    useRealUsageLog: true,
+    session: realSess,
+    carrier: { id: 'progressive', autoFillUrl: /progressive\.test/ },
+    extraFns: ['layoutJob', 'jobCurrent', 'sameLayoutScope', 'superseded', 'captureLayout', 'recordLayout', 'scheduleLayout', 'layoutWhenQuiet'],
+    overrides: {
+      LAYOUT_DELAY_MS: 1200,
+      premiumHere: () => false,
+      noteStopScreen() {},
+      layoutErrorKind: () => 'other',
+      layoutFailed() {},
+      waitForFill() {},
+      runKit: async (_tabId, _carrier, fn) => {
+        if (String(fn).includes('busy')) return [{ frameId: 0, result: false }];
+        return [{ frameId: 0, result: { isTopFrame: true, page: 'Operations', controls, buttons: [], messages: [] } }];
+      },
+    },
+  });
+  const stored = [];
+  const origFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    stored.push(...body.events);
+    return { ok: true, json: async () => ({ accepted: body.events.length, duplicates: 0, rejected: [] }) };
+  };
+  try {
+    await realUsageLog.saveSettings({ serverUrl: 'http://usage.test' });
+    h.state.tab.url = 'https://progressive.test/quote?pageName=Operations';
+    await h.context.recordLayout('Operations', 'arrived');
+
+    // Agent types in a text box; the page reveals a follow-up question and scheduleLayout fires at 1.2 s (< 4 s quiet interval)
+    controls = [
+      { q: '2A1', kind: 'text', label: 'Commodity notes', pageHasValue: true },
+      { q: '2A2', kind: 'text', label: 'Placards carried', pageHasValue: false },
+    ];
+    h.send({ event: 'field_changes', page: 'Operations',
+      changes: [{ key: '2A1', q: '2A1', label: 'Commodity notes', kind: 'text', before: '', after: 'Hazmat', agent: true }] });
+    await h.advance(1200);
+    await h.state.layoutChain;
+    await realUsageLog.upload();
+
+    assert.deepEqual(stored.map((e) => e.type), ['page_layout', 'field_change', 'page_layout'], 'real usage-log.js beforeLog flushed field_change before page_layout');
+    assert.ok(stored[1].seq < stored[2].seq, 'field_change got an earlier seq than page_layout');
+    const transitions = layoutTransitions(stored);
+    assert.equal(transitions.length, 1, 'layoutTransitions sees the text-triggered transition');
+    assert.deepEqual(transitions[0].appeared, ['Placards carried']);
+    assert.equal(transitions[0].after[0].question, 'Commodity notes');
+  } finally {
+    h.unhook?.();
+    globalThis.fetch = origFetch;
+    await realUsageLog.clearLog();
+    realUsageLog.restoreSession(null);
+  }
+});
+
+test('real recorder date messages keep one event per change, while two plain text boxes coalesce to one event each and choices stay immediate', async () => {
+  const recorderSrc = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
+  const amwinsAdapterSrc = fs.readFileSync(new URL('../src/content/carriers/amwins.js', import.meta.url), 'utf8');
+  // Run real recorder.js + real amwins adapter to capture real field_changes messages for date, text, and select controls
+  const sentByRecorder = [];
+  const makeEl = (tag, { id, type = 'text', value = '', cls = [], attrs = {} }) => ({
+    tagName: tag.toUpperCase(),
+    id,
+    name: id,
+    type,
+    value,
+    disabled: false,
+    labels: [],
+    selectedOptions: tag === 'select' ? [{ value, text: value }] : [],
+    classList: { contains: (c) => cls.includes(c) },
+    getAttribute: (k) => attrs[k] ?? null,
+    getClientRects: () => [{ width: 100, height: 20 }],
+    closest: () => null,
+    matches: () => false,
+  });
+  const dateEl = makeEl('input', { id: 'ownerDob', type: 'text', value: '', cls: ['datepicker-input'], attrs: { 'data-type': 'date' } });
+  const nativeDateEl = makeEl('input', { id: 'effDate', type: 'date', value: '' });
+  const text1 = makeEl('input', { id: 'box1', type: 'text', value: '' });
+  const text2 = makeEl('textarea', { id: 'box2', type: 'textarea', value: '' });
+  const selectEl = makeEl('select', { id: 'state', type: 'select-one', value: '' });
+  const controls = [dateEl, nativeDateEl, text1, text2, selectEl];
+  const recCtx = {
+    window: null,
+    location: { pathname: '/application/businessauto', search: '', hash: '' },
+    document: {
+      title: 'AmWINS',
+      body: {},
+      querySelectorAll: (sel) => (sel === '*' || sel.includes('input') ? controls : []),
+      createTreeWalker: () => ({ previousNode: () => false }),
+    },
+    NodeFilter: { SHOW_TEXT: 4 },
+    addEventListener() {},
+    removeEventListener() {},
+    setInterval: () => 1,
+    clearInterval() {},
+    setTimeout: (fn) => { fn(); return 1; },
+    chrome: {
+      runtime: {
+        id: 'ext',
+        sendMessage: (m) => { sentByRecorder.push(m); return Promise.resolve({ ok: true }); },
+        onMessage: { addListener() {}, removeListener() {} },
+      },
+    },
+    __raterFieldKey: (el) => el.id,
+  };
+  recCtx.window = recCtx;
+  recCtx.window.top = recCtx;
+  vm.createContext(recCtx);
+  vm.runInContext(amwinsAdapterSrc, recCtx);
+  vm.runInContext(recorderSrc, recCtx);
+  sentByRecorder.length = 0;
+
+  const h = textCoalesceHarness();
+  const pollAndFeed = () => {
+    recCtx.__raterRecorder.poll();
+    for (const msg of sentByRecorder.splice(0)) {
+      if (msg.event === 'field_changes') h.context.onRecorderMessage(msg, { tab: { id: 1 }, frameId: 0 });
+    }
+  };
+
+  // Two edits to the AmWINS date picker + one to native <input type="date">: all log immediately, never coalesced
+  dateEl.value = '01/02/1990';
+  pollAndFeed();
+  dateEl.value = '01/03/1990';
+  pollAndFeed();
+  nativeDateEl.value = '2026-05-01';
+  pollAndFeed();
+  assert.equal(h.logged.length, 3, 'date controls log one event per change immediately');
+  assert.deepEqual(h.logged.map((e) => [e.key, e.kind, e.change, 'from' in e, 'to' in e]), [
+    ['ownerDob', 'text', 'entered', false, false],
+    ['ownerDob', 'text', 'edited', false, false],
+    ['effDate', 'text', 'entered', false, false],
+  ]);
+
+  // Two plain text boxes edited in turn over multiple ticks: 1 event each
+  h.logged.length = 0;
+  text1.value = 'First';
+  pollAndFeed();
+  text1.value = 'First line';
+  pollAndFeed();
+  assert.equal(h.logged.length, 0, 'text1 still coalescing');
+  text2.value = 'Second';
+  pollAndFeed();
+  assert.equal(h.logged.length, 1, 'moving to text2 flushes text1');
+  assert.equal(h.logged[0].key, 'box1');
+  text2.value = 'Second line';
+  pollAndFeed();
+  assert.equal(h.logged.length, 1, 'text2 still coalescing');
+
+  // Choice control flushes text2 and logs one event per change
+  selectEl.value = 'TX';
+  selectEl.selectedOptions = [{ value: 'TX', text: 'TX' }];
+  pollAndFeed();
+  selectEl.value = 'OH';
+  selectEl.selectedOptions = [{ value: 'OH', text: 'OH' }];
+  pollAndFeed();
+  assert.deepEqual(h.logged.map((e) => [e.key, e.kind, e.kind === 'text' ? e.change : e.from, e.to ?? null]), [
+    ['box1', 'text', 'entered', null],
+    ['box2', 'text', 'entered', null],
+    ['state', 'select', null, 'TX'],
+    ['state', 'select', 'TX', 'OH'],
+  ]);
+});
+
+test('session boundaries (loadFile, clearClient, newQuote) and copyUsage keep pending edits under their original session', async () => {
+  // 1. loadFile: pending text + tick arriving during stopRecording wait both log under sess-1 before intake_closed / sess-int-2
+  const recorded = [];
+  let onStopWait;
+  const h = textCoalesceHarness({
+    extraFns: ['loadFile', 'clearClient', 'newQuote'],
+    overrides: {
+      pdfjs: {},
+      readIntakeFields: async () => ({ field: '1' }),
+      readIntakePlaces: async () => null,
+      readIntake: () => ({ record: { applicant: { name: 'Next Client' }, operations: {}, vehicles: [], trailers: [], drivers: [], coverage: {} }, warnings: [], stats: {} }),
+      intakeSummary: async () => ({ intakeId: 'int-2' }),
+      testIntakes: { get: async () => [] },
+      stopFillFirst: async () => {},
+      profileTimer: null,
+      logProfile: () => false,
+      settleQuoteEntries: async () => {},
+      forgetJournals: async () => {},
+      cancelLayouts() {},
+      holdLayouts() {},
+      resetViews() {},
+      fillsHeld: async () => false,
+      keepWork() {},
+      forgetKeptWork: async () => {},
+      keptWorkCleared: async () => null,
+      restoreKeptWork: async () => null,
+      holdKeptWork() {},
+      firstView: () => 'check',
+      dropReports() {},
+      workSaid: () => '',
+      clientNote() {},
+      keepPdf: async () => {},
+      forgetPdf: async () => {},
+      intakePdfBytes: async () => new Uint8Array([1, 2, 3]),
+      holdFills: async () => true,
+      releaseFills: async () => {},
+      firstUnits: () => ({ drivers: 0, vehicles: 0, trailers: 0 }),
+      doneRestored: new Set(),
+      discardAiSuggestions() {},
+      store: { set: async () => {}, remove: async () => {} },
+      logSettings: async () => {},
+      uploadNow() {},
+      refreshTab() {},
+      reviewIntake() {},
+      refreshDefaults() {},
+      platformOf: () => ({ os: 'Windows', chrome: 140 }),
+      File: class FakeFile { constructor(parts, name, opts) { this.name = name; this.type = opts?.type ?? ''; this.arrayBuffer = async () => new Uint8Array([1, 2, 3]).buffer; } },
+      inExtension: false,
+      clearKeptWork: async () => 'cleared',
+      chrome: {
+        tabs: {
+          sendMessage: async (_tabId, msg) => {
+            if (msg?.ra === 'trace' && msg?.cmd === 'stop') await onStopWait?.();
+          },
+        },
+      },
+    },
+  });
+  const rec = { tabId: 1, stopping: false, timer: 0, store: { manifest: { session: 'sess-1' }, add: (ev) => recorded.push(...ev) } };
+  h.state.recording = rec;
+  rec.untap = h.context.copyUsage(rec);
+
+  // Pending edit before loadFile
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'box1', label: 'Notes 1', kind: 'text', before: '', after: 'old client', agent: true }] });
+  // Simulate a late tick arriving while real stopRecording is awaiting
+  onStopWait = async () => {
+    h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+      changes: [{ key: 'box2', label: 'Notes 2', kind: 'text', before: '', after: 'during stop wait', agent: true }] });
+  };
+  const loading = h.context.loadFile({ name: 'next.pdf', type: 'application/pdf', arrayBuffer: async () => new Uint8Array([1]).buffer });
+  for (let i = 0; i < 40 && ![...h.timers.values()].some((t) => t.ms === 600); i++) await new Promise((r) => setImmediate(r));
+  await h.advance(600);
+  await loading;
+
+  const types = h.logged.map((e) => [e.type, e.key ?? null, e.session]);
+  assert.deepEqual(types, [
+    ['field_change', 'box1', 'sess-1'],
+    ['intake_closed', null, 'sess-1'],
+    ['field_change', 'box2', 'sess-1'],
+    ['intake_loaded', null, 'sess-int-2'],
+  ], 'pending edits from before loadFile and during stopRecording both stay under sess-1, never sess-int-2');
+  // copyUsage only kept sess-1 events before stopRecording stopped it (box1 & intake_closed), never sess-int-2's intake_loaded!
+  assert.deepEqual(recorded.map((r) => r.event.type), ['field_change', 'intake_closed']);
+  assert.equal(recorded[0].t, Date.parse(h.logged[0].t), 'copyUsage stamps recording timeline with event.t');
+
+  // Verify copyUsage filters by ('session' in e ? e.session : session) === mine directly (explicit null does not match)
+  const rec2Events = [];
+  const rec2 = { tabId: 1, stopping: false, timer: 0, store: { manifest: { session: 'sess-A' }, add: (ev) => rec2Events.push(...ev) } };
+  h.state.recording = rec2;
+  const untap2 = h.context.copyUsage(rec2);
+  h.setSession({ id: 'sess-A', intakeId: 'int-A', keySalt: 'salt-A' });
+  h.context.usage.log({ type: 'field_change', session: null, t: '2026-11-19T12:00:04.000Z', key: 'explicitNull' });
+  h.setSession({ id: 'sess-B', intakeId: 'int-B', keySalt: 'salt-B' });
+  h.context.usage.log({ type: 'field_change', session: 'sess-A', t: '2026-11-19T12:00:05.000Z', key: 'fromA' });
+  h.context.usage.log({ type: 'field_change', session: 'sess-B', t: '2026-11-19T12:00:06.000Z', key: 'fromB' });
+  untap2();
+  assert.deepEqual(rec2Events.map((r) => [r.event.key, r.t]), [['fromA', Date.parse('2026-11-19T12:00:05.000Z')]]);
+
+  // 2. clearClient flushes pending text under current session before intake_closed and restoreSession(null)
+  h.logged.length = 0;
+  h.state.recording = null;
+  onStopWait = null;
+  h.setSession({ id: 'sess-int-2', intakeId: 'int-2', keySalt: 'salt-int-2' });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'box3', label: 'Notes 3', kind: 'text', before: '', after: 'before clear', agent: true }] });
+  await h.context.clearClient();
+  assert.deepEqual(h.logged.map((e) => [e.type, e.key ?? null, e.session]), [
+    ['field_change', 'box3', 'sess-int-2'],
+    ['intake_closed', null, 'sess-int-2'],
+  ]);
+  assert.equal(h.context.usage.currentSession(), null);
+
+  // 3. newQuote flushes pending text under current session before resetting
+  h.logged.length = 0;
+  h.state.intake = { record: { applicant: { name: 'Client' }, operations: {}, vehicles: [], trailers: [], drivers: [], coverage: {} }, intakeId: 'int-3', fileName: 'c.pdf' };
+  h.setSession({ id: 'sess-3', intakeId: 'int-3', keySalt: 'salt-3' });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'box4', label: 'Notes 4', kind: 'text', before: '', after: 'before newQuote', agent: true }] });
+  await h.context.newQuote();
+  assert.equal(h.logged[0].type, 'field_change');
+  assert.equal(h.logged[0].key, 'box4');
+  assert.equal(h.logged[0].session, 'sess-3');
+});
+
+test('giveWay awaits pending text flush writes both before handOver and for late ticks arriving during handOver before closeSelf', async () => {
+  const resolvers = [];
+  const order = [];
+  let lateSent = false;
+  const h = textCoalesceHarness({
+    extraFns: ['giveWay'],
+    overrides: {
+      stopFill: async () => {},
+      handOver: async () => {
+        order.push('handOver');
+        if (!lateSent) {
+          lateSent = true;
+          h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+            changes: [{ key: 'lateBox', label: 'Late notes', kind: 'text', before: '', after: 'typed during handOver', agent: true }] });
+        }
+      },
+      closeSelf: () => { order.push('closeSelf'); },
+    },
+  });
+  h.setLogDelay(() => new Promise((r) => {
+    const idx = resolvers.length + 1;
+    resolvers.push(() => { order.push(`writeDone:${idx}`); r(); });
+  }));
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'closingBox', label: 'Closing notes', kind: 'text', before: '', after: 'final words', agent: true }] });
+
+  const givingWay = h.context.giveWay('newer-panel');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.deepEqual(order, [], 'handOver and closeSelf wait for the first flush write to finish');
+  assert.equal(h.logged.length, 1);
+  resolvers[0]();
+  for (let i = 0; i < 6 && resolvers.length < 2; i++) await Promise.resolve();
+  assert.deepEqual(order, ['writeDone:1', 'handOver'], 'closeSelf waits for the late tick flush write after handOver');
+  assert.equal(h.logged.length, 2, 'late tick started writing before closeSelf');
+  assert.equal(h.logged[1].key, 'lateBox');
+  resolvers[1]();
+  await givingWay;
+  assert.deepEqual(order, ['writeDone:1', 'handOver', 'writeDone:2', 'closeSelf'], 'both writes finish before closeSelf');
+});
+
+test('GEICO unit forms split repeating keys across forms while ignoring blank transitions, and mismatched session logs text immediately uncoalesced', async () => {
+  const h = textCoalesceHarness({
+    carrier: { id: 'geico', layoutSteps: geico.layoutSteps, autoFillUrl: /sales\.geico\.com/ },
+  });
+  h.state.tab.url = 'https://sales.geico.com/quote';
+  // Same unit form (blank: true -> blank: false) coalesces
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents', forms: [{ list: 'drivers', id: 'drv-1', blank: true }],
+    changes: [{ key: 'ref:GiveFirstName', label: 'First Name', kind: 'text', before: '', after: 'Jo', agent: true }] });
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents', forms: [{ list: 'drivers', id: 'drv-1', blank: false }],
+    changes: [{ key: 'ref:GiveFirstName', label: 'First Name', kind: 'text', before: 'Jo', after: 'Jordan', agent: true }] });
+  assert.equal(h.logged.length, 0, 'same GEICO unit form coalesces even when blank flips');
+  // Switching to another unit form on the same step with the same key splits immediately
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents', forms: [{ list: 'drivers', id: 'drv-2', blank: false }],
+    changes: [{ key: 'ref:GiveFirstName', label: 'First Name', kind: 'text', before: '', after: 'Alex', agent: true }] });
+  assert.equal(h.logged.length, 1, 'switching GEICO unit form flushes the first driver form');
+  assert.equal(h.logged[0].key, 'ref:GiveFirstName');
+  await h.advance(4000);
+  assert.equal(h.logged.length, 2, 'second driver form logs its own event');
+
+  // Mismatched intake/session (e.g. reopened panel with mismatched stored intake/session, or loadFile mid-swap):
+  // typed text edits are never dropped and never coalesced across the mismatch — they log immediately as main did.
+  h.logged.length = 0;
+  h.state.intake = { ...h.state.intake, intakeId: 'int-2' };
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents',
+    changes: [{ key: 'ref:GiveLastName', label: 'Last Name', kind: 'text', before: '', after: 'Av', agent: true }] });
+  h.send({ event: 'field_changes', page: '/quote', step: 'Drivers & Incidents',
+    changes: [
+      { key: 'ref:GiveLastName', label: 'Last Name', kind: 'text', before: 'Av', after: 'Avery', agent: true },
+      { key: 'ref:MaritalStatus', label: 'Marital Status', kind: 'select', before: '', after: 'Single', agent: true },
+    ] });
+  assert.deepEqual(
+    h.logged.map((e) => [e.key, e.kind, e.change ?? null, e.to ?? null]),
+    [
+      ['ref:GiveLastName', 'text', 'entered', null],
+      ['ref:GiveLastName', 'text', 'edited', null],
+      ['ref:MaritalStatus', 'select', null, 'Single'],
+    ],
+    'mismatched session logs each typed text edit immediately and uncoalesced alongside choices',
+  );
+});
+
+test('wire() connects tabs.onRemoved, pagehide and visibilitychange to flushPendingTextChanges, and step_shown flushes directly in onRecorderMessage', () => {
+  // 1. Direct step_shown through onRecorderMessage (without noteStep) flushes pending text
+  const h = textCoalesceHarness();
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'stepBox', label: 'Step box', kind: 'text', before: '', after: 'before step_shown', agent: true }] });
+  assert.equal(h.logged.length, 0);
+  h.send({ event: 'step_shown', page: '/application/businessauto', step: 'Drivers' });
+  assert.equal(h.logged.length, 1, 'step_shown in onRecorderMessage flushes pending text directly');
+  assert.equal(h.logged[0].key, 'stepBox');
+  assert.equal(h.logged[0].step, 'Insured Info');
+
+  // 2. Real wire() from sidepanel/sidepanel.js registers tabs.onRemoved, pagehide, and visibilitychange
+  const flushes = [];
+  const winListeners = {};
+  const docListeners = {};
+  let removedListener = null;
+  const noopEl = () => ({ addEventListener() {}, classList: { add() {}, remove() {} }, hidden: false });
+  const noop = () => {};
+  const wireCtx = {
+    inExtension: true,
+    state: { tabSteps: new Map(), stopScreens: new Map(), tabSessions: new Map(), quoteStates: new Map(), layoutHold: false, layoutNewTabs: new Set(), settingsOpen: false, filling: false, intake: null, pdf: null, summary: null, detailsOpen: false },
+    usage: { build: () => ({ channel: 'source' }) },
+    canRecord: () => false,
+    $: noopEl,
+    document: { visibilityState: 'visible', body: noopEl(), addEventListener: (t, fn) => { docListeners[t] = fn; } },
+    window: { addEventListener: (t, fn) => { winListeners[t] = fn; } },
+    ResizeObserver: class { observe() {} },
+    chrome: {
+      commands: { onCommand: { addListener: noop } },
+      runtime: { onMessage: { addListener: noop } },
+      tabs: { onActivated: { addListener: noop }, onCreated: { addListener: noop }, onUpdated: { addListener: noop }, onRemoved: { addListener: (fn) => { removedListener = fn; } }, onAttached: { addListener: noop }, onDetached: { addListener: noop } },
+      windows: { onFocusChanged: { addListener: noop } },
+    },
+    flushPendingTextChanges: (tabId) => { flushes.push(tabId === undefined ? 'all' : tabId); },
+    forgetJournals: noop, forgetQuoteTab: noop, dropReports: noop, inheritQuoteState: noop, noteNewTab: noop,
+    popOut: noop, dock: noop, closeSettings: noop, openSettings: noop, mountSiteTrack: noop, mountNote: noop,
+    mountLoadError: noop, mountSetup: noop, mountSettings: noop, settingsActs: () => ({}), aiActs: () => ({}),
+    markTestRun: noop, defaultsActs: () => ({}), setDefaultsShown: noop, renderSteps: noop, resumeHeldFill: noop,
+    capturePage: noop, mountRecordingLine: noop, mountSteps: noop, setView: noop, refreshAnswers: noop,
+    checkItems: noop, fileReplacer: () => ({ replace: noop, answered: noop }), loadFile: noop, askFile: noop,
+    clientNote: noop, workSaid: noop, mountClient: noop, closeDetails: noop, openDetails: noop, openPdf: noop,
+    closeSummary: noop, openSummary: noop, render: noop, clearClient: noop, storageSaid: noop, newQuote: noop,
+    mountChecks: noop, mountDetails: noop, showEmpty: noop, mountSummary: noop, saveSummary: noop, mountCards: noop,
+    openPortal: noop, mountPickers: noop, pickUnit: noop, mountFeed: noop, setFilter: noop, showPast: noop,
+    clearMarks: noop, mountPdf: noop, closePdf: noop, openPdfInTab: noop, pdfZoom: noop, PDF_FOCUS_ZOOM: 2,
+    pdfPage: noop, PDF_ZOOMS: [1, 2], pdfPan: noop, drawPdf: noop, overlayKey: noop, mountDock: noop,
+    fillPage: noop, stopFill: noop, showNextNeed: noop, lookRight: noop, pageOf: noop, dismissState: noop,
+    captureFromShortcut: noop, noteCaptured: noop, toggleRecording: noop, onTraceMessage: noop,
+    recordedTabUpdated: noop, recordedTabRemoved: noop, renderUnfinished: noop, wireUsage: noop, noteStep: noop,
+    onRecorderMessage: noop, noteLiveItems: noop, onPanelMessage: noop, refreshTab: noop, onTabUpdated: noop,
+    startRecording: noop, noteRecording: noop, stopRecording: noop, recoverRecording: noop, discardUnfinished: noop,
+  };
+  vm.runInNewContext(`${extractFunction('wire')}\nwire();`, wireCtx);
+  assert.equal(typeof removedListener, 'function', 'wire() registered chrome.tabs.onRemoved');
+  assert.equal(typeof winListeners.pagehide, 'function', 'wire() registered window pagehide');
+  assert.equal(typeof docListeners.visibilitychange, 'function', 'wire() registered document visibilitychange');
+  removedListener(42);
+  winListeners.pagehide();
+  wireCtx.document.visibilityState = 'visible';
+  docListeners.visibilitychange();
+  wireCtx.document.visibilityState = 'hidden';
+  docListeners.visibilitychange();
+  assert.deepEqual(flushes, [42, 'all', 'all'], 'tabs.onRemoved passes tabId, pagehide flushes all, visibilitychange flushes only when hidden');
+});
+
+test('real flush paths (page_view, noteStep, fillPage, pickUnit, refreshTab, tabs.onRemoved, agent_click, recording stop), no-op drop and practice suppression', async () => {
+  const h = textCoalesceHarness({
+    extraFns: ['reportKey', 'stepScope', 'fillPage', 'pickUnit', 'refreshTab', 'tabInView', 'quoteUnderWay', 'showHeldNote'],
+    overrides: {
+      inExtension: true,
+      popped: false,
+      releaseUnitForms() {},
+      restoreAgentKeys: async () => {},
+      restoreDoneActions: async () => {},
+      restoreReports: async () => {},
+      restoreJournal: async () => {},
+      noteFollowed() {},
+      noteQuoteTab() {},
+      seedQuoteState() {},
+      carrierForUrl: () => h.state.tab.carrier,
+      productOf: () => null,
+      issueSaid: (x) => x,
+      chrome: {
+        tabs: {
+          sendMessage: async () => {},
+          get: async (id) => ({ id, url: h.state.tab?.url ?? '' }),
+          query: async () => [{ id: 2, url: 'https://amwins.test/application/businessauto', windowId: 1 }],
+        },
+      },
+      runKit: async () => [{ frameId: 0, result: { fields: 0, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], actions: [], blockers: [] } }],
+      renderReport() {},
+      keepJournal() {},
+    },
+  });
+
+  // 1. page_view flushes under old page before logging page_view
+  h.send({ event: 'field_changes', page: 'PageA', step: 'Insured Info',
+    changes: [{ key: 'boxA', label: 'Box A', kind: 'text', before: '', after: 'hello', agent: true }] });
+  h.send({ event: 'page_view', page: 'PageB', from: 'PageA', fields: 5 });
+  assert.deepEqual(h.logged.map((e) => [e.type, e.page, e.step ?? null]), [
+    ['field_change', 'PageA', 'Insured Info'],
+    ['page_view', 'PageB', null],
+  ]);
+  h.logged.length = 0;
+
+  // 2. noteStep flushes under old step
+  h.state.tabSteps.set(1, 'Insured Info');
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'boxB', label: 'Box B', kind: 'text', before: '', after: 'step one', agent: true }] });
+  h.context.noteStep({ ra: 'usage', event: 'step_shown', page: '/application/businessauto', step: 'Drivers' }, { tab: { id: 1 } });
+  assert.deepEqual(h.logged.map((e) => [e.key, e.step]), [['boxB', 'Insured Info']]);
+  h.logged.length = 0;
+
+  // 3. agent_click flushes before logging agent_click
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Drivers',
+    changes: [{ key: 'boxClick', label: 'Box Click', kind: 'text', before: '', after: 'typed', agent: true }] });
+  h.send({ event: 'agent_click', page: '/application/businessauto', step: 'Drivers', text: 'Continue' });
+  assert.deepEqual(h.logged.map((e) => e.type), ['field_change', 'agent_click']);
+  h.logged.length = 0;
+
+  // 4. pickUnit flushes under the old unit's view before switching state.active
+  h.state.active.vehicles = 0;
+  h.send({ event: 'field_changes', page: 'AddVehicle', step: 'Vehicles',
+    changes: [{ key: 'vehNote', label: 'Vehicle note', kind: 'text', before: '', after: 'unit 0', agent: true }] });
+  await h.context.pickUnit('vehicles', 1);
+  assert.equal(h.logged.length, 1);
+  assert.equal(h.logged[0].view, 't1:v0', 'kept original unit view before pickUnit changed state.active');
+  assert.equal(h.state.active.vehicles, 1);
+  h.logged.length = 0;
+
+  // 5. fillPage start flushes pending text before filling
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Drivers',
+    changes: [{ key: 'boxFill', label: 'Box Fill', kind: 'text', before: '', after: 'before fill', agent: true }] });
+  await h.context.fillPage();
+  assert.equal(h.logged[0]?.type, 'field_change');
+  assert.equal(h.logged[0]?.key, 'boxFill');
+  h.logged.length = 0;
+
+  // 6. tabs.onRemoved(otherTab) leaves tab 1 pending; refreshTab switching to tab 2 flushes tab 1
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Drivers',
+    changes: [{ key: 'boxTab', label: 'Box Tab', kind: 'text', before: '', after: 'on tab 1', agent: true }] });
+  h.context.flushPendingTextChanges(99);
+  assert.equal(h.logged.length, 0, 'removing another tab does not flush tab 1');
+  h.state.autoPages.clear();
+  h.state.filled.clear();
+  await h.context.refreshTab();
+  assert.equal(h.logged.length, 1, 'refreshTab to tab 2 flushes tab 1');
+  assert.equal(h.logged[0].key, 'boxTab');
+  assert.equal(h.logged[0].view, 't1:top');
+  h.logged.length = 0;
+
+  // 7. stopRecording flushes pending edit into recording timeline before untap
+  h.state.tab = { id: 1, url: 'https://amwins.test/application/businessauto', carrier: h.state.tab.carrier };
+  const recorded = [];
+  const rec = { tabId: 1, stopping: false, timer: 0, store: { manifest: { session: 'sess-1' }, add: (ev) => recorded.push(...ev) } };
+  h.state.recording = rec;
+  rec.untap = h.context.copyUsage(rec);
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'recBox', label: 'Rec Notes', kind: 'text', before: '', after: 'part 1', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'recBox', label: 'Rec Notes', kind: 'text', before: 'part 1', after: 'part 1 + 2', agent: true }] });
+  const stopping = h.context.stopRecording();
+  for (let i = 0; i < 20 && !h.timers.size; i++) await new Promise((r) => setImmediate(r));
+  await h.advance(600);
+  await stopping;
+  assert.equal(recorded.length, 1, 'recording received the coalesced event before untap');
+  assert.equal(recorded[0].event.key, 'recBox');
+
+  // 8. No-op backspace back to starting value drops the event
+  h.logged.length = 0;
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'undo', label: 'Undo', kind: 'text', before: 'same', after: 'sameX', agent: true }] });
+  h.send({ event: 'field_changes', page: '/application/businessauto', step: 'Insured Info',
+    changes: [{ key: 'undo', label: 'Undo', kind: 'text', before: 'sameX', after: 'same', agent: true }] });
+  await h.advance(4000);
+  assert.equal(h.logged.length, 0, 'no-op settled edit is dropped');
+
+  // 9. Practice carrier logs nothing while still protecting agentKeys
+  const p = textCoalesceHarness({ carrier: { id: 'test', practice: true } });
+  p.send({ event: 'field_changes', page: '/quote',
+    changes: [{ key: 'txt', label: 'Notes', kind: 'text', before: '', after: 'abc', agent: true }] });
+  await p.advance(4000);
+  assert.equal(p.logged.length, 0, 'practice carrier logs nothing');
+  assert.equal(p.state.agentKeys.get('/quote')?.has('txt'), true, 'practice carrier still protects agent key');
+});
+
+// Issues #584, #585: quote_premium is logged when a fill sees a current premium on a premium page,
+// even when the fill navigates or opens a new tab before captureLayout can read the page, while
+// sharing premiumsSeen dedupe with captureLayout and respecting stale, stop-step and practice guards.
+test('fill-time quote_premium logs once across navigation/tab switch, deduplicates with captureLayout, and respects guards (#584, #585)', async () => {
+  const logged = [];
+  const premiumsSeen = new Map();
+  let pageText = '';
+  let domPage = 'CoveragesRates';
+  let domStep = '';
+  const session = { id: 'sess-p1', intakeId: 'int-p1', keySalt: 'salt' };
+  const state = {
+    intake: { record: { garaging: { state: 'FL' }, operations: { businessClass: 'Freight Hauler' }, vehicles: [], trailers: [], drivers: [], coverage: {} } },
+    intakeRevision: 0,
+    tab: { id: 7, url: 'CoveragesRates', carrier: progressive },
+    active: { vehicles: 0, drivers: 0, trailers: 0 },
+    viewTabs: new Map([[7, 1]]),
+    tabSteps: new Map(),
+    tabSessions: new Map(),
+    lastLayouts: new Map(),
+    lastRuns: new Map(),
+    layoutChain: Promise.resolve(),
+    layoutGeneration: 0,
+    filling: false,
+  };
+  const context = {
+    state,
+    $: () => ({ checked: true }),
+    crypto: { randomUUID: () => 'run-p1' },
+    usage: { currentSession: () => session, log: (...e) => logged.push(...e) },
+    chrome: { scripting: { executeScript: async () => [{ result: pageText }] } },
+    store: { set: () => Promise.resolve() },
+    pageOf: (u) => u,
+    planFor: () => [],
+    redactionTerms: () => [],
+    redactor: () => (t) => t,
+    rulesVersion: null,
+    carrierRulesOf: () => undefined,
+    fillDefaultsHash: () => undefined,
+    switchOn: () => true,
+    viewOf: () => 't1',
+    editScope: (p) => p,
+    tabStep: () => null,
+    noteStopScreen() {},
+    layoutFailed() {},
+    layoutErrorKind: () => 'other',
+    waitForFill() {},
+    sha256Hex,
+    fillEvents,
+    knownStep,
+    notePremium,
+    premiumHere,
+    premiumsSeen,
+    runKit: async () => [{ frameId: 0, result: { isTopFrame: true, page: domPage, step: domStep, title: domStep, controls: [{ q: '1', kind: 'select', label: 'Liability', options: ['$1M'] }], buttons: [], messages: [] } }],
+  };
+  // Load noteFillPremium first so logFill binds to the real implementation (not the no-op stub).
+  vm.runInNewContext([
+    'stepOfResults', 'noteFillPremium', 'fillContext', 'logFill',
+    'layoutJob', 'jobCurrent', 'sameLayoutScope', 'superseded', 'captureLayout', 'recordLayout',
+  ].map(extractFunction).join('\n'), context);
+
+  const premiums = () => logged.filter((e) => e.type === PREMIUM_EVENT);
+
+  // 1. Progressive: fill recalculates and clicks billPlan -> tab moves to ChangePaymentPlan before captureLayout.
+  const progCtx = context.fillContext({ tabId: 7, carrier: progressive, page: 'CoveragesRates', tabUrl: 'CoveragesRates' });
+  const progReport = { fields: 1, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], blockers: [],
+    actions: [{ id: 'recalculate', text: 'Recalculate' }, { id: 'billPlan', text: 'View bill plan options' }],
+    navigatedTo: 'ChangePaymentPlan', premium: readPremium('Total premium amount $12,815.00 per year') };
+  state.tab.url = 'ChangePaymentPlan';
+  domPage = 'ChangePaymentPlan';
+  context.logFill(progCtx, [progReport], [{ frameId: 0, result: progReport }], Date.now());
+  await context.recordLayout('CoveragesRates');
+  assert.equal(premiums().length, 1, 'logs quote_premium even though the tab already navigated to ChangePaymentPlan');
+  assert.deepEqual({ ...premiums()[0] }, {
+    type: PREMIUM_EVENT, carrier: 'progressive', page: 'CoveragesRates', view: 't1',
+    total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null,
+  });
+
+  // 2. Later layout capture back on CoveragesRates sees the exact same premium: not logged twice.
+  state.tab.url = 'CoveragesRates';
+  domPage = 'CoveragesRates';
+  pageText = 'Total premium amount $12,815.00 per year';
+  await context.recordLayout('CoveragesRates');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(premiums().length, 1, 'same premium seen by later layout capture is deduplicated via premiumsSeen');
+
+  // 3. Stale page (no report.premium, stale text in captureLayout): logs nothing new.
+  const staleReport = { fields: 1, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], blockers: [], actions: [] };
+  pageText = 'Total premium amount **** per year\nPlease recalculate';
+  context.logFill(progCtx, [staleReport], [{ frameId: 0, result: staleReport }], Date.now());
+  await context.recordLayout('CoveragesRates');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(premiums().length, 1, 'stale page logs no quote_premium');
+
+  // 4. Changed premium before Print (EFT discount) logs a second quote_premium.
+  const eftReport = { ...progReport, actions: [{ id: 'print', text: 'Print, Email, Fax' }], navigatedTo: 'PrintEmailFax',
+    premium: readPremium('Total premium amount $12,500.00 per year including EFT') };
+  state.tab.url = 'PrintEmailFax';
+  context.logFill(progCtx, [eftReport], [{ frameId: 0, result: eftReport }], Date.now());
+  assert.deepEqual(premiums().map((e) => e.total), [12815, 12500]);
+
+  // 5. Practice carrier and recon/non-premium carrier (no premiumPages) log nothing.
+  const practiceCarrier = { ...progressive, practice: true };
+  const reconCarrier = { id: 'recon', name: 'Recon', rules: [] };
+  const pracCtx = context.fillContext({ tabId: 7, carrier: practiceCarrier, page: 'CoveragesRates', tabUrl: 'CoveragesRates' });
+  const reconCtx = context.fillContext({ tabId: 7, carrier: reconCarrier, page: 'CoveragesRates', tabUrl: 'CoveragesRates' });
+  const amwinsCtx = context.fillContext({ tabId: 7, carrier: amwins, page: '/application/businessauto', tabUrl: '/application/businessauto' });
+  for (const c of [pracCtx, reconCtx, amwinsCtx]) {
+    const r = { ...progReport, premium: { total: 9999, termMonths: 12, dueToday: null, payments: null, payment: null } };
+    context.logFill(c, [r], [{ frameId: 0, result: r }], Date.now());
+  }
+  assert.equal(premiums().length, 2, 'practice, recon and carriers without premiumPages log no quote_premium');
+
+  // 6. GEICO on Quote & Coverages: Print Quote Proposal opens /PrintQuote in a new tab (state.tab changes),
+  //    so captureLayout never runs, yet logFill logs quote_premium with step; later layout capture deduplicates;
+  //    a stop step logs nothing.
+  state.tab = { id: 8, url: '/quote', carrier: geico };
+  const geicoCtx = context.fillContext({ tabId: 8, carrier: geico, page: '/quote', tabUrl: '/quote' });
+  const geicoText = '12 Month Total Premium: $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83';
+  const geicoReport = { fields: 2, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], blockers: [],
+    stepKey: 'Quote & Coverages', actions: [{ id: 'recalculate', text: 'Recalculate' }, { id: 'printProposal', text: 'Print Quote Proposal' }],
+    premium: readPremium(geicoText) };
+  // New tab /PrintQuote took focus before fill returned.
+  state.tab = { id: 9, url: '/PrintQuote', carrier: geico };
+  context.logFill(geicoCtx, [geicoReport], [{ frameId: 0, result: geicoReport }], Date.now());
+  assert.equal(premiums().length, 3, 'GEICO quote_premium logged even after Print Quote Proposal opened a new tab');
+  assert.deepEqual({ ...premiums()[2] }, {
+    type: PREMIUM_EVENT, carrier: 'geico', page: '/quote', view: 't1', step: 'Quote & Coverages',
+    total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83,
+  });
+  // Returning to Quote & Coverages: layout capture with the same premium does not log a duplicate.
+  state.tab = { id: 8, url: '/quote', carrier: geico };
+  domPage = '/quote';
+  domStep = 'Quote & Coverages';
+  pageText = geicoText;
+  await context.recordLayout('/quote');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(premiums().length, 3, 'GEICO layout capture deduplicates against fill-logged premium');
+  // GEICO stop step logs nothing even if a report somehow carried a premium (both when stepKey is
+  // the stop step and when stepKey stayed 'Quote & Coverages' while stopStep is 'Final Quote Details').
+  const stopReport = { ...geicoReport, stepKey: 'Final Quote Details', premium: { total: 55555, termMonths: 12, dueToday: null, payments: null, payment: null } };
+  context.logFill(geicoCtx, [stopReport], [{ frameId: 0, result: stopReport }], Date.now());
+  const midStopReport = { ...geicoReport, stepKey: 'Quote & Coverages', stopStep: 'Final Quote Details', premium: { total: 66666, termMonths: 12, dueToday: null, payments: null, payment: null } };
+  context.logFill(geicoCtx, [midStopReport], [{ frameId: 0, result: midStopReport }], Date.now());
+  assert.equal(premiums().length, 3, 'stop step (including mid-fill stopStep with prior stepKey) never logs quote_premium');
+
+  // 7. fillOptions passes carrier.premiumPages to the kit.
+  const optsState = { ...state, tab: { id: 8, url: 'https://carrier.test/quote' }, doneSteps: new Set(), doneActions: new Set(), visitedPages: new Set(), filled: new Map(), agentKeys: new Map(), unitForms: {} };
+  assert.deepEqual([...fillOptionsOf(optsState, progressive).premiumPages], ['CoveragesRates']);
+  assert.deepEqual([...fillOptionsOf(optsState, geico).premiumPages], ['Quote & Coverages']);
+  assert.deepEqual([...fillOptionsOf(optsState, amwins).premiumPages], []);
+
+  // 8. No-op autoFill (0 filled, 0 actions, 0 warnings, no advanceDue/held/unlisted) still logs
+  //    a brand-new quote_premium via its else noteFillPremium branch without emitting a fill_run.
+  const af = fillHarness({ carrier: progressive });
+  const afSeen = new Map();
+  af.state.tab.url = 'https://progressive.test/quote?pageName=CoveragesRates';
+  af.context.pageOf = () => 'CoveragesRates';
+  af.context.notePremium = notePremium;
+  af.context.premiumHere = premiumHere;
+  af.context.premiumsSeen = afSeen;
+  vm.runInContext(extractFunction('noteFillPremium'), af.context);
+  const noopReport = {
+    fields: 1, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [],
+    actions: [], blockers: [], invalidatedActions: [], protectedKeys: [], labels: [], choices: [], halted: false,
+    premium: readPremium('Total premium amount $14,200.00 per year'),
+  };
+  af.context.runKit = async () => [{ frameId: 0, result: noopReport }];
+  await af.context.autoFill('CoveragesRates');
+  assert.equal(af.seen.logged.filter((e) => e.type === 'fill_run').length, 0, 'no-op autoFill logs no fill_run');
+  assert.deepEqual(af.seen.logged.filter((e) => e.type === PREMIUM_EVENT).map((e) => [e.carrier, e.page, e.total, e.termMonths]),
+    [['progressive', 'CoveragesRates', 14200, 12]], 'no-op autoFill still logs quote_premium via else noteFillPremium');
+  // A second no-op autoFill with the same premium deduplicates via premiumsSeen.
+  await af.context.autoFill('CoveragesRates');
+  assert.equal(af.seen.logged.filter((e) => e.type === PREMIUM_EVENT).length, 1);
 });

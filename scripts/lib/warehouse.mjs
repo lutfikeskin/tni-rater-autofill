@@ -74,7 +74,7 @@ export const TABLES = {
     columns: [
       ['session', 'VARCHAR'], ['intake_id', 'VARCHAR', 'SHA-256 of the intake PDF: a client quoted twice from one PDF has one'],
       ['agent', 'VARCHAR'], ['install', 'VARCHAR'], ['started_at', 'TIMESTAMPTZ', 'The intake was loaded'], ['last_at', 'TIMESTAMPTZ', "The quote's last event"],
-      ['version', 'VARCHAR', "The extension's version"], ['channel', 'VARCHAR'], ['is_test', 'BOOLEAN', "Marked as a test, listed in the test-run list, or one of the repository's fixture PDFs"],
+      ['version', 'VARCHAR', "The extension's version"], ['channel', 'VARCHAR'], ['is_test', 'BOOLEAN', "Marked as a test, listed in the test-run list, one of the repository's fixture PDFs, or run on a computer that used initials the list names (agent:)"],
       ['profile_source', 'VARCHAR', 'event: an intake_profile was logged; null: only the summary logged on load'],
       ['profile_dropped', 'VARCHAR[]', 'Fields the usage server left out of that profile event as out of shape'],
       ['state', 'VARCHAR', 'Garaging state: the profile, else the summary logged on load'],
@@ -147,12 +147,42 @@ export const TABLES = {
     ],
     key: ['session', 'question', 'unit'],
   },
+  // Sales from Bitrix (scripts/lib/bitrix.mjs, npm run bitrix): empty until a pull exists.
+  deals: {
+    comment: "One row per Bitrix deal of the pipeline pulled (npm run bitrix): its stage now. No name, contact or note is pulled",
+    columns: [
+      ['deal_id', 'INTEGER'], ['category', 'INTEGER', 'The pipeline: 0 is General'], ['stage', 'VARCHAR', "Bitrix's stage id (WON, LOSE, 17, ...)"],
+      ['stage_name', 'VARCHAR', 'As named in Bitrix: Sold policy, Rejected, Not interested for now, ...'],
+      ['stage_semantics', 'VARCHAR', "Bitrix's kind of stage: success (sold), failure, apology (canceled policy) or process (still open)"],
+      ['created_at', 'TIMESTAMPTZ'], ['updated_at', 'TIMESTAMPTZ'], ['closed', 'BOOLEAN'],
+    ],
+    key: ['deal_id'],
+  },
+  deal_stages: {
+    comment: "One row per time a deal moved to a stage (Bitrix's stage history). A deal is reused across policy years, so it can be sold more than once",
+    columns: [
+      ['move_id', 'INTEGER'], ['deal_id', 'INTEGER'], ['stage', 'VARCHAR'], ['stage_name', 'VARCHAR'], ['stage_semantics', 'VARCHAR'], ['moved_at', 'TIMESTAMPTZ'],
+    ],
+    key: ['move_id'],
+  },
+  deal_intakes: {
+    comment: "One row per intake file on a deal (its Intakes Submitted fields), with the file's SHA-256",
+    columns: [['deal_id', 'INTEGER'], ['file_id', 'INTEGER'], ['intake_id', 'VARCHAR', 'SHA-256 of the file: a quote of the same PDF has it as quotes.intake_id; null when it could not be downloaded']],
+    key: ['deal_id', 'file_id'],
+  },
+  quote_deals: {
+    comment: "One row per quote and Bitrix deal holding its intake PDF. A deal often has several quotes (re-quotes, carriers), and a PDF can sit on more than one deal",
+    columns: [['session', 'VARCHAR'], ['deal_id', 'INTEGER'], ['matched_by', 'VARCHAR', 'intake_pdf: the same file, byte for byte']],
+    key: ['session', 'deal_id'],
+  },
   build_info: {
     comment: 'The run that built this file',
     columns: [
       ['built_at', 'TIMESTAMPTZ'], ['commit', 'VARCHAR', 'The commit whose definitions built the tables'], ['dirty', 'BOOLEAN', 'That checkout had uncommitted changes'],
       ['sources', 'VARCHAR[]', 'The folders and files read'], ['events', 'INTEGER', 'Events stored'], ['quotes', 'INTEGER'], ['test_quotes', 'INTEGER'],
       ['test_list', 'VARCHAR', 'The test-run list read'], ['first_event', 'TIMESTAMPTZ'], ['last_event', 'TIMESTAMPTZ'],
+      ['bitrix_pulled_at', 'TIMESTAMPTZ', 'When the Bitrix deals were pulled: a sale after it is not in this file. Null: no pull'],
+      ['bitrix_since', 'TIMESTAMPTZ', 'The earliest change the pulls asked for: older deals untouched since are missing'],
     ],
     key: [],
   },
@@ -161,6 +191,22 @@ export const TABLES = {
 export const VIEWS = {
   v_quotes: { comment: 'The quotes, without test runs: start here', sql: 'SELECT * FROM quotes WHERE NOT is_test' },
   v_quote_premium: { comment: 'The last premium each carrier quoted for each quote, test runs left out', sql: 'SELECT p.* FROM quote_premiums p JOIN v_quotes q USING (session) QUALIFY row_number() OVER (PARTITION BY p.session, p.carrier ORDER BY p.quoted_at DESC) = 1' },
+  // Whether the client bought after the quote: the first move to a sold stage on its deal, after the
+  // quote started. A deal sold before the quote was already a client (a renewal or a re-quote).
+  // sold_within_60_days stays null until 60 days have passed by the last Bitrix pull: unknown, not No.
+  v_quote_sales: {
+    comment: 'One row per quote (test runs left out) and the Bitrix deal holding its intake PDF: whether and when it sold after the quote',
+    sql: `WITH m AS (
+      SELECT q.session, q.intake_id, q.agent, q.started_at, qd.deal_id, d.stage, d.stage_name, d.stage_semantics,
+        coalesce(bool_or(s.stage_semantics = 'success' AND s.moved_at < q.started_at), false) AS client_before,
+        min(s.moved_at) FILTER (WHERE s.stage_semantics = 'success' AND s.moved_at >= q.started_at) AS sold_at
+      FROM v_quotes q JOIN quote_deals qd USING (session) JOIN deals d USING (deal_id) LEFT JOIN deal_stages s USING (deal_id)
+      GROUP BY ALL)
+    SELECT m.*, date_diff('day', m.started_at, m.sold_at) AS days_to_sale,
+      CASE WHEN m.sold_at <= m.started_at + INTERVAL 60 DAY THEN true
+           WHEN (SELECT max(bitrix_pulled_at) FROM build_info) >= m.started_at + INTERVAL 60 DAY THEN false END AS sold_within_60_days
+    FROM m`,
+  },
 };
 
 const sqlString = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -208,12 +254,13 @@ export function eventRows(stored) {
 /**
  * The derived tables' rows, from the events the reviews read.
  * @param {object[]} events  loadEvents(): in time order, test page and blank pages left out
- * @param {{testIntakes?: Iterable<string>}} opts  the test-run list (readTestList().intakes)
+ * @param {{testIntakes?: Iterable<string>, testAgents?: Iterable<string>}} opts  the test-run list
+ *   (readTestList().intakes) and the maintainer's initials (readTestList().agents)
  * @returns {{quotes: object[], quote_vehicles: object[], quote_drivers: object[], quote_prior_insurance: object[], quote_carriers: object[], quote_premiums: object[], answers: object[]}}
  */
-export function warehouseRows(events, { testIntakes = [] } = {}) {
+export function warehouseRows(events, { testIntakes = [], testAgents = [] } = {}) {
   const quoted = quoteSessions(events);
-  const tests = testSessionsOf(events, testIntakes);
+  const tests = testSessionsOf(events, testIntakes, { agents: testAgents });
   const loaded = new Map();
   const profiles = new Map();
   const lastAt = new Map();

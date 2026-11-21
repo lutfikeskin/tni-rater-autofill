@@ -3,7 +3,8 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import * as pdfjs from '../../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
-import { normalizeIntake, rederive } from '../../src/normalize.js';
+import { noNumberEdit, rederive } from '../../src/normalize.js';
+import { readIntake } from '../../src/intake-forms.js';
 import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
 import { get, set } from '../../src/util.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -13,6 +14,7 @@ import * as usage from '../usage-log.js';
 import { $, discardAiSuggestions, doneRestored, fillsHeld, persistAiPending, pruneAgentRecords, restoreAiPending, state, store, switchOn, testIntakes, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals } from './core.js';
 import { changedFromRead, firstView, render } from './record.js';
 import { refreshTab } from './tab.js';
+import { flushPendingTextChanges } from './usage.js';
 import { cancelLayouts, dropReports, holdLayouts, resetViews, stopFillFirst, viewOf } from './coordinator.js';
 import { stopRecording } from './dev-recording.js';
 import { ntlAnswerEdited, ntlCargoEdited, ntlNotesItem, ntlPrimaryEdited, reviewIntake } from './assistant.js';
@@ -41,7 +43,7 @@ async function loadFile(file, { reset = false } = {}) {
   if (!Object.keys(raw).length) {
     return showLoadError('No fillable fields: it looks like a scan or printed copy. Ask for the fillable TNI application.', file.name);
   }
-  const result = normalizeIntake(raw);
+  const result = readIntake(raw);
   if ('error' in result) return showLoadError(result.error, file.name);
   const summary = await intakeSummary(bytes, raw, result);
   const test = (await testIntakes.get()).includes(summary.intakeId);
@@ -56,12 +58,15 @@ async function loadFile(file, { reset = false } = {}) {
   state.resetting = true;
   try {
     await stopFillFirst();
+    flushPendingTextChanges();
     // The same PDF again (to see it in the panel again, or by mistake): the agent's work on it stays.
     const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
     if (profileTimer) logProfile();
     if (state.intake) usage.log({ type: 'intake_closed', reason: reset ? 'reset' : 'replaced' });
     // A recording ends with its client (redacted with that client's names), as on clearing it.
     if (state.recording && !same) await stopRecording('Another client was loaded, so the recording stopped.');
+    // Flush again in case a tick arrived during stopRecording's wait before intake/session change.
+    flushPendingTextChanges();
     // A tab that went into a quote while the panel was closed did so before this intake (quote-owner.js).
     await settleQuoteEntries(async (id) => (await chrome.tabs.get(id)).url);
     clearTimeout(state.autoTimer);
@@ -136,6 +141,7 @@ async function loadFile(file, { reset = false } = {}) {
     state.triedAgain = null;
     doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
     discardAiSuggestions();
+    flushPendingTextChanges();
     await store.set('session', usage.startSession(summary.intakeId));
     await persistAiPending();
     await restoreAiPending();
@@ -150,11 +156,11 @@ async function loadFile(file, { reset = false } = {}) {
     render();
     refreshTab();
     reviewIntake();
-    // agent defaults: a new quote, asked again whose defaults it fills with.
-    refreshDefaults();
   } finally {
     state.resetDepth -= 1;
     state.resetting = state.resetDepth > 0;
+    // agent defaults: a new quote, asked again whose defaults it fills with (also on load failure).
+    if (!state.resetting) refreshDefaults();
   }
 }
 
@@ -248,12 +254,13 @@ async function restoreKeptWork(intake, after = -Infinity) {
   for (const [path, value] of Array.isArray(kept.edits) ? kept.edits : []) {
     if (typeof path !== 'string' || !path) continue;
     set(intake.record, path, value);
+    noNumberEdit(intake, path);
     edited.add(path);
   }
   intake.agentEdited = [...edited];
   const by = { ...(intake.agentDerivedBy ?? {}) };
   for (const path of edited) {
-    const derived = rederive(intake.record, path, { keep: edited }).filter((p) => changedFromRead(intake, p));
+    const derived = rederive(intake.record, path, { keep: edited, intake }).filter((p) => changedFromRead(intake, p));
     if (derived.length) by[path] = derived;
   }
   intake.agentDerivedBy = by;

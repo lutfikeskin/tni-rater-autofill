@@ -640,10 +640,18 @@ async function applyAi(list, ctx, decision) {
     if (sameContext) ctx.snapshots = after;
     return true;
   } catch (e) {
-    // A transport failure after dispatch does not prove that no carrier field changed.
-    for (const x of list) x.error = dispatched
-      ? 'the answer was sent but could not be confirmed; review the page before continuing'
-      : `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
+    // A transport failure after dispatch does not prove that no carrier field changed: keep any
+    // possibly-written item blocked as an unconfirmed review hold (never silently unblocked).
+    for (const x of list) {
+      if (dispatched) {
+        if (!x.done) continue;
+        x.done = 'auto';
+        x.unconfirmed = true;
+        x.error = 'the answer was sent but could not be confirmed; review the page before continuing';
+      } else {
+        x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
+      }
+    }
     return false;
   } finally {
     if (guarding) {
@@ -732,7 +740,8 @@ function renderAi(holder, suggestions, ctx) {
   // Every pick on this page still waiting for approval, also from before an intake or
   // driver/vehicle change (those are labelled), so each one can always be approved or rejected.
   const pending = pendingAi(ctx.tabId, ctx.page);
-  const awaiting = pending.filter((x) => !x.rejected);
+  const awaiting = pending.filter((x) => !x.rejected && !x.unconfirmed);
+  const confirmable = pending.filter((x) => x.rejected || x.unconfirmed);
   const rejectedPending = pending.filter((x) => x.rejected);
   const current = assistContextKey(state.intake?.record, state.active, ctx.carrier?.id);
   const currentHash = aiFingerprint(current);
@@ -772,7 +781,7 @@ function renderAi(holder, suggestions, ctx) {
       }
     }
     for (const x of list) {
-      if (decision === 'approved') x.approved = true; else x.rejected = true;
+      if (decision === 'approved') x.approved = true; else { x.rejected = true; x.unconfirmed = false; }
       if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
     }
     if (decision === 'rejected') {
@@ -800,8 +809,14 @@ function renderAi(holder, suggestions, ctx) {
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;
       if (present) {
+        // An unconfirmed pick the agent confirms is the AI's answer accepted (approved, as the
+        // reports count it); a rejected one whose page answer they confirm stays rejected.
+        const decision = x.unconfirmed && !x.rejected ? 'approved' : 'rejected_confirmed';
         x.confirmed = true;
-        if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'rejected_confirmed'));
+        x.unconfirmed = false;
+        x.error = null;
+        x.confirmError = null;
+        if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
       } else {
         x.confirmError = 'The page answer changed; review it.';
       }
@@ -830,8 +845,14 @@ function renderAi(holder, suggestions, ctx) {
       return { kind: 'rejected', text: x.confirmError ?? (x.retired ? 'From a retired assistant: review the page answer.' : 'AI answer rejected: answer it on the page.'),
         confirm: rejectedPending.includes(x) ? () => confirmRejected([x]) : null };
     }
+    if (x.unconfirmed && x.done === 'auto' && !x.approved && !x.confirmed) {
+      return { kind: 'unconfirmed', choice: x.choice,
+        text: x.confirmError ?? x.error ?? 'the answer was sent but could not be confirmed; review the page before continuing',
+        notes: notes(x),
+        confirm: () => confirmRejected([x]), reject: () => decide([x], 'rejected') };
+    }
     if (x.error) return { kind: 'error', text: `The page didn't take the AI answer (${x.error}). Answer it on the page.` };
-    if (x.done === 'auto' && !x.approved) {
+    if (x.done === 'auto' && !x.approved && !x.confirmed) {
       return { kind: 'picked', choice: x.choice, tip: x.tip || null, notes: notes(x),
         approve: () => decide([x], 'approved'), reject: () => decide([x], 'rejected') };
     }
@@ -866,21 +887,21 @@ function renderAi(holder, suggestions, ctx) {
     // (or rejected, or not taken by the page) is still theirs.
     if (!['answered', 'marked', 'picked'].includes(item.settled)) {
       item.note = null;
-      const settled = !!x.manual || (!!x.done && !x.rejected && !x.error && (x.done !== 'auto' || !!x.approved));
-      const waiting = !settled && x.done === 'auto' && !x.rejected && !x.error;
+      const settled = !!x.manual || (!!x.done && !x.rejected && !x.error && (x.done !== 'auto' || !!x.approved || !!x.confirmed));
+      const waiting = !settled && x.done === 'auto' && !x.rejected && (!x.error || !!x.unconfirmed);
       item.settled = settled ? 'ai' : null;
       item.pending = waiting;
       if (settled) {
         setHead(item, { icon: '✓', value: x.manual ? 'Your answer on the page' : x.choice, tag: x.manual ? { kind: 'you', text: 'You' }
-          : { kind: 'ai', text: x.done === 'auto' ? 'AI · approved' : 'AI · you chose', title: 'AI assistant suggestion, chosen by you' } });
-      } else if (waiting) setHead(item, { icon: '?', value: x.choice, tag: { kind: 'ai', text: 'AI picked · approve', title: 'Picked by the AI assistant: approve or reject it' } });
+          : { kind: 'ai', text: x.done === 'auto' ? (x.confirmed ? 'AI · confirmed' : 'AI · approved') : 'AI · you chose', title: 'AI assistant suggestion, chosen by you' } });
+      } else if (waiting) setHead(item, { icon: '?', value: x.choice, tag: { kind: 'ai', text: x.unconfirmed ? 'AI · confirm' : 'AI picked · approve', title: x.unconfirmed ? 'Sent by the AI assistant but not confirmed: confirm or reject it' : 'Picked by the AI assistant: approve or reject it' } });
       else item.head = null;
     }
     drawRow(item);
   }
   holder.say({ useAll: sure.length > 1 ? { label: `Use all ${sure.length} AI answers`, put: () => act(sure, 'accepted') } : null, orphans });
   // The dock's Approve (dockFor): every pick waiting on this page, or the rejected ones confirmed.
-  if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(rejectedPending)) });
+  if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(confirmable)) });
   else state.aiDocks.delete(`${ctx.tabId}|${ctx.page}`);
   recount();
   renderSteps();

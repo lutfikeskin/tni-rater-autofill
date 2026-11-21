@@ -8,7 +8,7 @@ import { inExtension } from './env.js';
 import { $, clearAgentKeys, FILLS_HELD_NOTE, holdFills, persistAiPending, releaseFills, state, store, clearKeptWork, forgetJournals } from './core.js';
 import { loadFile, logProfile, profileTimer } from './intake.js';
 import { render, showScreen } from './record.js';
-import { pageOf, samePage } from './usage.js';
+import { flushPendingTextChanges, pageOf, samePage } from './usage.js';
 import { cancelLayouts, dropReports, holdLayouts, renderSite, resetViews, stopFillFirst, stopPageIsOurs, viewOf } from './coordinator.js';
 import { refreshAnswers, runKit } from './fill.js';
 import { stopRecording } from './dev-recording.js';
@@ -323,7 +323,10 @@ function noteStep(msg, sender) {
   const step = knownStep(carrier, msg.step);
   if (!step) return;
   const moved = state.tabSteps.get(sender.tab.id) !== step;
-  if (moved) state.tabSteps.set(sender.tab.id, step);
+  if (moved) {
+    flushPendingTextChanges();
+    state.tabSteps.set(sender.tab.id, step);
+  }
   if (carrier?.stopSteps?.[step] && (moved || (msg.event === 'page_view' && !msg.from)) && !carrier.practice && stopPageIsOurs()) {
     const page = samePage(msg.page) || pageOf(state.tab.url);
     usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${step}`] }], { carrier: carrier.id, page, view: viewOf(sender.tab.id, page), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
@@ -370,6 +373,7 @@ async function newQuote() {
   state.resetDepth = (state.resetDepth ?? 0) + 1;
   state.resetting = true;
   try {
+    flushPendingTextChanges();
     const bytes = await intakePdfBytes();
     if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
     const scope = usage.currentSession()?.intakeId;
@@ -424,8 +428,11 @@ async function clearClient() {
   state.resetting = true;
   try {
     await stopFillFirst();
+    flushPendingTextChanges();
     // A recording ends with its client, saved as it is.
     if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
+    // Flush again in case a tick arrived during stopRecording's wait, before intake_closed and session clear.
+    flushPendingTextChanges();
     if (profileTimer) logProfile();
     usage.log({ type: 'intake_closed', reason: 'cleared' });
     cancelLayouts();
@@ -441,6 +448,7 @@ async function clearClient() {
     state.summary = null;
     dropReports();
     clientNote(null);
+    flushPendingTextChanges();
     usage.restoreSession(null);
     await store.remove('intake');
     await store.remove('session');
@@ -464,6 +472,8 @@ async function clearClient() {
       }
       // agent defaults: no client, no question.
       refreshDefaults();
+      // Note: state.tab.carrier stays whatever the cleared intake's product resolved until the next
+      // tab event (harmless with one product; call refreshTab() here once a second product shares a host).
       render();
       renderSite();
     }

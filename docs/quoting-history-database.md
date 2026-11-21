@@ -1,6 +1,6 @@
 # Quoting history database
 
-**Status: the warehouse is built, nothing deployed.** It is a DuckDB file on the maintainer's computer, built from the pulled usage log by `npm run warehouse` (#152). The intake profile that fills most of its columns is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). Until that release, the profile columns are empty. This was first written on 2026-10-22 as a proposal for Postgres on Railway; the maintainer chose a local DuckDB file the same day ([where it runs](#where-it-runs)).
+**Status: the warehouse is built, nothing deployed.** It is a DuckDB file on the maintainer's computer, built from the pulled usage log by `npm run warehouse` (#152), with TNI's sales from Bitrix pulled by `npm run bitrix` ([Sales](#sales)). The intake profile that fills most of its columns is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). Until that release, the profile columns are empty. This was first written on 2026-10-22 as a proposal for Postgres on Railway; the maintainer chose a local DuckDB file the same day ([where it runs](#where-it-runs)).
 
 Read this when querying the warehouse, changing its tables, or deciding what to add to it. For the usage server, read [hosting](hosting.md); for what each event means, [learning](learning.md).
 
@@ -14,7 +14,8 @@ TNI wants to ask its quoting history business questions:
 - which coverages and limits clients ask for, and which are chosen on each carrier;
 - who insured them before, and when those policies expire;
 - how all of that moves over time;
-- later, what the carriers quoted (premiums).
+- what the carriers quoted (premiums);
+- which quotes the client bought, and how soon ([Sales](#sales)): later, which kinds of quote sell.
 
 The usage server already receives part of this, as JSON lines on a Railway volume. `npm run warehouse` turns the pulled copy into tables the maintainer queries in SQL with the DuckDB command line. The rest needs one extension change, the intake profile below.
 
@@ -35,9 +36,9 @@ Every row here is a field the usage server keeps today (`EVENT_FIELDS`: the even
 | Choice made on the carrier page | `fill_field.shown`, `field_change.to`, `page_layout.selected` | The option text the extension filled, the agent picked, or the page left standing. `finalAnswers` in [learn.mjs](../scripts/lib/learn.mjs) combines them into one answer per question and unit. Typed text is never logged. |
 | Why that answer | `fill_field.source`, `standard` | Intake, derived, standard (TNI's), fact or attestation. |
 | Who, when, which build | `agent`, `install`, `t`, `receivedAt`, `v`, `channel`, `commit` | `t` is the agent's computer clock; `receivedAt` is the server's. |
-| Test runs | `intake_loaded.test`, `intake_marked`, fixture PDFs, `reviews/test-intakes.txt` | Read by `readTestList` and `testSessionsOf` in [signals.mjs](../scripts/lib/signals.mjs). |
+| Test runs | `intake_loaded.test`, `intake_marked`, fixture PDFs, `reviews/test-intakes.txt` (fingerprints and `agent:` lines) | Read by `readTestList` and `testSessionsOf` in [signals.mjs](../scripts/lib/signals.mjs). |
 
-Missing today: whether the business has a USDOT or MC number, the 60-day answer, years in business, operations (radius, hazmat, filings, ELD, ...), each vehicle's and trailer's type, year, make and value, drivers' ages and CDLs, the requested limits, the prior insurer, claims, premiums, and whether the client bought.
+Missing today: whether the business has a USDOT or MC number, the 60-day answer, years in business, operations (radius, hazmat, filings, ELD, ...), each vehicle's and trailer's type, year, make and value, drivers' ages and CDLs, the requested limits, the prior insurer, claims, and premiums. Whether the client bought is in Bitrix, not the log ([Sales](#sales)).
 
 ## The intake profile: what to add
 
@@ -110,6 +111,8 @@ Quotes from before that release have no profile. A one-time backfill could build
 flowchart LR
   EXT["Extension<br/>(+ intake_profile)"] -- "usage events" --> SRV["usage-server<br/>/data/events/*.jsonl<br/>(source of record)"]
   SRV -- "npm run pull" --> LOCAL["server-data/events/"]
+  BX["Bitrix24 deals<br/>(read-only webhook)"] -- "npm run bitrix" --> BXL["server-data/bitrix/deals.json"]
+  BXL -- "npm run warehouse" --> DUCK
   LOCAL -- "npm run warehouse<br/>(scripts/lib definitions)" --> DUCK["server-data/warehouse.duckdb<br/>events, quotes, quote_vehicles,<br/>quote_drivers, quote_prior_insurance,<br/>quote_carriers, answers"]
   DUCK --> SQL["duckdb command line"]
 ```
@@ -118,8 +121,8 @@ Four rules shape it.
 
 1. **The JSONL stays the source of record.** Each run builds the whole file again from the pulled log. The pilot's 33,000 events so far take about 3 seconds. A bug in the warehouse costs a rebuild, never data.
 2. **One definition of a quote.** What counts as a quote, a test run, a done quote and a final answer already lives in `scripts/lib`: `quoteSessions` and `loadEvents` ([events.mjs](../scripts/lib/events.mjs)), `readTestList`, `testSessionsOf` and `quoteOutcomes` ([signals.mjs](../scripts/lib/signals.mjs)), `finalAnswers` ([learn.mjs](../scripts/lib/learn.mjs)). The warehouse computes its tables with those functions in Node and writes the rows. Rewriting them in SQL would give the database a second quote count that disagrees with the weekly review.
-3. **The database collects nothing itself.** Everything in it came through the usage server as an event. New data, like the profile, is an extension and server change with its own review.
-4. **It stays on the maintainer's computer.** It is one file in git-ignored `server-data/`, beside the log it is built from. There is no server, port or password. It holds client data: don't copy, attach or commit it.
+3. **The database collects nothing itself.** Everything in it came through the usage server as an event, or from the last `npm run bitrix` pull ([Sales](#sales)). New data, like the profile, is an extension and server change with its own review.
+4. **It stays on the maintainer's computer.** It is one file in git-ignored `server-data/`, beside the log it is built from. There is no server, port or password. It holds client data: don't copy, attach or commit it. The one thing that leaves it is `npm run push-sales`: per quote since launch, its initials, times, deal id, stage and outcome, sent to the usage server's [sales page](hosting.md#sales-page).
 
 ### Tables
 
@@ -135,7 +138,12 @@ Four rules shape it.
 | `quote_premiums` | premium a carrier page quoted, each time it changed | `quote_premium` events ([Premiums](#premiums)) |
 | `v_quote_premium` (view) | quote and carrier: its last premium, test runs left out | `quote_premiums` |
 | `answers` | question and unit a quote answered on a carrier | `finalAnswers` |
-| `build_info` | the run that built the file | the commit, whether it had uncommitted changes, the sources, the test-run list, counts, the first and last event |
+| `deals` | Bitrix deal of the pipeline pulled: its stage now | `npm run bitrix` ([Sales](#sales)) |
+| `deal_stages` | time a deal moved to a stage | Bitrix's stage history |
+| `deal_intakes` | intake file on a deal, with its SHA-256 | the deal's Intakes Submitted fields |
+| `quote_deals` | quote and the deal holding its intake PDF | `intake_id` = the file's hash |
+| `v_quote_sales` (view) | quote (test runs left out) and its deal: sold after the quote, how soon | `quote_deals`, `deal_stages` |
+| `build_info` | the run that built the file | the commit, whether it had uncommitted changes, the sources, the test-run list, counts, the first and last event, when Bitrix was pulled |
 
 Every column is defined once, in `TABLES` in [warehouse.mjs](../scripts/lib/warehouse.mjs), with a note the file keeps as its comment. In the command line, `DESCRIBE quotes` lists a table's columns, and `SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'quotes'` gives the notes.
 
@@ -217,7 +225,7 @@ node scripts/warehouse.mjs server-data --tests <main checkout>/reviews/test-inta
 
 - It reads the server folder, exported logs or both, as the review scripts do ([warehouse.mjs](../scripts/warehouse.mjs)).
 - It builds a new file beside the old one (`warehouse.duckdb.building`) and swaps it in only once it is whole. A failed build leaves the old file.
-- It refuses to run without a test-run list: `--tests <file>`, or `reviews/test-intakes.txt` in the checkout, which may be empty. The review only warns; a database people query for months should not count the maintainer's test quotes as clients. The fixture PDFs' fingerprints are added, as in the review.
+- It refuses to run without a test-run list: `--tests <file>`, or `reviews/test-intakes.txt` in the checkout, which may be empty. A line `agent:AD` in that list names the maintainer's initials: every quote on a computer that ever sent them is a test run (`is_test`), quotes sent there before the initials were typed in included, unless the quote was unmarked as a test in the panel. The weekly reports, ledger, learner and answer-key tools read the same `agent:` lines. The review only warns when the list is missing; a database people query for months should not count the maintainer's test quotes as clients. The fixture PDFs' fingerprints are added, as in the review.
 - It prints counts only (events, quotes, test runs, rows per table) and the commit. It prints no client value.
 - It replaces the file on every run. Keep your own queries in `.sql` files, not as views inside the file. Close the file in the command line before a rebuild: Windows won't replace a file another program has open.
 
@@ -365,9 +373,57 @@ SELECT built_at, commit, dirty, events, quotes, test_quotes, test_list, first_ev
 FROM build_info;
 ```
 
+## Sales
+
+Whether a quoted client bought is in Bitrix24, TNI's CRM. Each client is a deal in the General pipeline, and the agent quotes from the intake PDF attached to the deal (its **Intakes Submitted file(s)** fields). The extension logs that PDF's SHA-256 as `intake_id`, so a quote joins to its deal by hashing the deal's files: the same file byte for byte, with no name, phone or email in the log or the warehouse. On the first pull (2026-11-16), 110 of the 117 intake PDFs quoted since launch were on a deal.
+
+`npm run bitrix` ([bitrix-pull.mjs](../scripts/bitrix-pull.mjs), [lib](../scripts/lib/bitrix.mjs)) pulls, through an inbound webhook:
+
+- the deals of one pipeline (`--category`, default 0, General) changed since the last pull less a day (the first pull: since 2026-10-01, or `--since`): id, stage, created, updated, closed;
+- the pipeline's stages, with Bitrix's kind of stage (`success` is Sold policy, `failure` Rejected, `apology` Canceled policy, `process` every open stage);
+- each of those deals' stage history;
+- a SHA-256 of every file in a deal file field whose label says "intake", downloaded as soon as its page of deals is listed (the item API's `urlMachine` links don't last). A file is downloaded once; one that fails is kept without a hash, and its deal is listed again by id on the next pull, changed or not.
+
+It keeps them in git-ignored `server-data/bitrix/deals.json`, written beside the old one and swapped in, and prints counts only. No deal title, contact, note or file is kept. It only reads: the client refuses any method but `*.list`, `*.get` and `*.fields` before sending it. Bitrix's CRM permission on a webhook also allows writing, so that refusal is the guard.
+
+The webhook URL is a credential: `RATER_BITRIX_WEBHOOK`, or its only line in `~/.config/tni-rater/bitrix-webhook` (chmod 600), beside the admin token. Make it in Bitrix24 under Developer resources, Other, Inbound webhook, with the CRM permission only. It is never printed, and errors name the method, not the URL.
+
+`npm run warehouse` loads the last pull (`--bitrix <file>` for another), or leaves the sales tables empty and says so. `npm run push-sales` then sends `v_quote_sales` to the usage server's [sales page](hosting.md#sales-page).
+
+What to know when reading `v_quote_sales`:
+
+- **A deal is reused across policy years.** About one in five quoted deals was already Sold before the quote: a renewal or an existing client re-quoted. `client_before` says so. `sold_at` is the first move to a sold stage *after* the quote started, never the deal's stage today.
+- **`sold_within_60_days` is null until it can be known**: true when it sold within 60 days of the quote, false once the last pull is 60 days past the quote without a sale, null before. Most quotes sell within days, some a month later.
+- **The unit is a quote, not a client.** A deal often has several quotes (re-quotes, carriers) and an intake PDF can sit on more than one deal. Group by `deal_id` to count clients.
+- **Only changed deals are pulled.** A deal untouched since before `build_info.bitrix_since` is missing, and so is its sale. A deal deleted in Bitrix stays as last pulled.
+- **Not interested for now is an open stage** in Bitrix (`process`), not a loss. Whether it counts as lost is a choice for the analysis.
+
+Which quotes sold, by agent:
+
+```sql
+SELECT agent, count(DISTINCT session) AS quotes, count(DISTINCT deal_id) AS deals,
+       count(DISTINCT deal_id) FILTER (WHERE sold_at IS NOT NULL) AS sold_after_quote,
+       count(DISTINCT deal_id) FILTER (WHERE client_before) AS already_clients,
+       median(days_to_sale) AS median_days_to_sale
+FROM v_quote_sales
+GROUP BY 1
+ORDER BY 2 DESC;
+```
+
+Quotes without a deal, for checking the match:
+
+```sql
+SELECT q.started_at::date AS day, q.agent, count(*) AS quotes_without_deal
+FROM v_quotes q
+LEFT JOIN quote_deals qd USING (session)
+WHERE qd.deal_id IS NULL
+GROUP BY 1, 2
+ORDER BY 1;
+```
+
 ## Premiums
 
-The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), on the pages where a carrier quotes its premium (`premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates) it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
+The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). On the pages where a carrier quotes its premium (each carrier's `premiumPages`, checked by `premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates), the premium is read in two places and deduplicated through one per-quote, tab and carrier table (`premiumsSeen`): during a fill in the kit (`src/kit/cursor.js`, returned on the fill report and logged by `noteFillPremium` in `sidepanel/panel/coordinator.js` once a rating helper verifies it, right before pressing a helper or Continue out of the page, or as the fill ends while still there, so a fill that navigates or opens a new tab before a layout capture lands still logs it) and each time the panel reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page). When a current premium is shown and differs from the last one logged for that quote, tab and carrier, it is logged. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) and practice pages are never read. Nothing about the client is in it.
 
 | Field | Shape |
 | --- | --- |
@@ -376,20 +432,20 @@ The panel logs the premium a carrier page quotes as a `quote_premium` event ([pr
 | `termMonths` | 12 for a year, 6 for six months; null when the page doesn't say. |
 | `dueToday`, `payments`, `payment` | GEICO's down payment for the plan picked, the payments after today and each one; null elsewhere. |
 
-The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…", Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes, drops anything else, and refuses a reading without its total.
+The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…" (or its bottom sticky bar "Quote $… Due Today $… Total"), Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes, drops anything else, and refuses a reading without its total.
 
 The warehouse has every reading in `quote_premiums`, and the last per quote and carrier, test runs left out, in `v_quote_premium`. **It is a quoted premium, never a bound one:** the carrier's figure on screen, before underwriting (on GEICO before the MVR and CLUE reports). Compare it with the printed quote on a few real quotes per carrier before trusting it.
 
-The whole feature can be removed as one piece (`src/rates.js` stays: the fill engine reads it too): `src/premium.js`, its import and one call in `sidepanel/panel/coordinator.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
+The whole feature can be removed as one piece (`src/rates.js` stays: the fill engine reads it too): `src/premium.js`, its imports and calls in `sidepanel/panel/coordinator.js` (`captureLayout`, `noteFillPremium`) and `src/kit/cursor.js` (plus `src/kit/adapter.js` `premiumReady`, which imports `readPremium` and would keep its own check), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
 
 ## Limits
 
 - **Only quotes run through the extension.** Quotes typed by hand, other carriers and renewals done elsewhere never reach the log, and the log can't say what share of TNI's business they are. Agents can also turn uploads off, and a computer whose queue fills drops its oldest events (`usage_lost`).
-- **One computer, one reader.** The file lives on the maintainer's computer and is as fresh as the last `npm run pull`. Anyone else needs the Postgres route above, not a copy of the file.
+- **One computer, one reader.** The file lives on the maintainer's computer and is as fresh as the last `npm run pull`. Anyone else needs the Postgres route above, not a copy of the file. The sales page on the usage server shows its sales rows, as fresh as the last `npm run push-sales`.
 - **No ZIPs, cities, names, VINs or numbers, by design.** State is the finest geography. The profile says whether a USDOT or MC number was given, never which. That is not anonymity: a carrier with an unusual fleet in a small state can still be recognised, so the database is client data.
 - **The intake's word, not the policy's.** The profile is what the client wrote on the intake, as corrected by the agent in the panel. A vehicle type or limit changed later on the carrier's page shows in `answers`, not in the profile.
 - **No profile before its release.** Older quotes have only the summary logged on load, unless the backfill finds their PDFs.
-- **No bind or outcome data.** "Done" means the quote reached the carrier's final page or was printed. Whether the client bought, and from which carrier, is in TNI's agency system, and the log has no identifier that could join to it.
+- **Sold means the Bitrix deal, not the carrier.** "Done" means the quote reached the carrier's final page or was printed. Whether the client bought comes from the deal holding the quote's intake PDF ([Sales](#sales)); which carrier they bought from is not pulled. A quote whose PDF is on no deal, or was changed before it was attached, has no sale either way.
 - **A quote is a panel session, not a client.** A client quoted twice is two quotes. The same PDF has the same `intake_id`; a re-saved or edited PDF gets a new one.
 - **GEICO is not verified live.** Its step names, coverage keys and the premium wording come from saved pages and the first live runs (2026-10-21). Treat GEICO's numbers as provisional until its coverage map is checked against real quotes.
 - **History is uneven.** Older builds sent fewer fields: no `step`, `run` or `source`, no `view` before 0.9.9. Questions asked of early events get blanks, such as a null `rule_source` on most early answers, and `dropped` on an event names fields an older server threw away.
@@ -403,7 +459,7 @@ The whole feature can be removed as one piece (`src/rates.js` stays: the fill en
 2. **The profile's fields.** The tables above are a starting list. Confirm it, and decide the open ones: `whatHaul` as redacted text, the prior insurer's name, drivers' exact age or a band, expiration by month. Every identifier stays out unless TNI decides otherwise.
 3. **Where it runs.** Decided on 2026-10-22: a DuckDB file on the maintainer's computer. Postgres later, if several people need it.
 4. **Which tool reads it.** The DuckDB command line for now. A reporting tool on the same computer can open the file; one that runs elsewhere needs Postgres.
-5. **Agents' initials.** They are in `quotes.agent` and `events.agent`, as in the log. Nobody but the maintainer reads the file today; decide whether others see initials or only totals before anyone else does.
+5. **Agents' initials.** They are in `quotes.agent` and `events.agent`, as in the log, and the sales page shows deals sold per agent. Nobody but the maintainer reads either today; decide whether others see initials or only totals before anyone else does.
 6. **The backfill.** Whether to build profiles for older quotes from the PDFs on the maintainer's computer.
 7. **Premiums:** built (2026-10-22): the total, term and payments, every change kept. Still to do: compare readings with printed quotes per carrier.
 

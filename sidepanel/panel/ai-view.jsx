@@ -26,6 +26,7 @@ function PutButton({ className, label, put }) {
 // One suggestion's card (`card.kind`, as renderAi says it):
 // - 'mine': the agent changed the answer on the page;
 // - 'rejected': rejected (`text`), with Confirm the current page answer while it holds Continue (`confirm`);
+// - 'unconfirmed': sent to the page but confirmation failed (`choice`, `text`, `notes`), with Confirm / Reject;
 // - 'error': the page didn't take it (`text`);
 // - 'picked': put in by the AI, waiting for Approve / Reject (`choice`, `tip`, `notes`);
 // - 'done': put in (`text`);
@@ -43,6 +44,19 @@ function AiCard({ card }) {
         <div className="ai-done bad">
           <span className="grow">{card.text}</span>
           {card.confirm ? <button type="button" className="link small ai-reject" onClick={() => card.confirm()}>Confirm the current page answer</button> : null}
+        </div>
+      );
+    case 'unconfirmed':
+      return (
+        <div className="ai-box">
+          <div className="ai-says">{'AI sent (not confirmed): '}<b>{card.choice}</b></div>
+          <div className="ai-done bad">{card.text}</div>
+          {(card.notes ?? []).map((note, i) => <div key={i} className="ai-tip">{note}</div>)}
+          <div className="ai-why">Continue waits for your answer.</div>
+          <div className="ai-actions">
+            <button type="button" className="primary accept" onClick={() => card.confirm()}>Confirm</button>
+            <button type="button" className="ghost ai-reject" onClick={() => card.reject()}>Reject</button>
+          </div>
         </div>
       );
     case 'error':

@@ -34,14 +34,15 @@ import { companyName, companyStructure, companyStructureWarn, companyStructureNo
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDailyOps, ownerDailyOpsSource, driverExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { glRequested, glUnrequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitRaised,
   interchangeLimitNote as sharedLimitNote, interchangeLimitSource as sharedLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
-import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
-import { HAZ_HAUL } from '../util.js';
+import { isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr } from '../normalize.js';
+import { HAZ_HAUL, otherNotes } from '../util.js';
 import { filingsIntent } from '../answers/filings.js';
 import { EXPEDITER, FREIGHT_HAULER, isExpediter, isFreightHauler, isGeneralFreightHauler } from '../answers/classes.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
 import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleValueNote, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { incidentRowNote } from '../answers/claims.js';
+import { phoneDigits, phoneNote } from '../answers/contact.js';
 import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
@@ -498,6 +499,7 @@ const NTL_HOLD = ['ntlStillAdded'];
 // while the section is closed (saved Rates pages, 2026-10).
 const CARGO_SECTION = '[fieldref^="MotorTruckingCargoInput."]';
 const COMMODITY_ROW = '[fieldref="MTCargoCommodityCategories.MTCargolistOfCommodityCategories"], [fieldref="MTCargoCommodityCategories.MTCargoListOfCommodities"]';
+const GL_SECTION = '[fieldref^="GeneralLiabilityInput."]';
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -588,6 +590,7 @@ const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
+  product: 'commercial-auto',
   // The quote is started on the agent home page (quoteState below).
   display: { logo: 'assets/raters/progressive.svg', portalUrl: 'https://www.foragentsonly.com/home/', product: 'Commercial auto', classesSaid: 'expediters and general freight' },
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
@@ -708,7 +711,12 @@ export const progressive = {
     // #213), so their clicks never reached the panel; the next fill pressed the commodity list's "+"
     // as cargo's and Add a commodity again, an empty row each time, and the agent removed them with
     // "x"). The page decides, whatever the panel remembers.
-    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], unlessSelector: `${CARGO_SECTION}, ${COMMODITY_ROW}`, when: (r) => r.coverage.cargo === true && notNtl(r) },
+    // Each section-opening "+" on Rates (cargo, GL, trailer interchange) sends an /Express/Default.aspx
+    // XHR (~1 s) without setting Ext.Ajax.isLoading() or showing a loading mask: `loads: true` with
+    // `verify: 'revealed'` waits for the section's questions to draw (and clicks once) so the same fill
+    // answers the section instead of ending at 250 ms with blockers waiting on Done (#585; live
+    // recordings 20261119-1859-d8b2 for cargo and 20261104-1707-f7c2 for cargo, GL and interchange).
+    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], unlessSelector: `${CARGO_SECTION}, ${COMMODITY_ROW}`, loads: true, quietMs: 250, verify: 'revealed', label: 'Motor truck cargo', when: (r) => r.coverage.cargo === true && notNtl(r) },
     { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], unlessSelector: COMMODITY_ROW, when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
@@ -724,7 +732,7 @@ export const progressive = {
     // Its text is a regular expression in a string: '^\\+$', as cargo's. Written '^\+$' it read
     // /^+$/, which doesn't compile: every fill on Rates with GL asked for stopped where it looked
     // for this "+" (FL live run, 2026-10-28: the agent added GL and closed cargo by hand).
-    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
+    { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'general liability', unless: ['progressive.q21D1'], unlessSelector: GL_SECTION, afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), loads: true, quietMs: 250, verify: 'revealed', label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: { closed: 'gl' }, when: (r) => glRequested(r) && notNtl(r) },
     // Trailer interchange on the intake (TNI, 2026-10-28): once cargo and GL are done, the "+" in its
     // row, its questions, the trailer type tile once the number of non-owned trailers is in (a limit
@@ -732,7 +740,7 @@ export const progressive = {
     // Physical Damage are in: verified once its section's questions are gone and the row keeps the
     // limit (`verify: { closed: 'interchange' }`). No tile for the intake's trailers: the agent's pick, said on the
     // number of non-owned trailers (interchangeConfirm).
-    { id: 'openInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'trailer interchange', unless: [INTERCHANGE_LIMIT, 'progressive.q21BE'], afterActions: (r) => (r.coverage.ntl === true ? ['doneNtl'] : [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])]), label: 'Trailer interchange', missing: 'The intake asks for trailer interchange: add it with "+" in the Trailer Interchange row, then fill this page again.', when: interchangeOurs },
+    { id: 'openInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'trailer interchange', unless: [INTERCHANGE_LIMIT, 'progressive.q21BE'], afterActions: (r) => (r.coverage.ntl === true ? ['doneNtl'] : [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])]), loads: true, quietMs: 250, verify: 'revealed', label: 'Trailer interchange', missing: 'The intake asks for trailer interchange: add it with "+" in the Trailer Interchange row, then fill this page again.', when: interchangeOurs },
     { id: 'interchangeTile', page: 'CoveragesRates', heldBy: NTL_HOLD, text: interchangeTile, unique: true, afterActions: ['openInterchange'], afterAny: ['progressive.q21C0', NON_OWNED_COUNT], unless: [INTERCHANGE_LIMIT, 'progressive.q21E5'], when: (r) => interchangeOurs(r) && !!interchangeTile(r) },
     { id: 'doneInterchange', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openInterchange'], after: [INTERCHANGE_LIMIT, 'progressive.q21E5'], verify: { closed: 'interchange' }, when: interchangeOurs },
     // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
@@ -805,6 +813,8 @@ export const progressive = {
     { name: 'Rates', pages: ['CoveragesRates', 'ChangePaymentPlan'] },
     { name: 'Print', pages: ['PrintEmailFax', 'PrintEmailFaxConfirm'] },
   ],
+  // Where Progressive quotes its premium (src/premium.js premiumHere).
+  premiumPages: ['CoveragesRates'],
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
     // Chrome opens the PDF only for the agent's own click (see the actions above).
@@ -930,10 +940,18 @@ export const progressive = {
         name: 'Owner involved in daily operations (Yes when the owner drives)', kind: 'bool',
         source: ownerDailyOpsSource, value: ownerDailyOps, warn: ownerDrivesWarn },
       { concept: 'owner.dob', tni: 'progressive.owner', q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
-      // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
-      { concept: 'business.contact', q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
-      { concept: 'business.contact', q: '2DD', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
-      { concept: 'business.contact', q: '2DF', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number (optional)', ignore: true },
+      // The intake's phone, in Progressive's three boxes (answers/contact.js), as GEICO and AmWINS
+      // get it. The first workflow left these boxes blank as optional; agents then typed the
+      // intake's own number into them on 65 of the 88 quotes of 2026-11-03 to 2026-11-17 (the audit
+      // of 2026-11-19). No phone on the intake: the agent's; one that isn't a 10-digit US number:
+      // the agent's, with a note.
+      { concept: 'business.contact', q: '2DB', source: 'derived', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code', kind: 'text', value: (r) => phoneDigits(r)?.slice(0, 3) ?? null, note: phoneNote },
+      { concept: 'business.contact', q: '2DD', source: 'derived', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix', kind: 'text', value: (r) => phoneDigits(r)?.slice(3, 6) ?? null, note: phoneNote },
+      { concept: 'business.contact', q: '2DF', source: 'derived', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number', kind: 'text', value: (r) => phoneDigits(r)?.slice(6) ?? null, note: phoneNote },
+      // Asked since 2026-11-17, required. The intake's one phone box doesn't say which kind of
+      // number it holds; TNI's standard is Yes (TNI, 2026-11-19: agents answered Yes on 8 of 8
+      // quotes, audit of 2026-11-19).
+      { concept: 'business.contact', q: '334', tni: 'progressive.mobile-phone', source: 'standard', field: 'MailingAddressInput.PrimaryPhoneNumberType', ask: 'Is this a mobile phone number?', name: 'Mobile phone number (standard: Yes)', kind: 'bool', value: () => true },
       // The intake's answer; blank: TNI's standard No unless they haul hazmat (hazPlacard, 2026-10-19).
       { concept: 'operations.hazmat-placard', q: '2F6', tni: 'general.hazmat-placard', source: hazPlacardSource, field: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required (standard: No when the intake leaves it blank)', kind: 'bool', value: hazPlacard, note: hazPlacardNote },
     ]),
@@ -969,7 +987,10 @@ export const progressive = {
       // isn't picked (no rule here fills its boxes): the agent's, with a note (TNI, 2026-10-28).
       { concept: 'business.address', q: '58', tni: 'progressive.home-address', source: 'standard', field: 'PrimaryBusinessAddressInputNonShredded.AddressOptions', ask: 'Primary Business Address', name: 'Primary business address (first option)', kind: 'first-option', value: () => 'first option',
         firstNot: '^enter a different', unofferedNote: 'Progressive offers no business address to pick here: choose the Primary Business Address and enter it yourself, then click Verify Address.' },
-      { concept: 'business.contact', q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
+      // The intake's email, as GEICO gets it. The first workflow left the box blank; agents then
+      // typed an email into it on 49 quotes of 2026-11-03 to 2026-11-17, the intake's own on 44
+      // (the audit of 2026-11-19).
+      { concept: 'business.contact', q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', path: 'applicant.email', name: 'Customer email' },
       { concept: 'prior.currently-insured', tni: 'progressive.currently-insured', q: '81', source: currentlyInsuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsuredAnswer, note: currentlyInsuredNote },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the

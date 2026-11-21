@@ -114,6 +114,18 @@ export function onLogged(fn) {
   return () => taps.delete(fn);
 }
 
+// Hooks run synchronously just before events enter the log (e.g., flushing a coalesced text edit
+// so any following event — page_layout, fill_run, page_view, agent_click, intake_closed — is never
+// logged ahead of the edit that preceded it). Receives the incoming events so a hook can ignore
+// no-op automatic follow-ups. Nested log() calls made by a hook skip the hooks.
+const beforeLogs = new Set();
+let flushingBeforeLog = false;
+/** @param {(events: object[]) => void} fn */
+export function beforeLog(fn) {
+  beforeLogs.add(fn);
+  return () => beforeLogs.delete(fn);
+}
+
 // Appends events in order, even when called from several places at once. The time and the quote
 // (session) are taken when log() is called, not when the queue gets to the event: Clear and
 // Replace log intake_closed just before the panel moves to another session. `seq` numbers every
@@ -121,6 +133,14 @@ export function onLogged(fn) {
 // An event that names its own session and intakeId keeps them: a fill's results that come back
 // after another intake was loaded are logged as the quote they began in (noteStaleFill).
 export function log(...events) {
+  if (!flushingBeforeLog && beforeLogs.size) {
+    flushingBeforeLog = true;
+    try {
+      for (const fn of beforeLogs) { try { fn(events); } catch { /* the log goes on */ } }
+    } finally {
+      flushingBeforeLog = false;
+    }
+  }
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};
   // The developer recording's copy (onLogged), as logged: already redacted, nothing more leaves.

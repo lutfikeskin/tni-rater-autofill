@@ -902,3 +902,42 @@ test('learning: "Browse …", portal pages and labels with markup make no sugges
   assert.deepEqual(Object.values(suggestions).flat().map((s) => [s.carrier, s.label]).sort(), [['amwins', "[client]'s License State"], ['progressive', 'License State']]);
   assert.deepEqual(suggestions.standard.map((s) => s.intakes), [5, 5], 'one question each, all five quotes');
 });
+
+test('review and learn-rules honor agent: lines in --tests, including earlier quotes on that install, while intake_marked still wins', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-agents-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Five quotes of five PDFs answering "Trailer interchange?" No: s0 sent on the maintainer's
+  // install before initials were typed, s1 with the maintainer's initials, s2 on the same install
+  // but unmarked as a test in the panel (still counts), and s3/s4 on an agent's computer.
+  const meta = {
+    s0: { install: 'laptop', agent: null },
+    s1: { install: 'laptop', agent: 'AD' },
+    s2: { install: 'laptop', agent: 'AD' },
+    s3: { install: 'desk', agent: 'JC' },
+    s4: { install: 'desk', agent: 'JC' },
+  };
+  const events = [
+    ...week(5).map((e) => ({ ...e, ...meta[e.session] })),
+    { id: 's2-unmark', t: at(99), session: 's2', install: 'laptop', agent: 'AD', type: 'intake_marked', test: false },
+  ];
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  const log = path.join(data, '2026-10-05.jsonl');
+  fs.writeFileSync(log, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'agent:AD\n');
+
+  const learned = spawnSync(process.execPath, [path.join(root, 'scripts', 'learn-rules.mjs'), log, '--json', '--tests', list], { encoding: 'utf8' });
+  assert.equal(learned.status, 0, learned.stderr);
+  const result = JSON.parse(learned.stdout);
+  assert.deepEqual([result.quotes, result.testRunsLeftOut], [3, 2]);
+  assert.equal(result.suggestions.standard.find((x) => x.q === '9A01'), undefined, 'three agents\' PDFs: below the threshold');
+
+  const reviewed = spawnSync(process.execPath, [path.join(root, 'scripts', 'review.mjs'), data, '--all', '--tests', list, '--out', path.join(dir, 'review.md')], { encoding: 'utf8' });
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  const md = fs.readFileSync(path.join(dir, 'review.md'), 'utf8');
+  assert.match(md, /\| Quotes started \| 3 \(VA 2, MD 1\) · 2 test run\(s\) left out \|/);
+  assert.match(md, /2 test runs left out\./, 'learn-rules child run also got the agent: line');
+});

@@ -1497,6 +1497,219 @@ test('Progressive: a Continue the page refuses in the browser is not reported as
   assert.deepEqual(await run(true), { pressed: 1, advanced: 'Continue', refused: null, said: false });
 });
 
+// Issue #590: pressedAt must be stamped before pressButton() (a click handler that takes > 5 ms
+// after starting the request is not a refusal) and the refusal check must also read
+// performance.getEntriesByType('resource') synchronously (observer delivery lag past the 250 ms
+// settle window cannot hide a sent request). A Continue that sends no post-press same-origin
+// fetch/XHR (Snapshot Pro style) is still refused with CONTINUE_REFUSED.
+test('Progressive: a slow Continue click handler is not read as refused (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => {
+    const startTime = clock.Date.now() - t0;
+    // The page's click handler spends ~20 ms on the main thread after starting the request
+    // (ExtJS/DOM work under load) before pressButton() returns.
+    clock.advance(20);
+    observer?.fn({ getEntries: () => [{ initiatorType: 'fetch', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime, responseEnd: startTime + 50 }] });
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: 'Continue', refused: null, said: false },
+  );
+});
+
+test('Progressive: a Continue request in performance.getEntriesByType without observer delivery is not refused; no request still refuses (#590)', async () => {
+  const run = async (mode) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor() {} observe() {} };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    cont.onclick = () => {
+      const now = clock.Date.now() - t0;
+      if (mode === 'buffered') {
+        resources.push({ initiatorType: 'fetch', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime: now, responseEnd: now + 30 });
+      } else if (mode === 'noise') {
+        // Pre-press request, cross-origin fetch, and non-fetch resource must not mask a refusal.
+        resources.push(
+          { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: now - 500, responseEnd: now - 450 },
+          { initiatorType: 'fetch', name: 'https://other.example/beacon', startTime: now, responseEnd: now + 10 },
+          { initiatorType: 'img', name: 'https://synthetic.example/spinner.gif', startTime: now, responseEnd: now + 10 },
+        );
+      }
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('buffered'), { advanced: 'Continue', refused: null, said: false });
+  assert.deepEqual(await run('none'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('noise'), { advanced: null, refused: 'Continue', said: true });
+});
+
+// PR #591 review: with pressedAt stamped before pressButton(), a request that started 1-3 ms
+// before the click must not mask a genuine refusal (even with a ~20 ms validating click handler).
+test('Progressive: a pre-click request 1-3 ms before Continue does not mask a refusal (#590)', async () => {
+  const run = async (where) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    let observer = null;
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    cont.onclick = () => {
+      // Request started 2 ms before the click; the page refuses Continue after ~20 ms of validation.
+      const entry = { initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: clock.Date.now() - t0 - 2, responseEnd: clock.Date.now() - t0 + 10 };
+      clock.advance(20);
+      if (where === 'observer') observer?.fn({ getEntries: () => [entry] });
+      else resources.push(entry);
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('observer'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('buffer'), { advanced: null, refused: 'Continue', said: true });
+});
+
+// PR #591 review: once a long-lived Progressive SPA document fills Chromium's 250-entry resource
+// buffer, performance.getEntriesByType('resource') stops recording new requests, but
+// PerformanceObserver.takeRecords() still holds undelivered entries.
+test('Progressive: a Continue request queued in observer.takeRecords() is not refused when the resource buffer is full (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  const fullBuffer = Array.from({ length: 250 }, (_, i) => ({
+    initiatorType: 'xmlhttprequest',
+    name: `https://synthetic.example/Express/Step${i}.aspx`,
+    startTime: i,
+    responseEnd: i + 5,
+  }));
+  let queued = [];
+  h.context.performance = {
+    now: () => clock.Date.now() - t0,
+    getEntriesByType: (type) => (type === 'resource' ? fullBuffer : []),
+  };
+  h.context.PerformanceObserver = class {
+    observe() {}
+    takeRecords() { const out = queued; queued = []; return out; }
+  };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => {
+    const startTime = clock.Date.now() - t0;
+    // Buffer is full (entry not added to fullBuffer) and observer callback hasn't fired yet;
+    // only takeRecords() holds the Continue request.
+    queued.push({ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx?continue=1', startTime, responseEnd: startTime + 40 });
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: 'Continue', refused: null, said: false },
+  );
+});
+
+// PR #591 review: a periodic same-origin heartbeat (isBeat) firing during the Continue settle
+// window must not mask a refusal, whether delivered to the observer or only in the resource buffer;
+// a non-beat request at the same URL between beats still counts as accepted.
+test('Progressive: a background poll during Continue settle does not mask a refusal (#590)', async () => {
+  const run = async (mode) => {
+    const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+    const t0 = clock.Date.now();
+    let observer = null;
+    const resources = [];
+    h.context.performance = {
+      now: () => clock.Date.now() - t0,
+      getEntriesByType: (type) => (type === 'resource' ? resources : []),
+    };
+    h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+    addExtText(h, 'c', '2BA1');
+    const cont = addButton(h, 'Continue');
+    const beatUrl = 'https://synthetic.example/Express/KeepAlive';
+    cont.onclick = () => {
+      const now = clock.Date.now() - t0;
+      // Establish a 2000 ms beat before the press (4 ticks ending 1950 ms ago -> next beat in 50 ms).
+      const prior = [-7950, -5950, -3950, -1950].map((d) => ({ initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 }));
+      observer?.fn({ getEntries: () => prior });
+      resources.push(...prior);
+      if (mode === 'poll-observer') {
+        const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + 50, responseEnd: now + 70 };
+        setTimeout(() => { observer?.fn({ getEntries: () => [beat] }); resources.push(beat); }, 50);
+      } else if (mode === 'poll-buffer') {
+        const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + 50, responseEnd: now + 70 };
+        setTimeout(() => { resources.push(beat); }, 50);
+      } else if (mode === 'save-between-beats') {
+        // Real request on the same URL well before the next 2000 ms beat (last beat was 300 ms ago).
+        const recent = [-6300, -4300, -2300, -300].map((d) => ({ initiatorType: 'fetch', name: `${beatUrl}/same`, startTime: now + d, responseEnd: now + d + 20 }));
+        observer?.fn({ getEntries: () => recent });
+        resources.push(...recent, { initiatorType: 'fetch', name: `${beatUrl}/same`, startTime: now, responseEnd: now + 30 });
+      }
+    };
+    const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+      { maxRounds: 3, advance: { text: '^continue$' } });
+    return { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) };
+  };
+  assert.deepEqual(await run('poll-observer'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('poll-buffer'), { advanced: null, refused: 'Continue', said: true });
+  assert.deepEqual(await run('save-between-beats'), { advanced: 'Continue', refused: null, said: false });
+});
+
+// PR #591 round-2 review: if settle stays open across 4+ beat periods, isBeat() trims b.starts
+// to its last 4 ticks. Entries recordRequests() already classified as poll: true must not be
+// re-evaluated by the resource-buffer fallback (which would otherwise lose the pre-click tick and
+// misclassify the first post-click beat as a real request).
+test('Progressive: a refused Continue stays refused when a background beat runs across 4+ periods during settle (#590)', async () => {
+  const h = harness({ ext: true, search: '?pageName=MoreAboutBusiness' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  let busyUntil = 0;
+  const resources = [];
+  h.context.Ext.Ajax.isLoading = () => clock.Date.now() < busyUntil;
+  h.context.performance = {
+    now: () => clock.Date.now() - t0,
+    getEntriesByType: (type) => (type === 'resource' ? resources : []),
+  };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} takeRecords() { return []; } };
+  addExtText(h, 'c', '2BA1');
+  const cont = addButton(h, 'Continue');
+  const beatUrl = 'https://synthetic.example/Express/KeepAlive';
+  cont.onclick = () => {
+    const now = clock.Date.now() - t0;
+    const prior = [-7950, -5950, -3950, -1950].map((d) => ({ initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 }));
+    observer?.fn({ getEntries: () => prior });
+    resources.push(...prior);
+    // Keep settle open across 4 post-click beats (6.5 s > 6.05 s) with no Continue request.
+    busyUntil = clock.Date.now() + 6500;
+    for (const d of [50, 2050, 4050, 6050]) {
+      const beat = { initiatorType: 'fetch', name: beatUrl, startTime: now + d, responseEnd: now + d + 20 };
+      setTimeout(() => { observer?.fn({ getEntries: () => [beat] }); resources.push(beat); }, d);
+    }
+  };
+  const report = await h.kit.fill([{ id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', value: 'Yes' }],
+    { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.deepEqual(
+    { advanced: report.advanced ?? null, refused: report.continueRefused ?? null, said: report.blockers.some((b) => /did not accept Continue/.test(b)) },
+    { advanced: null, refused: 'Continue', said: true },
+  );
+});
+
 // Review of PR #284: a fill that returns before it waits (the panel asked for another page) uses up
 // the helper's settled page too, so the fill after it isn't taken for the helper's continuation.
 test('Progressive: a fill that returns early uses up the helper\'s settled page', async () => {
@@ -2353,13 +2566,17 @@ test('general liability on the intake: the fill clicks the "+" in its row, not c
     const row = new FakeNode('div');
     const plus = new FakeNode('a', { attrs: { role: 'button' } });
     plus.append(new FakeNode('span', { textContent: '+' }));
-    plus.onclick = () => clicks.push(coverage);
+    plus.onclick = () => {
+      clicks.push(coverage);
+      h.document.body.append(radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+        ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } }))));
+    };
     row.append(new FakeNode('div', { textContent: coverage }), plus);
     h.document.body.append(row);
   }
   const steps = buildPlan(record, progressive).filter((s) => s.kind === 'action' && s.action === 'openGl');
   assert.equal(steps.length, 1);
-  const report = await h.kit.fill(steps, { maxRounds: 3 });
+  const report = await h.kit.fill(steps, { maxRounds: 4 });
   assert.deepEqual(clicks, ['General Liability']);
   assert.deepEqual(Array.from(report.actions, (x) => x.id), ['openGl']);
 });
@@ -2384,10 +2601,14 @@ test('cargo closed by the agent: cargo counts as done and the fill clicks genera
     const row = new FakeNode('div');
     const plus = new FakeNode('a', { attrs: { role: 'button' } });
     plus.append(new FakeNode('span', { textContent: '+' }));
-    plus.onclick = () => clicks.push('General Liability');
+    plus.onclick = () => {
+      clicks.push('General Liability');
+      h.document.body.append(radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+        ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } }))));
+    };
     row.append(new FakeNode('div', { textContent: 'General Liability' }), plus);
     h.document.body.append(row);
-    const report = await h.kit.fill(plan, { maxRounds: 3, doneActions: [] });
+    const report = await h.kit.fill(plan, { maxRounds: 5, doneActions: [] });
     return { clicks, report };
   };
   let { clicks, report } = await run();
@@ -10817,4 +11038,394 @@ test('a rule\'s text pattern is compiled once, however often the fill assigns it
   assert.equal(years.value, '3', 'the rule found its question by its text');
   await h.kit.fill(plan, { maxRounds: 3 });
   assert.equal(made, 1, `compiled ${made} times over two fills`);
+});
+
+// Issues #584, #585: a fill on a premium page records the current premium on its report before
+// clicking out of the page (bill plan, Print, Continue) or as the fill ends, so the panel logs
+// quote_premium even when navigation or a new tab beats captureLayout.
+test('fill report carries the current premium across Recalculate -> billPlan/Print navigation, and omits stale or non-premium pages (#584, #585)', async () => {
+  // 1. Progressive: stale -> Recalculate -> billPlan navigates to ChangePaymentPlan in one fill.
+  const plan = () => [
+    { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium', waitRequired: true },
+    { id: 'bill', kind: 'action', action: 'billPlan', text: '^(view )?bill(ing)?( plan)? options?$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterAny: [], afterActions: [], afterPages: [], unless: [], needsPremium: true, waitRequired: true },
+  ];
+  const nav = premiumHarness({ recalcResult: 'Total premium amount $12,815.00 per year including EFT' });
+  nav.bill.onclick = () => {
+    nav.bill._clicked = true;
+    nav.h.context.location.search = '?pageName=ChangePaymentPlan';
+    nav.h.document.body.innerText = 'Choose your payment plan';
+  };
+  const r1 = await nav.h.kit.fill(plan(), { maxRounds: 6, premiumPages: ['CoveragesRates'] });
+  assert.equal(Array.from(r1.actions, (x) => x.id).join(','), 'recalculate,billPlan');
+  assert.equal(r1.navigatedTo, 'ChangePaymentPlan');
+  assert.deepEqual(plain(r1.premium), { total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null });
+
+  // 2. Progressive: back from ChangePaymentPlan with current EFT rate, straight to Print (no recalculate).
+  const p = premiumHarness();
+  p.h.document.body.innerText = 'Total premium amount $12,500.00 per year including Electronic Funds Transfer (EFT) discount';
+  const printBtn = addButton(p.h, 'Print, Email, Fax');
+  printBtn.onclick = () => {
+    printBtn._clicked = true;
+    p.h.context.location.search = '?pageName=PrintEmailFax';
+    p.h.document.body.innerText = 'Print, Email or Fax your quote';
+  };
+  const printPlan = [{ id: 'print', kind: 'action', action: 'print', text: '^print,?\\s*email,?\\s*fax$', pages: ['CoveragesRates'], after: [], afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], unless: [], waitRequired: true }];
+  const r2 = await p.h.kit.fill(printPlan, { maxRounds: 4, doneActions: ['recalculate', 'billPlan'], visitedPages: ['ChangePaymentPlan'], premiumPages: ['CoveragesRates'] });
+  assert.equal(r2.navigatedTo, 'PrintEmailFax');
+  assert.deepEqual(plain(r2.premium), { total: 12500, termMonths: 12, dueToday: null, payments: null, payment: null });
+
+  // 3. Stale page (recalculate leaves rates out of date): no premium.
+  const stale = premiumHarness({ recalcResult: 'Rates changed **** — please recalculate' });
+  const r3 = await stale.h.kit.fill(plan(), { maxRounds: 6, premiumPages: ['CoveragesRates'] });
+  assert.equal(r3.premium, undefined);
+
+  // 4. Page starts current, a coverage change makes it stale before ending without recalculating: no premium.
+  const turnedStale = harness({ progressive: true, search: '?pageName=CoveragesRates' });
+  const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'cov', ariaLabel: 'Liability', value: '750' });
+  turnedStale.document.body.append(sel);
+  turnedStale.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  sel.addEventListener('change', () => { turnedStale.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate'; });
+  const openBtn = addButton(turnedStale, '+');
+  openBtn.onclick = () => { openBtn._clicked = true; };
+  const r4 = await turnedStale.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^\\+$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'cov', selector: '#cov', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000' },
+  ], { maxRounds: 4, replaceChoices: true, premiumPages: ['CoveragesRates'] });
+  assert.equal(r4.premium, undefined, 'pre-change premium cleared once the page turned stale');
+
+  // 5. Non-premium page or carrier with no premiumPages: no premium.
+  const other = harness({ progressive: true, search: '?pageName=AddVehicle' });
+  other.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const r5 = await other.kit.fill([], { maxRounds: 2, premiumPages: ['CoveragesRates'] });
+  assert.equal(r5.premium, undefined);
+  const noPages = premiumHarness();
+  noPages.h.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const r6 = await noPages.h.kit.fill([], { maxRounds: 2, premiumPages: [] });
+  assert.equal(r6.premium, undefined);
+
+  // 6. GEICO on Quote & Coverages: recalculates and clicks Print Quote Proposal.
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(g, 'Quote & Coverages');
+  g.document.body.innerText = '12 Month Total Premium: $ --.--\nPlease Recalculate Due To Coverage Change';
+  const gRecalc = gdsButton('Recalculate');
+  const gPrint = gdsButton('Print Quote Proposal');
+  g.document.body.append(gRecalc.host, gPrint.host);
+  gRecalc.button.onclick = () => {
+    gRecalc.clicked = true;
+    g.document.body.innerText = '12 Month Total Premium: $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83';
+  };
+  gPrint.button.onclick = () => { gPrint.clicked = true; };
+  const gPlan = [
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium' },
+    { id: 'print', kind: 'action', action: 'printProposal', text: '^print quote proposal$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsPremium: true },
+  ];
+  const r7 = await g.kit.fill(gPlan, { maxRounds: 6, premiumPages: ['Quote & Coverages'] });
+  assert.equal(Array.from(r7.actions, (x) => x.id).join(','), 'recalculate,printProposal');
+  assert.deepEqual(plain(r7.premium), { total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 });
+});
+
+// Review of #592 (Blocking #1a): openCargo snapshots an initial rate, reveals a coverage field
+// whose answer turns rates stale, and the page moves on (VehicleSummary) before finishFill.
+test('mid-fill premium snapshot is cleared when a later answer turns rates stale and page moves on (#584, #585)', async () => {
+  const h = harness({ progressive: true, search: '?pageName=CoveragesRates' });
+  h.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  const openBtn = addButton(h, '+');
+  openBtn.onclick = () => {
+    openBtn._clicked = true;
+    const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'cov-m', ariaLabel: 'Liability', value: '750' });
+    sel.addEventListener('change', () => {
+      h.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate';
+      clock.setTimeout(() => { h.context.location.search = '?pageName=VehicleSummary'; }, 20);
+    });
+    h.document.body.append(sel);
+  };
+  const r = await h.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^\\+$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'cov', selector: '#cov-m', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000' },
+  ], { maxRounds: 6, replaceChoices: true, premiumPages: ['CoveragesRates'] });
+  assert.equal(r.navigatedTo, 'VehicleSummary');
+  assert.equal(r.premium, undefined, 'pre-answer rate must be cleared when answer turns rates stale and page moves on');
+});
+
+// Review of #592 (Blocking #1b): GEICO Recalculate resets an agent's skipped answer without DOM
+// put-back, leaving a non-stale rate on screen for the reset value.
+test('rejected GEICO rate after Recalculate resets an agent answer is not reported (#584, #585)', async () => {
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(g, 'Quote & Coverages');
+  const lim = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'Id_GiveLimit_1', name: 'Id_GiveLimit_1', ariaLabel: 'Liability', value: '750' });
+  g.document.body.append(lim);
+  g.document.body.innerText = 'Quote $ --.-- Due Today $ --.-- Total\nPlease Recalculate Due To Coverage Change';
+  const recalc = gdsButton('Recalculate');
+  g.document.body.append(recalc.host);
+  recalc.button.onclick = () => {
+    recalc.clicked = true;
+    lim.value = '1000';
+    g.document.body.innerText = 'Quote $1,827.00 Due Today $1,827.00 Total';
+  };
+  const plan = [
+    { id: 'lim', field: 'GiveLimit', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000', steps: ['Quote & Coverages'] },
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium', once: true, keepAnswers: true, quietMs: 20 },
+  ];
+  const r = await g.kit.fill(plan, { maxRounds: 6, skip: ['ref:GiveLimit'], premiumPages: ['Quote & Coverages'] });
+  assert.ok(r.failed.some((x) => x.code === 'answer.changed'), 'answersKept flagged the reset agent answer');
+  assert.equal(r.premium, undefined, 'rejected rate after GEICO reset an agent answer must not be reported');
+});
+
+// Review of #592 (Blocking #1c): GEICO openCargo snapshots initial rate, reveals a field whose
+// answer turns rates stale, and the agent moves into stop step Final Quote Details before finishFill.
+test('mid-fill premium snapshot is cleared when GEICO reaches a stop step (#584, #585)', async () => {
+  const g = harness({ adapter: 'geico', pathname: '/quote' });
+  const bar = geicoBar(g, 'Quote & Coverages');
+  g.document.body.innerText = 'Quote $1,777.00 Due Today $1,777.00 Total';
+  const open = gdsButton('Open Cargo');
+  g.document.body.append(open.host);
+  open.button.onclick = () => {
+    open.clicked = true;
+    const sel = new SelectNode([{ text: '$750,000', value: '750' }, { text: '$1,000,000', value: '1000' }], { id: 'Id_GiveLimit_2', name: 'Id_GiveLimit_2', ariaLabel: 'Liability', value: '750' });
+    sel.addEventListener('change', () => {
+      g.document.body.innerText = 'Quote $ --.-- Due Today $ --.-- Total\nPlease Recalculate Due To Coverage Change';
+      clock.setTimeout(() => {
+        g.document.title = 'GEICO Final Quote Details';
+        bar.textContent = 'Final Quote Details';
+      }, 20);
+    });
+    g.document.body.append(sel);
+  };
+  const r = await g.kit.fill([
+    { id: 'open', kind: 'action', action: 'openCargo', text: '^open cargo$', pages: [], steps: ['Quote & Coverages'], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'lim', field: 'GiveLimit', path: 'coverage.autoLiabLimit', kind: 'choice', value: '$1,000,000', steps: ['Quote & Coverages'] },
+  ], { maxRounds: 6, replaceChoices: true, stopSteps: ['Final Quote Details'], premiumPages: ['Quote & Coverages'] });
+  assert.equal(r.stopStep, 'Final Quote Details');
+  assert.equal(r.premium, undefined, 'stale rate must be cleared when fill reaches a stop step mid-fill');
+});
+
+// Review of #592 (Blocking #2): CoveragesRates with advance + hold (checkBeforeContinue): rates
+// are current when rounds end, then turn stale during settle({ why: 'continue' }) while hold skips
+// pressButton.
+test('rate turning stale during settle(continue) is cleared when Continue is held (#584, #585)', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const input = makeInput({ id: 'hold-cov', ariaLabel: 'Liability', value: '1M CSL' });
+  h.document.body.append(input);
+  h.document.body.innerText = 'Total premium amount $11,000.00 per year';
+  const contBtn = addButton(h, 'Continue');
+  contBtn.onclick = () => { contBtn._clicked = true; };
+  // Fire after start settle (400 ms) and initial finishFill snapshot, during settle({ why: 'continue' }).
+  clock.setTimeout(() => { h.document.body.innerText = 'Total premium amount **** per year\nPlease recalculate'; }, 500);
+  const r = await h.kit.fill([
+    { id: 'cov', selector: '#hold-cov', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+  ], { maxRounds: 4, hold: true, advance: { text: '^continue$', pages: ['CoveragesRates'] }, premiumPages: ['CoveragesRates'] });
+  assert.equal(r.held, 'check');
+  assert.equal(contBtn._clicked, undefined);
+  assert.equal(r.premium, undefined, 'rate that turned stale during settle(continue) must not survive when Continue is held');
+});
+
+// Issue #585 (live recordings 20261119-1859-d8b2, 20261104-1707-f7c2): on CoveragesRates, pressing
+// "+" for Motor Truck Cargo (and General Liability, Trailer Interchange) starts an
+// /Express/Default.aspx XHR (~1 s) without setting Ext.Ajax.isLoading() or showing a mask. Before
+// this fix, settle({ why: 'round' }) ended quiet at 250 ms and the fill exited with blockers
+// waiting on doneCargo before the section's questions drew. Now the same fill waits for the section
+// to appear, answers it, and finishes Done, Recalculate and the bill plan.
+test('Progressive CoveragesRates: "+" waits for a ~1 s unmasked request to draw cargo, answers it, and reaches Done, Recalculate and bill plan (#585)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: true, cargoLimit: '100000', cargoDeductible: '1000', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const t0 = clock.Date.now();
+  let observer = null;
+  h.context.performance = { now: () => clock.Date.now() - t0 };
+  h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+  const clicks = [];
+  const addCombo = (q, { caption, ref, options, value = '' }) => {
+    const f = addExtText(h, 'c', q, { caption, ref, value });
+    const recs = options.map((label) => ({ get: () => label }));
+    Object.assign(f.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => recs, isLoading: () => false } });
+    return f;
+  };
+  const addYesNo = (ref, question) => {
+    const group = radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+    h.document.body.append(group);
+    return group;
+  };
+  addCombo('1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', options: ['Not selected', '$1 million CSL'], value: '$1 million CSL' });
+  h.document.body.innerText = 'The coverages have changed, please "recalculate" to see your rate.';
+
+  const cargoRow = new FakeNode('div');
+  const plus = new FakeNode('a', { attrs: { role: 'button' } });
+  plus.append(new FakeNode('span', { textContent: '+' }));
+  cargoRow.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), plus);
+  h.document.body.append(cargoRow);
+
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { clicks.push('recalculate'); h.document.body.innerText = 'Total Premium: $4,200.00'; };
+  const billPlan = addButton(h, 'View bill plan options');
+  billPlan.onclick = () => { clicks.push('billPlan'); h.context.location.search = '?pageName=ChangePaymentPlan'; };
+
+  // "+" starts a ~1.1 s XHR with pageBusy() === false; only when it returns do the cargo questions draw.
+  plus.onclick = () => {
+    clicks.push('openCargo');
+    const started = clock.Date.now() - t0;
+    setTimeout(() => {
+      observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/Express/Default.aspx', startTime: started, responseEnd: clock.Date.now() - t0 }] });
+      plus.remove();
+      const mobile = addYesNo('MotorTruckingCargoInput.MTCargoMobileHomesQuestion', 'Does the customer require cargo coverage for mobile/modular homes and buildings?');
+      const docs = addYesNo('MotorTruckingCargoInput.MTCargoBusinessDocumentsQuestion', 'Does the customer require cargo coverage for business documents or non-negotiable securities?');
+      const addCommodity = addButton(h, 'Add a commodity');
+      addCommodity.onclick = () => {
+        clicks.push('addCargoCommodity');
+        const cat = addCombo('216A', { caption: 'Commodity Type:', ref: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', options: ['', 'Consumer Goods'] });
+        const item = addCombo('216B', { caption: 'Commodity:', ref: 'MTCargoCommodityCategories.MTCargoListOfCommodities', options: ['', 'Other Consumer Goods'] });
+        addCombo('216F', { caption: 'Motor Trucking Cargo', ref: 'LineInput.MotorTruckingCargoLimit', options: ['Not selected', '$100k with a $1,000 Deductible'] });
+        const done = addButton(h, 'Done with this coverage');
+        done.onclick = () => {
+          clicks.push('doneCargo');
+          mobile.remove(); docs.remove(); addCommodity.remove(); cat.input.remove(); item.input.remove(); done.remove();
+        };
+      };
+    }, 1100);
+  };
+
+  const report = await h.kit.fill(plan, { maxRounds: 25, replaceChoices: true });
+  assert.deepEqual(clicks, ['openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan']);
+  assert.deepEqual(plain(report.actions.map((a) => a.id)), ['openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan']);
+  assert.ok(report.filled.some((x) => x.path === 'progressive.q2158' && x.shown === 'No'), 'mobile homes answered in the same fill');
+  assert.ok(report.filled.some((x) => x.path === 'progressive.q215A' && x.shown === 'No'), 'business documents answered in the same fill');
+  assert.ok(report.filled.some((x) => x.q === '216A' && x.shown === 'Consumer Goods'), 'category answered in the same fill');
+  assert.ok(report.filled.some((x) => x.q === '216B' && x.shown === 'Other Consumer Goods'), 'commodity answered in the same fill');
+  assert.ok(report.filled.some((x) => x.shown === '$100k with a $1,000 Deductible'), 'cargo limit answered in the same fill');
+  assert.deepEqual(plain(report.blockers), []);
+  assert.equal(report.navigatedTo, 'ChangePaymentPlan');
+
+  // Same gap on General Liability and Trailer Interchange (live recording 20261104-1707-f7c2):
+  // their "+" starts a ~1 s unmasked XHR too, and the same fill waits and answers the opened question.
+  for (const [label, coverage, extra, questionRef, questionText, expected] of [
+    ['General Liability', { cargo: false, gl: true, glLimit: '$1M/$2M', ntl: false }, {}, 'GeneralLiabilityInput.GeneralLiabilityTruckIncome', 'Does the customer earn 100% of his or her income from for hire trucking operations?', 'Yes'],
+    ['Trailer Interchange', { cargo: false, gl: false, ntl: false }, { trailers: [{ type: 'Dry Van' }], trailerInfo: { interchange: true, interchangeLimit: '$50,000' } }, 'TrailerInterchangeInput.InterchangeAgreement', 'Does the customer have an interchange agreement requiring trailer interchange coverage?', 'Yes'],
+  ]) {
+    const rec = { ...record, coverage: { ...record.coverage, ...coverage }, ...extra };
+    const sub = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const subLiab = addExtText(sub, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+    Object.assign(subLiab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+    const row = new FakeNode('div');
+    const btn = new FakeNode('a', { attrs: { role: 'button' } });
+    btn.append(new FakeNode('span', { textContent: '+' }));
+    row.append(new FakeNode('div', { textContent: label }), btn);
+    sub.document.body.append(row);
+    let pressed = 0;
+    btn.onclick = () => {
+      pressed += 1;
+      setTimeout(() => {
+        btn.remove();
+        sub.document.body.append(radioGroup(questionText, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${questionRef}`, type: 'radio', value, attrs: { fieldref: questionRef } }))));
+      }, 1100);
+    };
+    const subReport = await sub.kit.fill(buildPlan(rec, progressive, {}), { maxRounds: 10, replaceChoices: true });
+    assert.equal(pressed, 1, `${label}: "+" clicked once`);
+    assert.ok(subReport.filled.some((x) => x.shown === expected), `${label}: first section question answered in the same fill`);
+  }
+});
+
+// Issue #585: if cargo's "+" starts a request that fails or the page never draws the cargo section,
+// the fill must click once, end within its limits (no hang), leave Continue unclicked, and report
+// both the unrevealed opener and the downstream Rates blockers.
+test('Progressive CoveragesRates: a "+" whose section never appears clicks once and ends with blockers (no hang)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: true, cargoLimit: '100000', cargoDeductible: '1000', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const liab = addExtText(h, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+  Object.assign(liab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+  h.document.body.innerText = 'The coverages have changed, please "recalculate" to see your rate.';
+
+  const row = new FakeNode('div');
+  const plus = new FakeNode('a', { attrs: { role: 'button' } });
+  plus.append(new FakeNode('span', { textContent: '+' }));
+  let clicks = 0;
+  plus.onclick = () => { clicks += 1; };
+  row.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), plus);
+  h.document.body.append(row);
+
+  addButton(h, 'Recalculate');
+  addButton(h, 'View bill plan options');
+  const cont = addButton(h, 'Continue');
+  cont.onclick = () => { cont._clicked = true; };
+
+  const report = await h.kit.fill(plan, { maxRounds: 10, replaceChoices: true, advance: progressive.advance });
+  assert.equal(clicks, 1, 'clicked once, never retried');
+  assert.equal(report.halted, false, 'ended cleanly within limits');
+  assert.ok(!report.actions.some((a) => a.id === 'openCargo'), 'unverified opener is not reported as completed');
+  assert.ok(report.invalidatedActions.includes('openCargo'));
+  assert.ok(report.noData.some((x) => x.label === 'Motor truck cargo' && /Clicked once, but the page never showed what it opens/.test(x.note)), JSON.stringify(report.noData));
+  assert.ok(report.blocked.some((b) => b.id === 'openCargo'), JSON.stringify(report.blocked));
+  assert.ok(report.blocked.some((b) => b.id === 'recalculate' && /doneCargo clicked/.test(b.why)), JSON.stringify(report.blocked));
+  assert.ok(report.blocked.some((b) => b.id === 'billPlan' && /doneCargo clicked/.test(b.why)), JSON.stringify(report.blocked));
+  assert.equal(cont._clicked, undefined, 'Continue is not clicked while cargo never opened');
+  assert.equal(report.advanced, undefined);
+});
+
+// Review of PR #593: when General Liability is already open on Rates without 'openGl' in
+// doneActions (agent clicked "+" before Fill, or a slow open landed after an earlier fill) and
+// q21D1 is not yet answered, Progressive has swapped "+" for "-". `openGl.unlessSelector` recognizes
+// the open section so no false glAddNote ("add it with +") is reported and no "+" is clicked; and
+// an exhausted `loads` helper whose "+" vanished never pushes a duplicate `missing` item either.
+test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswered reports no false openGl note and clicks no "+"', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'Oil and gas equipment' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: false, gl: true, glLimit: '$1M/$2M', ntl: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const clicks = [];
+  const glRow = new FakeNode('div');
+  const minus = new FakeNode('a', { attrs: { role: 'button' } });
+  minus.append(new FakeNode('span', { textContent: '-' }));
+  glRow.append(new FakeNode('div', { textContent: 'General Liability' }), minus);
+  h.document.body.append(glRow);
+  const cargoRow = new FakeNode('div');
+  const cargoPlus = new FakeNode('a', { attrs: { role: 'button' } });
+  cargoPlus.append(new FakeNode('span', { textContent: '+' }));
+  cargoPlus.onclick = () => clicks.push('cargo+');
+  cargoRow.append(new FakeNode('div', { textContent: 'Motor Truck Cargo' }), cargoPlus);
+  h.document.body.append(cargoRow);
+  const income = radioGroup('Does the customer earn 100% of his or her income from for hire trucking operations?',
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'glIncome', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckIncome' } })));
+  const oilGas = radioGroup('Does the customer haul to or from oil and gas fields?',
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'glOilGas', type: 'radio', value: v, attrs: { fieldref: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas' } })));
+  h.document.body.append(income, oilGas);
+
+  const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true, doneActions: [] });
+  assert.deepEqual(clicks, [], 'no "+" clicked when GL is already open');
+  assert.ok(report.filled.some((x) => x.key === 'ref:GeneralLiabilityInput.GeneralLiabilityTruckIncome' && x.shown === 'Yes'));
+  assert.ok(!report.noData.some((x) => x.label === 'General liability'), `no false glAddNote: ${JSON.stringify(report.noData)}`);
+
+  // Same with no "+" anywhere on the page (findButton(openGl) is null): still no false glAddNote.
+  cargoPlus.remove();
+  const noPlusReport = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true, doneActions: [] });
+  assert.ok(!noPlusReport.noData.some((x) => x.label === 'General liability'), `no false glAddNote without "+": ${JSON.stringify(noPlusReport.noData)}`);
+
+  // Exhausted `loads` helper whose button disappeared (swapped for "-") without drawing anything:
+  // reports the single unrevealed `loads` item, never a duplicate `missing` item.
+  const stale = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const liab = addExtText(stale, 'c', '1D97', { caption: 'Bodily Injury and Property Damage Liability', ref: 'LineInput.RBIPDLimit', value: '$1 million CSL' });
+  Object.assign(liab.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => [{ get: () => '$1 million CSL' }], isLoading: () => false } });
+  const row2 = new FakeNode('div');
+  const plus2 = new FakeNode('a', { attrs: { role: 'button' } });
+  plus2.append(new FakeNode('span', { textContent: '+' }));
+  plus2.onclick = () => { plus2.remove(); };
+  row2.append(new FakeNode('div', { textContent: 'General Liability' }), plus2);
+  stale.document.body.append(row2);
+  const staleReport = await stale.kit.fill(plan, { maxRounds: 6, replaceChoices: true, doneActions: [] });
+  const glNotes = staleReport.noData.filter((x) => x.label === 'General liability');
+  assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
+  assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
 });

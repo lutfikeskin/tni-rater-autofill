@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { NO_TEST_LIST, RESTRICTED, isRestricted, markdown, mask, readTestList, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
+import { NO_TEST_LIST, RESTRICTED, TYPED_FROM_INTAKE_MIN_QUOTES, TYPED_FROM_INTAKE_MIN_SHARE, isRestricted, learnerTestRuns, markdown, mask, readTestList, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
 // Two quotes on two builds: what each left, held and reported.
 function week() {
@@ -320,7 +320,7 @@ const repo = fileURLToPath(new URL('..', import.meta.url));
 test('readTestList: the repository\'s list or --tests, plus fixture PDFs, checked', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tests-list-'));
   try {
-    assert.deepEqual(readTestList({ root }), { file: null, intakes: [], warning: NO_TEST_LIST });
+    assert.deepEqual(readTestList({ root }), { file: null, intakes: [], agents: [], warning: NO_TEST_LIST });
     // Fixture and synthetic intake PDFs, at any depth, are tests without a list.
     fs.mkdirSync(path.join(root, 'test', 'fixtures', 'more'), { recursive: true });
     fs.mkdirSync(path.join(root, 'dist', 'synthetic-intakes', 'pdfs'), { recursive: true });
@@ -346,6 +346,16 @@ test('readTestList: the repository\'s list or --tests, plus fixture PDFs, checke
     assert.throws(() => readTestList({ tests: path.join(root, 'missing.txt'), root }), /no such file/);
     fs.writeFileSync(other, 'abc\n');
     assert.throws(() => readTestList({ tests: other, root }), /at least 8 hex/);
+    // agent: lines name the maintainer's initials, apart from the fingerprints; CRLF parses the same.
+    const ownText = 'cafebabe\nagent:ad  # mine\nAGENT: Ayaz\nagent:AD\n';
+    fs.writeFileSync(other, ownText);
+    const own = readTestList({ tests: other, root });
+    assert.deepEqual(own.agents, ['AD', 'AYAZ']);
+    assert.deepEqual(own.intakes.filter((x) => x.length < 64), ['cafebabe']);
+    fs.writeFileSync(other, ownText.replace(/\n/g, '\r\n'));
+    assert.deepEqual(readTestList({ tests: other, root }), own);
+    fs.writeFileSync(other, 'agent:\n');
+    assert.throws(() => readTestList({ tests: other, root }), /needs the initials/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -359,7 +369,7 @@ test('readTestList reads this repository\'s list and fixtures by default', () =>
   assert.ok(list.intakes.includes(sha(fs.readFileSync(path.join(repo, 'test', 'fixtures', 'sample-intake.pdf')))));
 });
 
-// Audit 2026-10-19: run where there was no reviews/test-intakes.txt (a git worktree), the signals
+// Audit 2026-10-19: run where there is no reviews/test-intakes.txt (a git worktree), the signals
 // counted the maintainer's test quotes as agents' work without saying so.
 test('weekly-signals reads the repository\'s list wherever it runs, and says when there is none', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signals-'));
@@ -481,4 +491,198 @@ test('signals read a period quote\'s defaults logged before the period', () => {
   events.push({ id: 'd0', t: '2026-10-05T23:00:00Z', receivedAt: '2026-10-05T23:00:00Z', v: '0.9.9', carrier: 'progressive', agent: 'AB', session: 'new', type: 'agent_settings', values: {}, defaults: [{ id: 'umCsl', value: 300000 }] });
   const s = signals(events, { since: '2026-10-06' });
   assert.deepEqual(s.ownDefaults, { quotes: 1, defaults: [{ text: 'Uninsured / underinsured motorist (CSL): $300,000', quotes: 1, agents: ['AB'] }] });
+});
+
+test('testSessionsOf: the maintainer\'s initials make every quote on their computers a test run', () => {
+  const ev = (session, install, agent, extra = {}) => ({ type: 'intake_loaded', session, install, agent, intakeId: `${session}0000000`, ...extra });
+  const events = [
+    ev('mine-before', 'laptop', null), // sent before the initials were typed in
+    ev('mine', 'laptop', 'AD'),
+    ev('pilot', null, 'ayaz'), // an old build with no install id
+    ev('agent', 'desk', 'JC'),
+    ev('unnamed', 'other', null),
+    ev('kept', 'laptop', 'AD'),
+    { type: 'intake_marked', session: 'kept', test: false },
+  ];
+  const tests = testSessionsOf(events, [], { agents: ['AD', 'AYAZ'] });
+  assert.deepEqual([...tests].sort(), ['mine', 'mine-before', 'pilot'], 'the latest mark in the panel still wins');
+  assert.deepEqual([...testSessionsOf(events)], [], 'no initials, no change');
+});
+
+// Audit 2026-11-19: questions ignored by rules or unmapped log no fill_field (or leave them
+// unanswered); answers agents typed that already match the intake surface here.
+test('signals lists answers agents typed from the intake on questions no fill answered', () => {
+  assert.equal(TYPED_FROM_INTAKE_MIN_QUOTES, 3);
+  assert.equal(TYPED_FROM_INTAKE_MIN_SHARE, 0.2);
+
+  const events = [];
+  let t = Date.parse('2026-10-06T12:00:00Z');
+  const add = (x) => events.push({ id: crypto.randomUUID(), t: new Date(t += 1000).toISOString(), receivedAt: new Date(t).toISOString(), v: '0.9.9', carrier: 'progressive', ...x });
+
+  // Five quotes reach BusinessOwnerInfo across three distinct agents: AB/ab (initials, case-insensitive),
+  // CD, and an unnamed install without initials (which counts as its own agent).
+  const quotes = [
+    { session: 'q1', agent: 'AB', install: 'i1' },
+    { session: 'q2', agent: 'ab', install: 'i2' },
+    { session: 'q3', agent: 'CD', install: 'i3' },
+    { session: 'q4', agent: null, install: 'inst-only' },
+    { session: 'q5', agent: 'EF', install: 'i5' },
+  ];
+  for (const q of quotes) {
+    add({ ...q, type: 'intake_loaded', carrier: undefined });
+    add({ ...q, type: 'page_view', page: 'BusinessOwnerInfo' });
+  }
+  const phoneBoxes = [
+    ['2DB', 'Primary Phone Number'],
+    ['2DD', 'Three digit prefix of phone'],
+    ['2DF', 'Four digit suffix of phone'],
+  ];
+  for (const [i, q] of quotes.slice(0, 4).entries()) {
+    for (const [code, label] of phoneBoxes) {
+      add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: code, label, kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.phone:part'] });
+    }
+    // A second edit on the same box in one quote still counts the quote and path once.
+    if (i === 0) add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2DF', label: 'Four digit suffix of phone', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.phone:part'] });
+    // List indexes normalize to [].
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2E0', label: 'Driver Email', kind: 'text', by: 'agent', autofilled: null, matchesIntake: [`drivers[${i}].email`] });
+    // An unfamiliar fill_field did not answer the question: typing an intake value still counts.
+    add({ ...q, type: 'fill_field', page: 'BusinessOwnerInfo', q: '2E1', label: 'Owner Email', result: 'unfamiliar' });
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2E1', label: 'Owner Email', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+    // Answered by fill (filled or kept), then retyped with the same intake value: NOT listed.
+    add({ ...q, type: 'fill_field', page: 'BusinessOwnerInfo', q: '2A1', label: 'City', result: 'filled' });
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2A1', label: 'City', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['garaging.city'] });
+    add({ ...q, type: 'fill_field', page: 'BusinessOwnerInfo', q: '2A2', label: 'Zip Code', result: 'kept' });
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2A2', label: 'Zip Code', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['garaging.zip'] });
+    // Flagged autofilled on the change itself: NOT listed.
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2A3', label: 'Business Name', kind: 'text', by: 'agent', autofilled: 'applicant.name', matchesIntake: ['applicant.name'] });
+    // A choice (select) change, even with matchesIntake: NOT listed.
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2A4', label: 'State', kind: 'select', by: 'agent', autofilled: null, matchesIntake: ['garaging.state'] });
+    // Empty matchesIntake: NOT listed.
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2A5', label: 'Reference Note', kind: 'text', by: 'agent', autofilled: null, matchesIntake: [] });
+    // Changed by the page, not the agent: NOT listed.
+    add({ ...q, type: 'field_change', page: 'BusinessOwnerInfo', q: '2A6', label: 'Auto Filled By Page', kind: 'text', by: 'page', autofilled: null, matchesIntake: ['applicant.email'] });
+  }
+
+  const s = signals(events, { since: '2026-10-06' });
+  assert.deepEqual(s.typedFromIntake.map((r) => [r.carrier, r.page, r.label, r.quotes, r.reached, r.percent, r.agents, r.paths]), [
+    ['progressive', 'BusinessOwnerInfo', 'Driver Email', 4, 5, 80, 3, [['drivers[].email', 4]]],
+    ['progressive', 'BusinessOwnerInfo', 'Four digit suffix of phone', 4, 5, 80, 3, [['applicant.phone', 4]]],
+    ['progressive', 'BusinessOwnerInfo', 'Owner Email', 4, 5, 80, 3, [['applicant.email', 4]]],
+    ['progressive', 'BusinessOwnerInfo', 'Primary Phone Number', 4, 5, 80, 3, [['applicant.phone', 4]]],
+    ['progressive', 'BusinessOwnerInfo', 'Three digit prefix of phone', 4, 5, 80, 3, [['applicant.phone', 4]]],
+  ]);
+  for (const r of s.typedFromIntake) assert.equal('action' in r, false);
+  const md = markdown(s);
+  assert.match(md, /## Typed from the intake, unanswered by a fill\n\n.*The rule ignores or has no rule for a question whose answer the intake holds; propose mapping it from the path shown, as a Decide item when a TNI workflow says to leave it blank\./);
+  assert.match(md, /\| Carrier \| Page \| Question \| Quotes \| Reached \| Intake paths \| Agents \|\n\| --- \| --- \| --- \| --- \| --- \| --- \| --- \|/);
+  assert.doesNotMatch(md, /What to do/);
+  assert.match(md, /\| progressive \| BusinessOwnerInfo \| Primary Phone Number \| 4 \(80%\) \| 5 \| applicant\.phone \(4\) \| 3 \|$/m);
+  assert.match(md, /\| progressive \| BusinessOwnerInfo \| Driver Email \| 4 \(80%\) \| 5 \| drivers\[\]\.email \(4\) \| 3 \|$/m);
+  // A week with none says so.
+  assert.match(markdown(signals(week(), { since: '2026-10-06' })), /## Typed from the intake, unanswered by a fill\n\n.*\n\nNone\./);
+});
+
+test('typed from intake checks thresholds, leaves test runs out, keys one-address steps, and caps Markdown at 15 rows', () => {
+  const events = [];
+  let t = Date.parse('2026-10-06T12:00:00Z');
+  const add = (x) => events.push({ id: crypto.randomUUID(), t: new Date(t += 1000).toISOString(), receivedAt: new Date(t).toISOString(), v: '0.9.9', agent: 'AB', ...x });
+
+  // 16 real quotes on PageLowShare (3 type -> 18.75% < 20%, excluded); 15 reach PageAtThreshold (3 type -> 20%, kept);
+  // 4 reach PageLowCount (2 type -> 50% >= 20%, but 2 < 3, excluded).
+  for (let i = 0; i < 16; i++) {
+    const session = `s${i}`;
+    add({ session, type: 'intake_loaded' });
+    add({ session, carrier: 'progressive', type: 'fill_run', page: 'PageLowShare', blockers: 0, blockerList: [] });
+    if (i < 3) add({ session, carrier: 'progressive', type: 'field_change', page: 'PageLowShare', q: 'L1', label: 'Low Share', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+    if (i < 15) {
+      add({ session, carrier: 'progressive', type: 'fill_run', page: 'PageAtThreshold', blockers: 0, blockerList: [] });
+      if (i < 3) add({ session, carrier: 'progressive', type: 'field_change', page: 'PageAtThreshold', q: 'T1', label: 'At Threshold', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+    }
+    if (i < 4) {
+      add({ session, carrier: 'progressive', type: 'fill_run', page: 'PageLowCount', blockers: 0, blockerList: [] });
+      if (i < 2) add({ session, carrier: 'progressive', type: 'field_change', page: 'PageLowCount', q: 'C1', label: 'Low Count', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+    }
+  }
+
+  // Test runs are left out: 2 real + 2 test quotes on PageWithTests -> only 2 real (< 3), excluded.
+  for (const q of [{ session: 'r1' }, { session: 'r2' }, { session: 't1', test: true }, { session: 't2', intakeId: 'deadbeef01' }]) {
+    add({ type: 'intake_loaded', ...q });
+    add({ session: q.session, carrier: 'progressive', type: 'page_view', page: 'PageWithTests' });
+    add({ session: q.session, carrier: 'progressive', type: 'field_change', page: 'PageWithTests', q: 'W1', label: 'Only With Tests', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+  }
+
+  // One-address carrier (AmWINS): same label on two steps stays separate and uses its own step's denominator.
+  for (let i = 0; i < 4; i++) {
+    const session = `a${i}`;
+    add({ session, type: 'intake_loaded' });
+    add({ session, carrier: 'amwins', type: 'fill_run', page: '/application/businessauto', step: 'Insured Info', blockers: 0, blockerList: [] });
+    if (i < 3) add({ session, carrier: 'amwins', type: 'field_change', page: '/application/businessauto', step: 'Insured Info', q: null, label: 'Email', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+  }
+  for (let i = 0; i < 10; i++) {
+    const session = `b${i}`;
+    add({ session, type: 'intake_loaded' });
+    add({ session, carrier: 'amwins', type: 'fill_run', page: '/application/businessauto', step: 'Billing', blockers: 0, blockerList: [] });
+    if (i === 0) add({ session, carrier: 'amwins', type: 'field_change', page: '/application/businessauto', step: 'Billing', q: null, label: 'Email', kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+  }
+
+  const s = signals(events, { since: '2026-10-06', testIntakes: ['deadbeef'] });
+  assert.deepEqual(s.typedFromIntake.map((r) => [r.carrier, r.page, r.label, r.quotes, r.reached, r.percent]), [
+    ['amwins', '/application/businessauto › Insured Info', 'Email', 3, 4, 75],
+    ['progressive', 'PageAtThreshold', 'At Threshold', 3, 15, 20],
+  ]);
+
+  // 17 qualifying rows: JSON keeps all 17; Markdown caps at 15 and says 2 more not shown.
+  const many = [];
+  for (let i = 0; i < 3; i++) {
+    const session = `m${i}`;
+    many.push({ id: `mi${i}`, t: '2026-10-06T12:00:00Z', receivedAt: '2026-10-06T12:00:00Z', v: '0.9.9', agent: 'AB', session, type: 'intake_loaded' });
+    many.push({ id: `mp${i}`, t: '2026-10-06T12:01:00Z', receivedAt: '2026-10-06T12:01:00Z', v: '0.9.9', agent: 'AB', session, carrier: 'progressive', type: 'page_view', page: 'ManyPage' });
+    for (let k = 1; k <= 17; k++) {
+      many.push({ id: `mf${i}-${k}`, t: '2026-10-06T12:02:00Z', receivedAt: '2026-10-06T12:02:00Z', v: '0.9.9', agent: 'AB', session, carrier: 'progressive', type: 'field_change', page: 'ManyPage', q: `Q${k}`, label: `Box ${k}`, kind: 'text', by: 'agent', autofilled: null, matchesIntake: ['applicant.email'] });
+    }
+  }
+  const sm = signals(many, { since: '2026-10-06' });
+  assert.equal(sm.typedFromIntake.length, 17);
+  const md = markdown(sm);
+  const section = md.split('## Typed from the intake, unanswered by a fill')[1].split('\n## ')[0];
+  const dataRows = section.split('\n').filter((line) => line.startsWith('| progressive | ManyPage |'));
+  assert.equal(dataRows.length, 15);
+  assert.match(section, /2 more not shown\./);
+});
+
+test('signals, learnerTestRuns and weekly-signals honor agent: lines, including earlier quotes on that install, while intake_marked still wins', (t) => {
+  const at = '2026-10-06T12:00:00Z';
+  const quote = (session, install, agent, extra = {}) => [
+    { id: `${session}1`, t: at, receivedAt: at, session, install, agent, type: 'intake_loaded', intakeId: `${session}0000000`, ...extra },
+    { id: `${session}2`, t: at, receivedAt: at, session, install, agent, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
+  ];
+  const events = [
+    ...quote('mine-before', 'laptop', null),
+    ...quote('mine', 'laptop', 'AD'),
+    ...quote('kept', 'laptop', 'AD'),
+    { id: 'kept3', t: at, receivedAt: at, session: 'kept', install: 'laptop', agent: 'AD', type: 'intake_marked', test: false },
+    ...quote('agent', 'desk', 'JC'),
+  ];
+  // Default (no agents) is unchanged.
+  const plain = signals(events, { since: '2026-10-06' });
+  assert.deepEqual([plain.quotes, plain.kpis.testRunsLeftOut], [4, 0]);
+  assert.deepEqual([...learnerTestRuns(events)], []);
+  // With agent: initials, both maintainer quotes leave (including the one before initials were typed); the unmarked one stays.
+  const filtered = signals(events, { since: '2026-10-06', testAgents: ['AD'] });
+  assert.deepEqual([filtered.quotes, filtered.kpis.testRunsLeftOut], [2, 2]);
+  assert.deepEqual([...learnerTestRuns(events, [], { agents: ['AD'] })].sort(), ['mine', 'mine-before']);
+  // A capped slice lacking intake_loaded still leaves out the maintainer install via learnerTestRuns.
+  const sliced = events.filter((e) => !(e.session === 'mine-before' && e.type === 'intake_loaded'));
+  assert.deepEqual([...learnerTestRuns(sliced, [], { agents: ['AD'] })].sort(), ['mine', 'mine-before']);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signals-agents-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const log = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(log, events.map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, 'agent:AD\n');
+  const r = spawnSync(process.execPath, [path.join(repo, 'scripts', 'weekly-signals.mjs'), log, '--all', '--tests', list, '--json'], { encoding: 'utf8', cwd: dir });
+  assert.equal(r.status, 0, r.stderr);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual([out.quotes, out.kpis.testRunsLeftOut], [2, 2]);
 });

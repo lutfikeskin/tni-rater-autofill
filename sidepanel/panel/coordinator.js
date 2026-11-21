@@ -112,6 +112,10 @@ const fillOptionsFor = (carrier, extra, autoAdvance, active, unitsListed, fill, 
   // Steps that are the agent's (GEICO's MVR & CLUE, Payment Information), by name: the kit reads
   // the step on the page at the start and every round, as the panel's word on it can lag.
   stopSteps: Object.keys(carrier.stopSteps ?? {}),
+  // Where the carrier quotes its premium (src/premium.js): the kit reads it there while current
+  // (before leaving the page or as the fill ends), so the panel logs quote_premium without racing
+  // navigation (#584, #585).
+  premiumPages: carrier.premiumPages ?? [],
   // Which vehicle, driver and trailer the plan is for, how many the intake lists, and the forms
   // earlier fills on this tab answered for them (unitForms): a form that may be another unit's is
   // left for the agent (pagekit unitHeld). Element names and numbers only.
@@ -346,6 +350,7 @@ function logFill(ctx, frames, results, started, plan = null) {
     run: ctx.run, rules: rulesVersion ?? undefined, carrierRules: carrierRulesOf(ctx.carrier.id), settings: ctx.settings, step: stepOfResults(ctx.carrier, results), defaultsHash: ctx.defaultsHash, background: !!ctx.background, retried: !!ctx.retried,
     keptLogged: state.keptLogged.seen, plan,
   }));
+  noteFillPremium(ctx, frames, results);
 }
 // A rejected fill has no fill_run result to carry its rule version and switches. `timeline`: the
 // kit's last waits, presses and answers, where the page still has them (fillTimeline).
@@ -506,6 +511,7 @@ async function autoFill(page) {
       }
       if (current) recordLayout(page);
     } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held || f.unlisted)) logFill(ctx, frames, results, started, plan);
+    else noteFillPremium(ctx, frames, results);
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
@@ -594,6 +600,36 @@ function intakeEdited() {
 // The last premium logged per quote, tab and carrier (notePremium).
 const premiumsSeen = new Map();
 
+// The current premium a fill saw on a premium page (pagekit report.premium), logged with the same
+// guards, dedupe (premiumsSeen) and event shape as captureLayout so a fill that navigates or opens
+// a new tab before captureLayout lands still logs quote_premium (#584, #585).
+/** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames @param {any[]} results */
+function noteFillPremium(ctx, frames, results) {
+  if (ctx.carrier.practice) return;
+  if (frames.some((f) => f?.stopStep)) return;
+  const session = ctx.ids?.session ?? usage.currentSession()?.id;
+  if (!session) return;
+  const top = results?.find?.((r) => r.frameId === 0)?.result;
+  const premium = top !== undefined ? top?.premium : frames.find((f) => f?.premium)?.premium;
+  if (!premium) return;
+  const step = ctx.carrier.layoutSteps
+    ? (top !== undefined ? stepOfResults(ctx.carrier, results) : knownStep(ctx.carrier, frames.find((f) => f?.stepKey)?.stepKey))
+    : undefined;
+  if (step && ctx.carrier.stopSteps?.[step]) return;
+  if (!premiumHere(ctx.carrier, ctx.page, step)) return;
+  notePremium({
+    key: `${session}|${ctx.tabId}|${ctx.carrier.id}`,
+    step: step ?? null,
+    seen: premiumsSeen,
+    premium,
+    log: (e) => {
+      if (usage.currentSession()?.id !== session) return false;
+      usage.log({ carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, ...e });
+      return true;
+    },
+  });
+}
+
 // `reason`: given for a fill's capture; one asked for by page changes says its reasons when it's
 // logged, since later changes may have handed it theirs.
 async function captureLayout(job, reason) {
@@ -627,7 +663,7 @@ async function captureLayout(job, reason) {
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     noteStopScreen(job, step, buttons);
     // The premium the page quotes, logged when it changed (src/premium.js; not awaited).
-    if (premiumHere(carrier.id, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
+    if (premiumHere(carrier, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
       read: async () => (await chrome.scripting.executeScript({ target: { tabId }, func: () => document.body?.innerText ?? '' }))[0]?.result,
       log: (e) => { if (!jobCurrent(job)) return false; usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier), ...e }); return true; } });
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads
@@ -1532,7 +1568,7 @@ function dockFor() {
     const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
     const ai = aiDock ? pendingAi(state.tab.id, page) : [];
     if (ai.length) {
-      const waiting = ai.filter((x) => !x.rejected).length;
+      const waiting = ai.filter((x) => !x.rejected && !x.unconfirmed).length;
       const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
       return { phase: 'ai', tone: 'ai', eyebrow: DOCK.ai.eyebrow(ai.length), title: DOCK.ai.title(waiting),
         sub: DOCK.ai.sub(waiting < ai.length, !!aiDock.canContinue), button: 'ai-approve', label: DOCK.ai.label(waiting, continues) };

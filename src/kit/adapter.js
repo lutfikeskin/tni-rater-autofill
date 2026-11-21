@@ -1,10 +1,10 @@
 // @ts-check
 // Carrier page adapter (__raterAdapter), page identity, lifecycle, AJAX/request monitoring, and settling.
 
-import { oneLine, squash, sleep } from './text.js';
+import { oneLine, sleep } from './text.js';
 import { RATES_STALE } from '../rates.js';
+import { readPremium } from '../premium.js';
 import { kitTrace, isTracing } from './trace.js';
-import { deepQueryAll, isVisible } from './dom.js';
 
 /** @import { PageAdapter, PageAdapterKit, PageAdapterShared } from '../../types.js' */
 
@@ -137,7 +137,6 @@ const UNDEFINED_MS = 3000;
 const undefinedSince = new WeakMap();
 let componentPrefix = null;
 
-export const getComponentPrefix = () => componentPrefix;
 export const setComponentPrefix = (prefix) => { componentPrefix = prefix; };
 
 /**
@@ -165,6 +164,7 @@ export function partsUndefined(onlyLook = false) {
   return waiting;
 }
 
+/** @type {PerformanceObserver | false | null} */
 let requestWatch = null;
 /** @type {Array<{ start: number, end: number, poll: boolean }>} */
 export const recentRequests = [];
@@ -175,9 +175,15 @@ const lastRequestEnd = () => recentRequests.reduce((m, r) => (r.poll ? m : Math.
 const POLL_SLACK_MS = 40;
 /** @type {Map<string, { starts: number[], period: number | null }>} */
 const beats = new Map();
+/** @type {WeakSet<PerformanceEntry>} */
+const seenEntries = new WeakSet();
 
 /**
  * Determines whether requests at an address represent a periodic background poll heartbeat.
+ * Note: callers key `address` without its query string and this check has no upper bound on
+ * `start - prev`, so a future `serverBacked` page that polls the same pathname Continue posts to
+ * while staying on `startPage` would need this revisited (safe on Progressive today: no heartbeat
+ * on `/Express/Default.aspx`, and an accepted Continue changes `pageName`).
  * @param {string} address
  * @param {number} start
  * @returns {boolean}
@@ -196,22 +202,81 @@ export function isBeat(address, start) {
 
 export const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
+/** @param {PerformanceEntry} e */
+function isOwnRequest(e) {
+  const res = /** @type {PerformanceResourceTiming} */ (e);
+  return (res.initiatorType === 'fetch' || res.initiatorType === 'xmlhttprequest')
+    && String(res.name).startsWith(`${location.origin}/`);
+}
+
+/**
+ * Read-only beat check for undelivered entries in the synchronous resource-buffer fallback (does
+ * not mutate `beats`): only called for entries not yet in `seenEntries`, matching an undelivered
+ * beat on a known polling address while still letting a non-beat request between beats count.
+ * @param {string} address
+ * @param {number} start
+ * @returns {boolean}
+ */
+function isKnownBeat(address, start) {
+  const b = beats.get(address);
+  if (b?.period == null) return false;
+  let prev = null;
+  for (let i = b.starts.length - 1; i >= 0; i--) {
+    if (b.starts[i] < start) { prev = b.starts[i]; break; }
+  }
+  return prev != null && start - prev >= b.period * 0.75;
+}
+
+/**
+ * Records same-origin fetch/XHR entries into `recentRequests`, classifying periodic heartbeats.
+ * Shared by the PerformanceObserver callback and synchronous `takeRecords()` draining.
+ * @param {PerformanceEntryList | PerformanceEntry[]} entries
+ */
+function recordRequests(entries) {
+  for (const e of entries) {
+    if (!isOwnRequest(e) || seenEntries.has(e)) continue;
+    seenEntries.add(e);
+    const res = /** @type {PerformanceResourceTiming} */ (e);
+    const start = res.startTime ?? res.responseEnd;
+    recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
+    if (recentRequests.length > 200) recentRequests.shift();
+  }
+}
+
+/**
+ * Whether this frame completed a non-poll same-origin fetch or XHR started at or after `since`
+ * (`performance.now()` ms): drains `PerformanceObserver.takeRecords()` first (works even after a
+ * long-lived document fills Chromium's 250-entry resource buffer), then falls back to
+ * `performance.getEntriesByType('resource')` only for entries not already classified by
+ * `recordRequests()` (`seenEntries`).
+ * @param {number} since
+ * @returns {boolean}
+ */
+export function requestSentSince(since) {
+  if (requestWatch && typeof requestWatch.takeRecords === 'function') {
+    try { recordRequests(requestWatch.takeRecords()); } catch { /* ignore */ }
+  }
+  if (recentRequests.some((r) => !r.poll && r.start >= since)) return true;
+  if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
+  try {
+    return performance.getEntriesByType('resource').some((e) => {
+      if (seenEntries.has(e) || !isOwnRequest(e)) return false;
+      const res = /** @type {PerformanceResourceTiming} */ (e);
+      const start = res.startTime ?? res.responseEnd;
+      return start >= since && !isKnownBeat(String(res.name).split(/[?#]/)[0], start);
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Starts observing this frame's network requests.
  */
 export function watchRequests() {
   if (requestWatch !== null) return;
   try {
-    requestWatch = new PerformanceObserver((list) => {
-      for (const e of list.getEntries()) {
-        const res = /** @type {PerformanceResourceTiming} */ (e);
-        if ((res.initiatorType === 'fetch' || res.initiatorType === 'xmlhttprequest') && String(res.name).startsWith(`${location.origin}/`)) {
-          const start = res.startTime ?? res.responseEnd;
-          recentRequests.push({ start, end: res.responseEnd, poll: isBeat(String(res.name).split(/[?#]/)[0], start) });
-          if (recentRequests.length > 200) recentRequests.shift();
-        }
-      }
-    });
+    requestWatch = new PerformanceObserver((list) => recordRequests(list.getEntries()));
     requestWatch.observe({ type: 'resource', buffered: true });
   } catch {
     requestWatch = false;
@@ -384,84 +449,6 @@ export function ratesStale() {
  * @returns {boolean}
  */
 export function premiumReady() {
-  if (pageBusy() || ratesStale()) return false;
-  const text = document.body.innerText ?? '';
-  return /(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text)
-    || /\bquote\s+\$\s*[1-9][\d,]*\.\d{2}\s+due today\s+\$\s*[\d,]+\.\d{2}\s+total\b/i.test(text);
+  return !pageBusy() && readPremium(document.body.innerText ?? '') !== null;
 }
 
-/**
- * Verifies whether a rating action has produced a verified premium.
- * @param {any} [a]
- * @returns {boolean}
- */
-export function rated(a) {
-  return premiumReady() && (!a?.ratedBy || deepQueryAll(document, a.ratedBy).some((el) => el.getClientRects().length));
-}
-
-/**
- * Returns step progress bar elements on screen.
- * @returns {Element[]}
- */
-export const stepBars = () => {
-  const own = adapter().selectors?.stepBar ?? [];
-  return own.length ? [...(document.querySelectorAll?.(own.join(', ')) ?? [])] : [];
-};
-
-/**
- * The bar's one part under way (0 < value < 100), by its words; '' when none or several are.
- * @returns {string}
- */
-export function barStep() {
-  const now = stepBars().filter((b) => { const v = Number(b.getAttribute('value')); return v > 0 && v < 100; });
-  return now.length === 1 ? oneLine(now[0].textContent) : '';
-}
-
-/**
- * Which step of a one-address application is on screen.
- * @returns {string}
- */
-export function stepKey() {
-  if (stepBars().length) {
-    const bar = barStep();
-    return squash(bar) && squash(document.title).includes(squash(bar)) ? bar : '';
-  }
-  return deepQueryAll(document, 'h1, h2, h3').filter(isVisible).map((h) => oneLine(h.textContent)).filter(Boolean).slice(0, 4).join(' / ');
-}
-
-/**
- * Whether the step on screen is one of names.
- * @param {string | string[]} names
- * @param {string} [key]
- * @returns {boolean}
- */
-export function stepIs(names, key = stepKey()) {
-  const parts = String(key ?? '').split(' / ').map(squash).filter(Boolean);
-  return [].concat(names ?? []).some((n) => !!squash(n) && parts.includes(squash(n)));
-}
-
-/** @type {string[]} */
-let knownStopSteps = [];
-
-export const getKnownStopSteps = () => knownStopSteps;
-
-/**
- * Adds stop steps to the known stop steps set.
- * @param {string[]} steps
- */
-export function addStopSteps(steps) {
-  if (steps?.length) knownStopSteps = [...new Set([...knownStopSteps, ...steps])];
-}
-
-/**
- * The step of stopSteps on screen, or ''.
- * @param {string[]} stopSteps
- * @returns {string}
- */
-export function stopStepOn(stopSteps) {
-  if (!stopSteps?.length) return '';
-  const bar = barStep();
-  const key = stepKey();
-  const title = squash(document.title);
-  return stopSteps.find((n) => stepIs([n], bar) || stepIs([n], key) || (!!squash(n) && title.includes(squash(n)))) ?? '';
-}

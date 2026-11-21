@@ -268,9 +268,67 @@ test('Progressive standard answers: USDOT belongs to the business is TNI\'s stan
   assert.equal(plan.find((step) => step.re === '^state( filing)?$').ignore, true);
 });
 
+// The audit of 2026-11-19: the boxes were left blank as optional, and agents typed the intake's own
+// number into them on 65 of the 88 quotes of 2026-11-03 to 2026-11-17.
+test('Progressive gets the intake\'s phone in its three boxes; one that is no US number, or none, is the agent\'s', () => {
+  const parts = (phone) => {
+    const record = baseRecord();
+    record.applicant.phone = phone;
+    return ['2DB', '2DD', '2DF'].map((q) => byQ(buildPlan(record, progressive, {}), q));
+  };
+  const filled = parts('(402) 555-0142');
+  assert.deepEqual(filled.map((s) => s.value), ['402', '555', '0142']);
+  assert.deepEqual(filled.map((s) => [s.field, s.source, s.ignore, s.note, s.kind]), [
+    ['AccountInput.PhoneAreaCodeString', 'derived', false, null, 'text'],
+    ['AccountInput.PhoneThreeDigitsString', 'derived', false, null, 'text'],
+    ['AccountInput.PhoneFourDigitsString', 'derived', false, null, 'text'],
+  ]);
+  assert.ok(filled.every((s) => s.from.includes('applicant.phone')), 'its evidence is the intake\'s phone box');
+  // As written when it isn't a 10-digit US number (normalizeIntake keeps the box's text): never
+  // typed in parts, the agent's, with the note GEICO's boxes get.
+  const unread = parts('555-12');
+  assert.deepEqual(unread.map((s) => s.value), [null, null, null]);
+  assert.ok(unread.every((s) => s.note === 'The intake\'s phone isn\'t a 10-digit number: enter it yourself.'));
+  assert.equal(buildPlan({ ...baseRecord(), applicant: { ...baseRecord().applicant, phone: '555-12' } }, geico).find((s) => s.field === 'GivePhoneNumber').note, unread[0].note, 'one note for every carrier');
+  // A number the agent typed in the panel is kept as the intake's are (parseEdit), and one kept as
+  // digits by an older build is still a number: no note, the parts filled (CodeRabbit on #565).
+  assert.equal(parseEdit('phone', '4025550142'), '(402) 555-0142');
+  assert.equal(parseEdit('phone', '402-555-0142'), '(402) 555-0142');
+  assert.equal(parseEdit('phone', '555-12'), '555-12', 'what isn\'t a number keeps its text, for the check');
+  const digits = parts('4025550142');
+  assert.deepEqual(digits.map((s) => [s.value, s.note]), [['402', null], ['555', null], ['0142', null]]);
+  assert.equal(buildPlan({ ...baseRecord(), applicant: { ...baseRecord().applicant, phone: '4025550142' } }, geico).find((s) => s.field === 'GivePhoneNumber').note, null, 'nor a note on GEICO');
+  // No phone on the intake: nothing to type and nothing to say; the page's own boxes stay the agent's.
+  const none = parts(null);
+  assert.deepEqual(none.map((s) => [s.value, s.note, s.ignore]), [[null, null, false], [null, null, false], [null, null, false]]);
+});
+
+// The audit of 2026-11-19: left blank as optional, and typed by agents on 49 quotes, the intake's own on 44.
+test('Progressive gets the intake\'s email on More About Business; none on the intake is the agent\'s', () => {
+  const email = (value) => {
+    const record = baseRecord();
+    record.applicant.email = value;
+    return byQ(buildPlan(record, progressive, {}), '77');
+  };
+  const filled = email('client@example.test');
+  assert.deepEqual([filled.field, filled.path, filled.source, filled.value, filled.ignore], ['AccountInput.Email', 'applicant.email', 'intake', 'client@example.test', false]);
+  assert.equal(filled.value, buildPlan(baseRecord(), geico).find((s) => s.field === 'GiveEmail').value, 'the same answer as GEICO\'s');
+  assert.deepEqual([email(null).value, email(null).ignore], [null, false]);
+  // The Save Quote window's own email box stays the agent's.
+  assert.equal(byQ(buildPlan(baseRecord(), progressive, {}), '2D55').ignore, true);
+});
+
+// Progressive asks it since 2026-11-17 (required). The intake has one phone box and no kind:
+// TNI's standard is Yes (TNI, 2026-11-19).
+test('Progressive\'s "Is this a mobile phone number?" is TNI\'s standard Yes', () => {
+  const step = buildPlan(baseRecord(), progressive, {}).find((s) => s.field === 'MailingAddressInput.PrimaryPhoneNumberType');
+  assert.deepEqual([step.source, step.value, step.ignore, step.tni], ['standard', true, false, 'progressive.mobile-phone']);
+  assert.deepEqual(step.ask, ['Is this a mobile phone number?']);
+});
+
 test('Progressive preserves optional and server-owned controls', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
+  for (const q of ['18F', '194', '1CC', '2B00', '3E96', '3E97', '3EA4', '32CE']) {
     assert.equal(byQ(plan, q).ignore, true, `q${q} is preserved`);
   }
   // Maryland's own PIP list is no longer kept as Progressive set it: "$2,500 Full PIP" (TNI,
@@ -326,8 +384,11 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const glActions = glPlan.filter((step) => step.kind === 'action');
   const order = glActions.map((s) => s.action);
   assert.ok(order.indexOf('doneCargo') < order.indexOf('openGl') && order.indexOf('openGl') < order.indexOf('doneGl') && order.indexOf('doneGl') < order.indexOf('billPlan'));
+  const openCargo = glActions.find((s) => s.action === 'openCargo');
+  assert.deepEqual([openCargo.loads, openCargo.quietMs, openCargo.verify, openCargo.label], [true, 250, 'revealed', 'Motor truck cargo']);
   const openGl = glActions.find((s) => s.action === 'openGl');
-  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.label], ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], 'General liability']);
+  assert.deepEqual([openGl.text, openGl.near, openGl.afterActions, openGl.unless, openGl.unlessSelector, openGl.label, openGl.loads, openGl.quietMs, openGl.verify],
+    ['^\\+$', 'general liability', ['doneCargo'], ['progressive.q21D1'], '[fieldref^="GeneralLiabilityInput."]', 'General liability', true, 250, 'revealed']);
   // FL live run, 2026-10-28: written '^\+$' it was /^+$/, which doesn't compile; the fill stopped there.
   assert.ok(new RegExp(openGl.text, 'i').test('+') && !new RegExp(openGl.text, 'i').test('x'));
   // Every helper's words compile, whichever carrier (a throw ends the whole fill on that page).
@@ -732,6 +793,14 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   const named = (re) => plan.filter((x) => re.test(x.name ?? ''));
   assert.equal(sel('#inspectionContactOfficePhone').value, '4025550100', 'Contact Information is the client');
   assert.ok(sel('#inspectionContactName').value);
+  // The inspection contact's email is the intake's (TNI, 2026-11-19); none on the intake is the agent's.
+  record.applicant.email = 'client@example.test';
+  const email = buildPlan(record, amwins, {}).find((x) => x.selector === '#inspectionContactEmail');
+  assert.deepEqual([email.value, email.source, email.ignore], ['client@example.test', 'intake', false]);
+  record.applicant.email = null;
+  const none = buildPlan(record, amwins, {}).find((x) => x.selector === '#inspectionContactEmail');
+  assert.deepEqual([none.value, none.ignore], [null, false]);
+  assert.equal(sel('#inspectionContactMobilePhone').ignore, true, 'the mobile phone stays as the page has it');
   assert.equal(named(/^Garage (street|city|state|ZIP)$/).length, 4);
   assert.equal(named(/^Garage city$/)[0].value, record.garaging.city);
   const exclusions = named(/^Exclude /);
@@ -2311,7 +2380,8 @@ test('trailer interchange: the intake\'s request is added and answered, the numb
   assert.ok(order.indexOf('doneCargo') < order.indexOf('openInterchange') && order.indexOf('openInterchange') < order.indexOf('interchangeTile')
     && order.indexOf('interchangeTile') < order.indexOf('doneInterchange') && order.indexOf('doneInterchange') < order.indexOf('recalculate'));
   const open = act('openInterchange');
-  assert.deepEqual([open.text, open.near, open.afterActions, open.unless], ['^\\+$', 'trailer interchange', ['doneCargo'], ['progressive.q21DD', 'progressive.q21BE']]);
+  assert.deepEqual([open.text, open.near, open.afterActions, open.unless, open.loads, open.quietMs, open.verify],
+    ['^\\+$', 'trailer interchange', ['doneCargo'], ['progressive.q21DD', 'progressive.q21BE'], true, 250, 'revealed']);
   const tile = act('interchangeTile');
   assert.deepEqual([tile.afterActions, tile.afterAny, tile.unless, tile.unique], [['openInterchange'], ['progressive.q21C0', 'progressive.qNP21EB'], ['progressive.q21DD', 'progressive.q21E5'], true]);
   assert.ok(layout.open.tiles.every((t) => new RegExp(tile.text, 'i').test(t)));

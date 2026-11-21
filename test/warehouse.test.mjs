@@ -80,6 +80,8 @@ test('warehouseRows counts quotes as the reviews do, with the last profile and t
   // The PDF never taken to a carrier and the local test page aren't quotes.
   assert.deepEqual(Object.keys(quotes).sort(), ['client', 'listed', 'marked']);
   assert.deepEqual(Object.fromEntries(rows.quotes.map((q) => [q.session, q.is_test])), { client: false, marked: true, listed: true });
+  const own = warehouseRows(history().map((x) => (x.session === 'client' ? { ...x, agent: 'AD' } : x)), { testIntakes: [LISTED], testAgents: ['AD'] });
+  assert.equal(own.quotes.find((q) => q.session === 'client').is_test, true, 'a quote by the maintainer\'s initials is a test run');
 
   const c = quotes.client;
   assert.equal(c.profile_source, 'event');
@@ -196,6 +198,10 @@ test("every query in the document's Example SQL runs on the warehouse, and the c
   for (const sql of examples) {
     await assert.doesNotReject(query(file, sql), sql);
   }
+  // The Sales section's queries run too, on empty sales tables.
+  const sales = docSql('Sales');
+  assert.equal(sales.length, 2);
+  for (const sql of sales) await assert.doesNotReject(query(file, sql), sql);
   // Test runs are left out.
   const months = await query(file, examples[0]);
   assert.deepEqual(months.map((r) => [r.state, Number(r.quotes)]), [['TX', 1]]);

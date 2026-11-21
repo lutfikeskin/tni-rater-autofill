@@ -46,7 +46,7 @@ const testsOpt = opt('tests');
 if (args.includes('--tests') && (testsOpt === undefined || testsOpt.startsWith('--'))) fail('--tests needs a value.');
 let testList;
 try { testList = readTestList({ tests: testsOpt }); } catch (err) { fail(err.message); }
-const { intakes: testIntakes, warning: noTestList } = testList;
+const { intakes: testIntakes, agents: testAgents, warning: noTestList } = testList;
 if (noTestList) console.error(`Warning: ${noTestList}`);
 
 const today = new Date().toISOString().slice(0, 10);
@@ -71,7 +71,7 @@ const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOSt
 const recent = from ? all.filter((e) => receivedAt(e) >= from) : all;
 // Test runs: intakes marked as a test, fixture intakes and the fingerprints in the test-run list
 // (scripts/lib/signals.mjs). Their events leave the numbers and the usage summary.
-const tests = testSessionsOf(all, testIntakes);
+const tests = testSessionsOf(all, testIntakes, { agents: testAgents });
 // The agents' work in the period: everything but test runs (problem reports keep them, marked).
 const live = recent.filter((e) => !tests.has(e.session));
 
@@ -102,7 +102,7 @@ fs.rmSync(tmp, { recursive: true, force: true });
 // The weekly numbers come from the signals report (scripts/lib/signals.mjs), so the two agree:
 // per quote (a page filled twenty times counts once), test runs left out (intakes marked as a test,
 // fixture intakes and the fingerprints in the test-run list).
-const week = signals(all, { since: from && !Number.isNaN(Date.parse(from)) ? from : null, testIntakes });
+const week = signals(all, { since: from && !Number.isNaN(Date.parse(from)) ? from : null, testIntakes, testAgents });
 // Quotes: intakes loaded in this period that went to a carrier's page (whenever they did), not test runs.
 const quoting = quoteSessions(all);
 const quotes = new Set(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session) && !tests.has(e.session)).map((e) => e.session));

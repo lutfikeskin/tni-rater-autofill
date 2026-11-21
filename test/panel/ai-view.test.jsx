@@ -84,6 +84,27 @@ test('a pick the AI put in: Picked by the AI, its notes, Continue waits, Approve
   expect(asked).toEqual(['approve', 'reject']);
 });
 
+test('an unconfirmed post-dispatch AI pick keeps the choice and failure visible with Confirm and Reject', () => {
+  const asked = [];
+  const card = {
+    kind: 'unconfirmed',
+    choice: 'No',
+    text: 'the answer was sent but could not be confirmed; review the page before continuing',
+    notes: [],
+    confirm: () => asked.push('confirm'),
+    reject: () => asked.push('reject'),
+  };
+  const { container } = render(<AiCard card={card} />);
+  const box = container.firstChild;
+  expect(box.className).toBe('ai-box');
+  expect(box.querySelector('.ai-says').textContent).toBe('AI sent (not confirmed): No');
+  expect(box.querySelector('.ai-done.bad').textContent).toBe(card.text);
+  expect(buttons(box)).toEqual([['primary accept', 'Confirm'], ['ghost ai-reject', 'Reject']]);
+  box.querySelector('.accept').click();
+  box.querySelector('.ai-reject').click();
+  expect(asked).toEqual(['confirm', 'reject']);
+});
+
 test('what happened to a suggestion: rejected (with Confirm while it holds Continue), not taken, put in, the agent’s own', () => {
   let confirmed = 0;
   const { container, rerender } = render(<AiCard card={{ kind: 'rejected', text: 'AI answer rejected: answer it on the page.', confirm: () => { confirmed++; } }} />);

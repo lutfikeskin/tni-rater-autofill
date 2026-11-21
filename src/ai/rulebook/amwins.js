@@ -13,7 +13,7 @@ export const amwins = {
     { heading: 'Start and applicant', rules: [
       { id: 'amwins.start', kind: 'workflow', text: 'Start on the Commercial Lines dashboard: Auto, risk state = the garaging state, Open New Application.' },
       { id: 'amwins.agency', kind: 'workflow', text: 'Agency Information (agency name, contact name, phone, email: the agency\'s own), website, DBA and effective/expiration dates: leave as the page has them.' },
-      { id: 'amwins.contact', kind: 'standard', text: 'Contact Information (the inspection contact): the client\'s name (the owner\'s full name) and office phone only; single contact stays Yes.' },
+      { id: 'amwins.contact', kind: 'standard', text: 'Contact Information (the inspection contact): the client\'s name (the owner\'s full name), office phone and email (the intake\'s, TNI 2026-11-19); the mobile phone stays as the page has it; single contact stays Yes.' },
       { id: 'amwins.additional-interest', kind: 'standard', text: 'Additional interest: No, also for financed or leased vehicles (a lienholder or lessor is added after the quote).' },
       { id: 'amwins.waiver-type', kind: 'standard', text: 'Waiver type: NONE.' },
       { id: 'amwins.named-insured', kind: 'standard', text: 'Named insured: the company name; with no company, the owner\'s full name. Owner name: the owner\'s full name. Garage address: same as mailing, and the garage street, city, state and ZIP boxes are the intake\'s garaging address.' },

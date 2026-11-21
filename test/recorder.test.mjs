@@ -494,7 +494,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 14);
+  assert.equal(h.context.__raterRecorder.version, 15);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -550,8 +550,42 @@ test('an ExtJS combo is reported as a combo, so its typed text is not logged as 
 
   const byKey = Object.fromEntries(changes(h).map((change) => [change.key, change]));
   assert.deepEqual([byKey['field:model'].kind, byKey['field:model'].combo, byKey['field:model'].after], ['select', true, 'Trans']);
-  assert.deepEqual([byKey['field:effective'].kind, byKey['field:effective'].combo], ['text', undefined], 'a date picker stays text');
+  assert.deepEqual([byKey['field:effective'].kind, byKey['field:effective'].combo, byKey['field:effective'].date], ['text', undefined, true], 'a date picker stays text and is flagged as a date');
   assert.deepEqual([byKey['field:native'].kind, byKey['field:native'].combo], ['select', undefined], 'a native select is a choice as before');
+});
+
+test('date controls are flagged with date: true across native and carrier date inputs, while plain text is not', () => {
+  // Native <input type="date"> + plain text + AmWINS .datepicker-input / data-type="date"
+  const h = harness({ adapter: 'amwins' });
+  const nativeDate = new Control('input', { id: 'nativeDate', type: 'date', value: '' });
+  const amwinsDate = new Control('input', { id: 'ownerDob', type: 'text', value: '' });
+  amwinsDate.classList = { contains: (cls) => cls === 'datepicker-input' };
+  const dataDate = new Control('input', { id: 'expDate', type: 'text', value: '', attrs: { 'data-type': 'date' } });
+  const plainText = new Control('input', { id: 'notes', type: 'text', value: '' });
+  h.append(nativeDate, amwinsDate, dataDate, plainText);
+  h.context.__raterRecorder.rebaseline();
+  nativeDate.value = '1990-01-02';
+  amwinsDate.value = '01/02/1990';
+  dataDate.value = '05/01/2026';
+  plainText.value = 'General freight';
+  h.tick();
+  const byKey = Object.fromEntries(changes(h).map((c) => [c.key, c]));
+  assert.equal(byKey['field:nativeDate'].date, true);
+  assert.equal(byKey['field:nativeDate'].kind, 'text');
+  assert.equal(byKey['field:ownerDob'].date, true);
+  assert.equal(byKey['field:expDate'].date, true);
+  assert.equal(byKey['field:notes'].date, undefined);
+
+  // GEICO <gds-date-input-wrapper>
+  const g = harness({ adapter: 'geico' });
+  const gdsDate = new Control('input', { id: 'Id_GiveDateOfBirth_50246', name: 'Id_GiveDateOfBirth_50246', type: 'text', value: '' });
+  gdsDate.closest = (sel) => (/gds-date-input-wrapper|mask-type/.test(sel) ? {} : null);
+  g.append(gdsDate);
+  g.context.__raterRecorder.rebaseline();
+  gdsDate.value = '01/02/1990';
+  g.tick();
+  assert.equal(changes(g)[0]?.date, true);
+  assert.equal(changes(g)[0]?.kind, 'text');
 });
 
 test('an older recorder is replaced, so changes carry what the current one reports', () => {
@@ -562,7 +596,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 14);
+  assert.equal(h.context.__raterRecorder.version, 15);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -1221,4 +1255,60 @@ test('a recorder that replaces another keeps the agent edits the old one held fo
   await settled();
   const again = h.sent.slice(sentBefore).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
   assert.deepEqual(again.map((c) => [c.key, c.after, c.agent]), [['field:yrsInBusiness', '3', true]]);
+});
+
+test('a failed first messages read falls back to an empty Set so later ticks still report events', () => {
+  const h = harness();
+  const notes = new Control('input', { id: 'notes', value: 'before' });
+  const oldField = new Control('input', { id: 'oldField', value: 'keep' });
+  h.append(notes, oldField);
+  // Replaced as an older build's recorder is (the test above), by one that can't read the page's
+  // messages while it starts. Not deleted from the context first: a vm context of Node 22 keeps a
+  // deleted property, and the same recorder would then decline to start again.
+  h.context.__raterRecorder.version = 12;
+  const query = h.document.querySelectorAll.bind(h.document);
+  let unreadable = true;
+  h.document.querySelectorAll = (selector) => {
+    if (unreadable && /role=alert/.test(selector ?? '')) throw new Error('messages unreadable');
+    return query(selector);
+  };
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  unreadable = false;
+  const afterInit = h.sent.length;
+
+  notes.value = 'after';
+  h.emit('input', notes, true);
+  h.append(new Control('input', { id: 'followUp' }));
+  oldField.disabled = true;
+  h.document.messages = [{ textContent: 'This field is required', getClientRects: () => [{}] }];
+  h.context.__raterKit = { unitListsNow: () => '#summaryPage-AddCommercialVehicle:1' };
+  h.document.headings = [{ tagName: 'H2', textContent: 'Vehicles', getClientRects: () => [{}] }];
+  h.tick();
+
+  const onTick = h.sent.slice(afterInit);
+  // The failed read is told once, as a recorder_error; the tick's own events all follow.
+  assert.deepEqual(onTick.map((m) => m.event).filter((e) => e !== 'recorder_error'), ['field_changes', 'new_fields', 'removed_fields', 'new_messages', 'list_shown', 'step_shown']);
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:notes', 'before', 'after', true]]);
+});
+
+test('an agent edit made while paused on another step is reported with that step on resume', async () => {
+  const h = harness();
+  const heading = (text) => [{ tagName: 'H2', textContent: text, getClientRects: () => [{}] }];
+  h.document.headings = heading('Drivers');
+  const years = select({ id: 'yrsInBusiness' });
+  h.append(years);
+  h.context.__raterRecorder.rebaseline();
+
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.document.headings = heading('Vehicles');
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+
+  const sent = h.sent.filter((m) => m.event === 'field_changes');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].step, 'Vehicles');
+  assert.deepEqual(Array.from(sent[0].changes, (c) => [c.key, c.before, c.after, c.agent]), [['field:yrsInBusiness', '', '3', true]]);
 });

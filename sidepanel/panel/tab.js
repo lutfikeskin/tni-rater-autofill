@@ -1,11 +1,12 @@
 // The side panel: the current tab.
 // One part of the panel; sidepanel.js wires the parts together.
 import { carrierForUrl } from '../../src/carriers.js';
+import { productOf } from '../../src/products.js';
 import { inExtension, popped } from './env.js';
 import { restoreAgentKeys, restoreDoneActions, restoreJournal, restoreReports, retireAiOrigins, state } from './core.js';
 import { firstUnits } from './intake.js';
 import { renderPickers } from './record.js';
-import { ensureRecorder, pageOf } from './usage.js';
+import { ensureRecorder, flushPendingTextChanges, pageOf } from './usage.js';
 import { issueSaid, renderSite, scheduleLayout, seedQuoteState } from './coordinator.js';
 import { noteQuoteTab } from './quote-owner.js';
 import { noteFollowed } from './dev-recording.js';
@@ -57,13 +58,14 @@ async function refreshTab() {
   // fills): that tab is only looked at, nothing is filled there, and its "Quote <carrier> here"
   // moves the quote to it. A tab the quote tab opened is the quote moving on (Progressive's home
   // page opens the quote in a new tab), and is followed.
-  const activeIsRater = !!(tab?.url && carrierForUrl(tab.url));
+  const product = state.intake ? productOf(state.intake.record) : null;
+  const activeIsRater = !!(tab?.url && carrierForUrl(tab.url, { product }));
   const hold = state.intake && state.tab?.carrier && tab?.id !== state.tab.id && (moveTo == null || tab?.id !== moveTo)
     && (!activeIsRater || (quoteUnderWay() && tab.openerTabId !== state.tab.id));
   if (hold) {
     const quote = await chrome.tabs.get(state.tab.id).catch(() => null);
     if (overtaken()) return;
-    const carrier = quote?.url ? carrierForUrl(quote.url) : null;
+    const carrier = quote?.url ? carrierForUrl(quote.url, { product }) : null;
     // A side panel holds the quote's tab only while it is in the panel's own window: one dragged
     // to another window is that window's side panel's to follow, and two copies working one tab
     // stop each other's fills (the maintainer, 2026-11-09, after a recording where the quote tab was
@@ -72,7 +74,7 @@ async function refreshTab() {
     if (carrier && sameWindow) {
       state.tab = { id: quote.id, url: quote.url, carrier, background: true, windowId: quote.windowId };
       noteFollowed();
-      showHeldNote(activeIsRater ? { id: tab.id, carrier: carrierForUrl(tab.url), windowId: tab.windowId } : null);
+      showHeldNote(activeIsRater ? { id: tab.id, carrier: carrierForUrl(tab.url, { product }), windowId: tab.windowId } : null);
       renderSite();
       ensureRecorder();
       scheduleLayout(pageOf(state.tab.url), 'arrived');
@@ -80,6 +82,7 @@ async function refreshTab() {
     }
   }
   showHeldNote(null);
+  if (tab?.id !== state.tab?.id || pageOf(tab?.url) !== pageOf(state.tab?.url)) flushPendingTextChanges();
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
     const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'triedAgain', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'advanceRetried', 'assistPage', 'unitNamed', 'active'];
@@ -100,7 +103,7 @@ async function refreshTab() {
     state.autoDrawn = null;
     state.autoPending = false;
   }
-  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
+  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url, { product }) : null, background: false, windowId: tab.windowId } : null;
   // A recording on another tab says the panel moved (REC-04), as it moves.
   noteFollowed();
   // Whose quote the tab is, as the panel finds it (one it saw go into a quote, or out of one).

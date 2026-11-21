@@ -14,7 +14,7 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 14;
+  const VERSION = 15;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -364,6 +364,14 @@
   // A carrier's dropdown drawn as a text box (its adapter's `combo`: an ExtJS combo, never a date
   // picker, whose text is typed).
   const isCombo = (el) => !!shared().combo?.(el);
+  // A date control: native <input type="date">, common date-picker inputs (.datepicker-input,
+  // data-type="date"), or the carrier adapter's own `date` hook (ExtJS calendar triggers, GEICO's
+  // <gds-date-input-wrapper>). Keeps kind 'text' so values are never logged, and carries `date: true`
+  // so the panel logs one event per change instead of coalescing as free text.
+  const isDate = (el, type) => type === 'date'
+    || !!el?.classList?.contains?.('datepicker-input')
+    || el?.getAttribute?.('data-type')?.toLowerCase() === 'date'
+    || !!shared().date?.(el);
 
   function snapshot() {
     const out = new Map();
@@ -382,6 +390,7 @@
       const key = fieldKey(el, q, false);
       let kind = 'text';
       let combo;
+      let date;
       let v = el.value;
       if (el.tagName === 'SELECT') {
         kind = 'select';
@@ -395,8 +404,10 @@
         // logs it as a choice only when it's one of the combo's options.
         kind = 'select';
         combo = true;
+      } else if (isDate(el, type)) {
+        date = true;
       }
-      out.set(key, { key, q, kind, combo, label: labelFor(key, el), v: String(v ?? ''), controls: [el] });
+      out.set(key, { key, q, kind, combo, ...(date ? { date: true } : {}), label: labelFor(key, el), v: String(v ?? ''), controls: [el] });
     }
     return out;
   }
@@ -454,7 +465,7 @@
   let page = pageKey();
   // Read guarded: a page the recorder can't read yet still gets a recorder, which says why.
   let prev = guarded(snapshot)() ?? new Map();
-  let prevMessages = guarded(messages)() ?? [];
+  let prevMessages = guarded(messages)() ?? new Set();
   // The unit lists last seen. Not taken again on rebaseline: a list a fill's own Next drew while
   // the recorder was paused is news to the panel, which adds the next unit to it.
   let shownLists = unitLists();
@@ -519,7 +530,7 @@
       // by the page, never by the agent, even right after the agent clicked.
       if ((before?.v ?? '') !== c.v) {
         const manual = before && c.controls.some((el) => trustedPending.get(el) === oneControlState(el));
-        changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before: before?.v ?? '', after: c.v,
+        changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, ...(c.date ? { date: true } : {}), before: before?.v ?? '', after: c.v,
           agent: before ? (explicitControls ? manual : agent && c.controls.includes(lastTrustedControl)) : false });
       }
     }
@@ -646,9 +657,9 @@
       for (const [key, c] of snapshot()) {
         if (!c.controls.some((el) => trustedPending.get(el) === oneControlState(el))) continue;
         const before = prev.get(key)?.v ?? '';
-        if (before !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before, after: c.v, agent: true });
+        if (before !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, ...(c.date ? { date: true } : {}), before, after: c.v, agent: true });
       }
-      if (changes.length) send({ event: 'field_changes', page, forms: unitForms(), changes });
+      if (changes.length) send({ event: 'field_changes', page, step: stepKey(), forms: unitForms(), changes });
     }
     trustedPending.clear();
     trustedImmediate.clear();

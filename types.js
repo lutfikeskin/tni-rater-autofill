@@ -20,11 +20,19 @@
 // The client record and the plan's units
 
 /**
- * The client record normalizeIntake (src/normalize.js) makes from the intake: `applicant`,
- * `garaging`, `operations`, `vehicles`, `trailers`, `drivers`, `coverage`, `priorInsurance`,
- * `claims`, `notes`, … Typed loosely for now: its paths are read everywhere, and its fields are null
- * until the intake answers them.
- * @typedef {{ [key: string]: any }} ClientRecord
+ * One insurance product (line of business) registered in src/products.js.
+ * @typedef {object} Product
+ * @property {string} id
+ * @property {string} name
+ */
+
+/**
+ * The client record normalizeIntake (src/normalize.js) makes from the intake: `product`,
+ * `applicant`, `garaging`, `operations`, `vehicles`, `trailers`, `drivers`, `coverage`,
+ * `priorInsurance`, `claims`, `notes`, … Typed loosely for now: its paths are read everywhere,
+ * and its fields are null until the intake answers them. `product` is optional on saved records
+ * from earlier builds and existing test fixtures; read it through productOf() (src/products.js).
+ * @typedef {{ product?: string, [key: string]: any }} ClientRecord
  */
 
 /**
@@ -39,8 +47,9 @@
  */
 
 /**
- * What normalizeIntake makes of a TNI intake (else `{ error }`).
+ * What normalizeIntake / readIntake makes of a TNI intake (else `{ error }`).
  * @typedef {object} IntakeResult
+ * @property {string} [form]  id of the IntakeForm that read the PDF (stamped by readIntake)
  * @property {ClientRecord} record
  * @property {IntakeWarning[]} warnings
  * @property {{ fields: number, filled: number }} stats
@@ -50,6 +59,18 @@
  *   in the notes: `claims_details`, `additional_notes`); the panel marks it there on the PDF
  *   (intake-source.js sourcePlace), and a correction of the notes recomputes it (normalize.js
  *   rederive, which keeps it current). Empty otherwise; absent on an intake saved before it.
+ */
+
+/**
+ * One intake PDF form registered in src/intake-forms.js: detects whether a PDF's raw field map
+ * belongs to this form and normalizes it into a ClientRecord for its product.
+ * @typedef {object} IntakeForm
+ * @property {string} id
+ * @property {string} product
+ * @property {string} name
+ * @property {(raw: Record<string, string | boolean>) => boolean} detect
+ * @property {(raw: Record<string, string | boolean>, opts?: { today?: Date }) => IntakeResult | { error: string }} normalize
+ * @property {string} [error]  error message when this is the sole registered form and the PDF does not match
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
@@ -341,6 +362,7 @@
  * @typedef {object} CarrierConfig
  * @property {string} id
  * @property {string} name
+ * @property {string} product  product id from src/products.js (e.g. 'commercial-auto')
  * @property {RegExp[]} hosts  also needs a manifest.json host permission
  * @property {CarrierDisplay} [display]  how the panel shows it; every carrier with rules has one (test/carriers.test.mjs)
  * @property {CarrierRule[]} rules
@@ -354,6 +376,7 @@
  * @property {RegExp} [fillOnDraw]
  * @property {string[]} [layoutSteps]
  * @property {QuoteStep[]} [quoteSteps]
+ * @property {string[]} [premiumPages]  pages (or one-address steps) where the carrier quotes its premium (src/premium.js premiumHere); omit while unknown
  * @property {boolean} useGenericRules  whether the generic label rules (src/rules.js) fill this carrier's pages
  *   too: only when true (AmWINS, the local test page), so a new carrier opts in after checking them (audit
  *   2026-11-07, CARR-09)
@@ -643,6 +666,7 @@
  * @property {string[]} [doneSteps]
  * @property {string[]} [stopPages]
  * @property {string[]} [stopSteps]
+ * @property {string[] | null} [premiumPages]  pages (or one-address steps) where the carrier quotes its premium (carrier.premiumPages)
  * @property {any} [units]
  * @property {{ steps?: { [step: string]: string[] }, stepUnits?: { [step: string]: any }, units?: { [list: string]: string[] }, forms?: { [id: string]: string[] } } | null} [skipBy]
  * @property {{ steps: string[], keys: { [key: string]: true } } | null} [takenBack]  the steps where the page takes
@@ -797,6 +821,17 @@
  */
 
 /**
+ * The premium a carrier page quotes, as readPremium (src/premium.js) reads it: amounts, term and
+ * payments only, never client details. Returned on FillReport.premium and logged as quote_premium.
+ * @typedef {object} PremiumReading
+ * @property {number} total
+ * @property {number | null} termMonths
+ * @property {number | null} dueToday
+ * @property {number | null} payments
+ * @property {number | null} payment
+ */
+
+/**
  * What the page kit's fill returns, one per frame (the side panel's `frames`).
  * @typedef {object} FillReport
  * @property {string} frame  the frame's origin and path
@@ -849,6 +884,7 @@
  * @property {boolean} [notDrawn]
  * @property {any} [signatureBefore]
  * @property {RecalcTrace} [recalcTrace]
+ * @property {PremiumReading} [premium]  the current premium the fill saw on a premium page (src/premium.js readPremium), before leaving it or as the fill ended
  * @property {{ ms: number, reads: number, dropped: number, gone: number, retried: number }} [reconcile]  the report made to agree with the page as the fill ended (pagekit reconcile), on a fill that ended on its page: its time in ms, the page reads since the rounds ended (1: the end's own read), the items dropped as gone from the page, the answers whose field is gone, and the failed choices given again against options the page redrew
  * @property {TimelineEvent[]} [timeline]  the fill's last waits, presses and answers (src/kit/trace.js traceTail), on a fill that halted or failed an answer
  */
@@ -1220,6 +1256,7 @@
  * @property {PageAdapterKeys} [keys]  how its fields are named and keyed (field-key.js)
  * @property {(el: Element) => string} [caption]  a question's caption as the page draws it (Progressive's c_<id> label), for the recorder
  * @property {(el: Element) => boolean} [combo]  a dropdown drawn as a text box (an ExtJS combo), for the recorder
+ * @property {(el: Element) => boolean} [date]  a carrier date picker drawn as a text box, for the recorder
  */
 
 /**
