@@ -596,7 +596,7 @@ body:has(#settings:not([hidden])) .panel-head,
 #report[data-focus="need"] .row.need.open .row-body { padding: 2px 14px 14px; gap: 10px; }
 #report[data-focus="need"] .row.need.open .opts { gap: 8px; }
 #report[data-focus="need"] .row.need.open .opt-btn { width: 100%; min-height: 44px; padding: 8px 14px; }
-#report[data-focus="need"] .row.need.open :is(.ai-box, .ai-done) { padding: 10px 12px; background: var(--ai-soft); border-top: 0; border-left: 3px solid var(--ai); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+#report[data-focus="need"] .row.need.open .ai-slot > :is(.ai-box, .ai-done) { padding: 10px 12px; background: var(--ai-soft); border-top: 0; border-left: 3px solid var(--ai); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
 /* The assistant, on its row and above the list */
 .ai-slot:empty { display: none; }
@@ -615,6 +615,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .ai-done.mine { color: var(--ink); background: none; }
 .ai-done.mine b { color: var(--success); }
 .ai-done .note { font-size: 13px; color: var(--ink-muted); }
+.ai-box > .ai-done { border-top: 0; padding: 0; }
 .ai-holder { display: grid; gap: 6px; }
 .ai-holder:empty { display: none; }
 .ai-wait { font-size: 13px; color: var(--ai-ink); }
