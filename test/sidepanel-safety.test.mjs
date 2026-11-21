@@ -1275,7 +1275,8 @@ test('Clear always asks first, and Change file asks once the agent has done work
   // with the panel's own picker, question, note and loadFile; Yes and Cancel answer it.
   assert.match(wire, /const replacing = fileReplacer\(\{ state, load: \(file\) => loadFile\(file\), pick: \(\) => \$\('file'\)\.click\(\), ask: \(text, yes\) => askFile\('replace', text, yes\),\s+note: \(text\) => clientNote\(text\), work: workSaid \}\);/);
   assert.match(wire, /\n    replace: \(\) => replacing\.replace\(\),/);
-  assert.match(wire, /\n    cancel: \(\) => \{ state\.fileConfirm = null; replacing\.answered\(false\);/);
+  assert.match(wire, /\n  const cancelAskFile = \(\) => \{ state\.fileConfirm = null; replacing\.answered\(false\);/);
+  assert.match(wire, /\n    cancel: cancelAskFile,/);
   assert.match(wire, /if \(what === 'replace'\) replacing\.answered\(true\);/);
   // Audit 2026-11-07, UX-01: a PDF dropped anywhere on the panel was loaded at once, even while
   // answers went in and over the agent's corrections and checks.
