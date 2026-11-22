@@ -11,13 +11,14 @@
 
 /** @import { PanelState } from '../../types.js' */
 
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal, flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { HelpLink } from './help-link.jsx';
 import { FEED } from './messages.js';
+import { handleRovingKey } from './roving-focus.js';
 
 /**
  * What the row tags and the rater page's marks (pagekit.js COLORS, the same colors: --mark-*) mean.
@@ -94,11 +95,14 @@ function Feed({ act, host }) {
     if (!entry || !Array.isArray(entry.list) || s.filling) return false;
     if (s.allAnswers && (!s.allAnswersFor || s.allAnswersFor === entry)) return false;
     const list = /** @type {Array<Record<string, any>>} */ (entry.list);
-    if (!list.some((r) => r.type === 'need' && !r.gone && r.open)) return false;
-    return list.some((r) => r.type === 'need' && !r.gone && (!r.settled || r.pending));
+    return list.some((r) => r.type === 'need' && !r.gone && r.open && (!r.settled || r.pending));
   });
   /** @type {import('react').RefObject<HTMLSelectElement | null>} */
   const menu = useRef(null);
+  const [filterStop, setFilterStop] = useState(/** @type {string | null} */ (null));
+  const activeFilterStop = filterStop && FEED.filters.some((item) => item.filter === filterStop)
+    ? filterStop
+    : (f.filter || 'all');
   // The menu shows the page shown as it changes, as the panel set it on each draw.
   useLayoutEffect(() => {
     if (menu.current) menu.current.value = f.pastKey ?? '';
@@ -157,13 +161,28 @@ function Feed({ act, host }) {
           </button>
           <HelpLink topic="page" />
         </div>
-        <div id="filters" className="filters" data-filter={f.filter} role="group" aria-label={FEED.filtersLabel} hidden={!f.counts}>
+        <div
+          id="filters"
+          className="filters"
+          data-filter={f.filter}
+          role="toolbar"
+          aria-label={FEED.filtersLabel}
+          hidden={!f.counts}
+          onKeyDown={(e) => handleRovingKey(e, e.currentTarget, 'button', {
+            onMove: (el) => setFilterStop(el.dataset.filter ?? null),
+          })}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) setFilterStop(null);
+          }}
+        >
           {FEED.filters.map(({ filter, label }) => (
             <button
               key={filter}
               type="button"
               data-filter={filter}
               aria-pressed={filter === f.filter ? 'true' : 'false'}
+              tabIndex={activeFilterStop === filter ? 0 : -1}
+              onFocus={() => setFilterStop(filter)}
               onClick={() => act?.setFilter?.(filter)}
             >
               {label} <span>{f.counts ? String(f.counts[filter] ?? 0) : ''}</span>

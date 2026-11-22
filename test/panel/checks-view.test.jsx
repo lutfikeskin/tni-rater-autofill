@@ -78,7 +78,7 @@ test('focus mode shows one open check at a time, advances as each is marked, and
   fireEvent.change(box);
   expect(calls).toEqual([['edit', '7654321']]);
   expect([...first.querySelectorAll('.check-actions button')].map((b) => [b.className, b.textContent]))
-    .toEqual([['primary', 'Looks right'], ['ghost', 'See intake \u00b7 p1']]);
+    .toEqual([['primary', 'Looks right'], ['ghost intake-action', 'See intake \u00b7 p1']]);
   expect([$(container, '#check-later').className, $(container, '#check-later').textContent, $(container, '#see-all-checks').textContent])
     .toEqual(['link subtle', 'Check the rest later', 'See all intake checks']);
   fireEvent.click($(container, '#check-later'));
@@ -130,7 +130,7 @@ test('focus mode renders serious checks with role="alert" on the Serious eyebrow
   });
   expect(live.textContent).toBe('');
   expect([...card.querySelectorAll('.check-actions button')].map((b) => [b.className, b.textContent]))
-    .toEqual([['tinted', 'Looks right'], ['ghost', 'See intake \u00b7 p2']]);
+    .toEqual([['primary', 'Looks right'], ['ghost intake-action', 'See intake \u00b7 p2']]);
   expect([$(container, '#check-later').className, $(container, '#check-later').textContent, card.querySelector('.check-serious-note').textContent, $(container, '#see-all-checks')])
     .toEqual(['ghost check-decide-later', 'Decide later and fill', 'You can fill now, but this answer affects the quote.', null]);
   fireEvent.click($(container, '#check-later'));

@@ -75,13 +75,38 @@ function Choices({ options: all, pressed = null, aiPick = null, onPick }) {
 }
 
 // The row's head: icon, label, what it shows, its tag; opens or closes the row.
-function Head({ rec, head, act, children }) {
+function Head({ rec, head, act, bodyId, children }) {
   return (
-    <button type="button" className="row-head" aria-expanded={!!rec.open} onClick={() => act.toggleRow(rec)}>
+    <button type="button" className="row-head" aria-expanded={!!rec.open} aria-controls={bodyId} onClick={() => act.toggleRow(rec)}>
       <span className="row-icon" aria-hidden="true">{head.icon}</span>
       {children}
       {head.tag ? <Tag tag={head.tag} /> : null}
     </button>
+  );
+}
+
+// The expanded body of a filled answer row: its source, inline Change answer choices, Change answer
+// and See in intake actions, where-on-page note and settlement note. Shared by AnswerRow (All answers)
+// and inline-expanded Worth a look rows in grouped Review.
+function AnswerBody({ rec, ctx, act }) {
+  const source = rec.source ?? {};
+  const { change } = rec;
+  return (
+    <>
+      <div className="src-box"><span className="src-title">{source.title}</span>{source.quote ? <span className="src-quote">{source.quote}</span> : null}</div>
+      <div className="change-slot">
+        {change ? <><p className="why">Pick the answer to put in instead:</p>
+          <Choices options={change.options} pressed={change.current} onPick={(choice, button) => act?.pickRow?.(rec, choice, ctx, button)} /></> : null}
+      </div>
+      {(rec.answer && rec.key) || source.place ? (
+        <div className="row-actions">
+          {rec.answer && rec.key ? <button type="button" className="ghost change" aria-label={`Change answer: ${rec.label}`} onClick={() => act?.changeRow?.(rec, ctx)}>Change answer</button> : null}
+          {source.place ? <button type="button" className="ghost src intake-action" title={source.seeTitle} onClick={() => act?.seeRow?.(rec)}>See in intake</button> : null}
+        </div>
+      ) : null}
+      {rec.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
+      <Note note={rec.note} />
+    </>
   );
 }
 
@@ -92,11 +117,11 @@ function Head({ rec, head, act, children }) {
 const AnswerRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any }} props */ function AnswerRow({ rec, ctx, act }) {
   const source = rec.source ?? {};
   const head = rowHead(rec, source.tag ?? null);
-  const { change } = rec;
+  const bodyId = useId();
   const data = rec.key ? { 'data-key': rec.key, 'data-field': rec.field ?? '', 'data-value': String(rec.value), 'data-step': rec.stepId ?? '', 'data-offpage': rec.offPage ? '1' : '' } : {};
   return (
     <div className={rowClass(rec)} hidden={!!rec.gone} ref={(el) => { act.node(rec, el); }} {...data}>
-      <Head rec={rec} head={head} act={act}>
+      <Head rec={rec} head={head} act={act} bodyId={bodyId}>
         <span className="row-text">
           <span className="row-label">{rec.label}</span><span className="row-value">{head.value}</span>
           {rec.key ? <span className="kv-now" hidden={!rec.changed}>{rec.changed ?? ''}</span> : null}
@@ -104,20 +129,8 @@ const AnswerRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: 
         {/* From the intake is the usual source: no tag to read past, said to screen readers. */}
         {source.quiet ? <span className="sr-only">{source.quiet}</span> : null}
       </Head>
-      <div className="row-body" hidden={!rec.open}>
-        <div className="src-box"><span className="src-title">{source.title}</span>{source.quote ? <span className="src-quote">{source.quote}</span> : null}</div>
-        <div className="change-slot">
-          {change ? <><p className="why">Pick the answer to put in instead:</p>
-            <Choices options={change.options} pressed={change.current} onPick={(choice, button) => act.pickRow(rec, choice, ctx, button)} /></> : null}
-        </div>
-        {rec.answer && rec.key || source.place ? (
-          <div className="row-actions">
-            {rec.answer && rec.key ? <button type="button" className="ghost change" aria-label={`Change answer: ${rec.label}`} onClick={() => act.changeRow(rec, ctx)}>Change answer</button> : null}
-            {source.place ? <button type="button" className="ghost src" title={source.seeTitle} onClick={() => act.seeRow(rec)}>See in intake</button> : null}
-          </div>
-        ) : null}
-        {rec.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
-        <Note note={rec.note} />
+      <div id={bodyId} className="row-body" hidden={!rec.open}>
+        <AnswerBody rec={rec} ctx={ctx} act={act} />
       </div>
     </div>
   );
@@ -130,6 +143,7 @@ const AnswerRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: 
 const NeedRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any, needPos?: number, needTotal?: number }} props */ function NeedRow({ rec, ctx, act, needPos = 1, needTotal = 1 }) {
   const { x, label } = rec;
   const head = rowHead(rec);
+  const bodyId = useId();
   const markNoteId = useId();
   // Mark done: an item's field, or a helper's reminder the carrier marks markable (its `action`);
   // gone once the agent settled it (answered, put in, marked done).
@@ -144,10 +158,10 @@ const NeedRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: an
         <p className="eyebrow amber need-eyebrow">{NEEDS.eyebrow(needPos, needTotal)}</p>
         <HelpLink topic="page" />
       </div>
-      <Head rec={rec} head={head} act={act}>
+      <Head rec={rec} head={head} act={act} bodyId={bodyId}>
         <span className="row-text"><span className="row-label">{label}</span><span className="row-value">{head.value}</span></span>
       </Head>
-      <div className="row-body" hidden={!rec.open}>
+      <div id={bodyId} className="row-body" hidden={!rec.open}>
         <p className="why">{x.why}<span className="page-now">{nowSaid(rec.now)}</span></p>
         <div className="ai-slot">{rec.aiCard ? <AiCard card={rec.aiCard} /> : null}</div>
         {rec.pickable ? <Choices options={rec.options} pressed={rec.pressed} aiPick={rec.aiPick} onPick={(choice, button) => act.pickRow(rec, choice, ctx, button)} />
@@ -191,4 +205,4 @@ function mountRows(host, entry, ctx, act) {
   return () => root.unmount();
 }
 
-export { ReportRows, mountRows, setJumpToPath };
+export { AnswerBody, Note, ReportRows, mountRows, setJumpToPath };

@@ -77,25 +77,25 @@ export const CONTINUE = {
   continued: (button) => ({ eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked \u201c${button}\u201d for you. Nothing is submitted or bound.` }),
   // After what is left for the agent: what comes next.
   next: {
-    check: 'Then check the answers and click Looks right. Never Bind or Submit.',
+    check: 'Then check the answers and click Looks right.',
     offSteps: 'Then moving on is yours: nothing on this step is clicked for you.',
     offList: 'Then click Continue yourself: this page isn\u2019t one the extension continues on.',
     continueHere: 'Then click Continue on this page yourself. Nothing is submitted or bound.',
     manual: 'Then click Continue yourself, and Fill this page on the next one.',
-    followUps: 'Then the panel continues to the next page. Never Bind or Submit.',
-    fillAgain: 'Then Fill this page again to continue. Never Bind or Submit.',
+    followUps: 'Then the panel continues to the next page.',
+    fillAgain: 'Then Fill this page again to continue.',
   },
   filled: (filled) => `${filled} filled`,
-  covered: { title: 'Close what is open over the button', sub: 'Then fill again. Never Binds or Submits.' },
-  buttonsLeft: { title: 'Buttons left to click', sub: 'Continue clicks the ones it can in turn, and the page\u2019s Continue once none is left. Never Bind or Submit.', continue: 'Continue', click: 'Click them for me' },
+  covered: { title: 'Close what is open over the button', sub: 'Then fill again.' },
+  buttonsLeft: { title: 'Buttons left to click', sub: 'Continue clicks the ones it can in turn, and the page\u2019s Continue once none is left.', continue: 'Continue', click: 'Click them for me' },
   needs: { eyebrow: (filled, left) => `${filled} filled \u00b7 ${left} ${plural(left, 'needs', 'need')} you`,
     title: (left) => (left === 1 ? 'Answer the last question' : `Answer ${left} questions`), label: 'Show the next one' },
   changed: { eyebrow: 'The page changed', title: 'Check the answers again', sub: 'The page changed. Check it, then continue.' },
-  check: { eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'Never Binds or Submits.' },
-  offSteps: { eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you. Never Binds or Submits.' },
-  offList: { eyebrow: 'All answered', title: 'Click Continue yourself', sub: 'This page isn\u2019t one the extension continues on. Never Binds or Submits.' },
-  ready: { eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Never Binds or Submits.', label: 'Continue',
-    continueHere: 'Click Continue on this page yourself. Never Binds or Submits.', manual: 'Click Continue, then fill the next page.' },
+  check: { eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: '' },
+  offSteps: { eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you.' },
+  offList: { eyebrow: 'All answered', title: 'Click Continue yourself', sub: 'This page isn\u2019t one the extension continues on.' },
+  ready: { eyebrow: 'All answered', title: 'Ready for Continue', sub: '', label: 'Continue',
+    continueHere: 'Click Continue on this page yourself.', manual: 'Click Continue, then fill the next page.' },
 };
 
 // The head of a page's report and what it announces (renderReport).
@@ -218,6 +218,8 @@ export const REVIEW = {
   },
   needsGroup: 'Needs you',
   worthGroup: 'Worth a look',
+  restGroup: 'Other answers',
+  answersGroup: 'Filled answers',
   seeAll: (total, intakeCount) => (intakeCount > 0
     ? `See all ${total} ${plural(total, 'answer')} (${intakeCount} straight from the intake)`
     : `See all ${total} ${plural(total, 'answer')}`),

@@ -55,7 +55,7 @@ function CheckCard({ card }) {
       </div>
     );
   }
-  const pdf = card.pdf ? <button type="button" className="ghost" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
+  const pdf = card.pdf ? <button type="button" className="ghost intake-action" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
   if (card.choices) {
     return (
       <div className="check" data-check={card.i}>
@@ -75,7 +75,7 @@ function CheckCard({ card }) {
       <div className="check-body">
         {card.field ? <CheckField key={`${card.field.path}|${card.field.value}|${card.field.rev ?? 0}`} field={card.field} /> : null}
         <div className="check-actions">
-          <button type="button" className="tinted" onClick={card.lookRight}>{CHECKS.looksRight}</button>
+          <button type="button" className="primary" onClick={card.lookRight}>{CHECKS.looksRight}</button>
           {pdf ?? (card.details ? <button type="button" className="ghost" onClick={card.details}>{CHECKS.showDetails}</button> : null)}
         </div>
       </div>
@@ -92,7 +92,7 @@ function CheckCard({ card }) {
 function FocusCheck({ card, at, total, later }) {
   const noteRef = useRef(null);
   useAnnounce(card.alert ? CHECKS.seriousNote : '', noteRef);
-  const pdf = card.pdf ? <button type="button" className="ghost" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
+  const pdf = card.pdf ? <button type="button" className="ghost intake-action" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
   return (
     <div className={card.alert ? 'check check-focus alert' : 'check check-focus'} data-check={card.i}>
       <div className="pane-head">
@@ -120,7 +120,7 @@ function FocusCheck({ card, at, total, later }) {
           </div>
         ) : (
           <div className="check-actions">
-            <button type="button" className={card.alert ? 'tinted' : 'primary'} onClick={card.lookRight}>{CHECKS.looksRight}</button>
+            <button type="button" className="primary" onClick={card.lookRight}>{CHECKS.looksRight}</button>
             {pdf ?? (card.details ? <button type="button" className="ghost" onClick={card.details}>{CHECKS.showDetails}</button> : null)}
           </div>
         )}
@@ -200,7 +200,7 @@ function Checks({ act }) {
       )}
       <section className="tools-card" aria-label="Page and view tools">
         {focusCard && canSeeAll ? (
-          <button type="button" id="see-all-checks" className="tools-pill" onClick={showAll}>
+          <button type="button" id="see-all-checks" className="tools-pill intake-action" onClick={showAll}>
             {CHECKS.seeAll}
           </button>
         ) : null}

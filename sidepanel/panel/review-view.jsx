@@ -8,7 +8,7 @@
 /** @import { PanelState } from '../../types.js' */
 
 import { createRoot } from 'react-dom/client';
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
@@ -16,6 +16,7 @@ import { screenFor } from './screen.js';
 import { reviewGroups, reviewRowHead } from './review-groups.js';
 import { REVIEW, SOURCE } from './messages.js';
 import { HelpLink } from './help-link.jsx';
+import { AnswerBody, Note } from './report-view.jsx';
 
 /**
  * Formats the report's human-readable page or step name from `entry.step`, `entry.page` or `entry.key`.
@@ -38,11 +39,15 @@ function pageName(entry) {
 /**
  * @param {{
  *   rec: Record<string, any>,
- *   group: 'needs' | 'worth',
+ *   group: 'needs' | 'worth' | 'rest',
+ *   ctx?: Record<string, any>,
+ *   rowActs?: Record<string, any>,
  *   onOpen?: (rec: Record<string, any>) => void,
+ *   onToggle?: (rec: Record<string, any>) => void,
  * }} props
  */
-function ReviewRow({ rec, group, onOpen }) {
+function ReviewRow({ rec, group, ctx, rowActs, onOpen, onToggle }) {
+  const bodyId = useId();
   const label = (rec.type === 'need' ? (rec.x?.label || rec.x?.name) : rec.label) || REVIEW.fallbackLabel;
   const head = reviewRowHead(rec);
   const isMarked = rec.type === 'need' && rec.settled === 'marked';
@@ -72,8 +77,49 @@ function ReviewRow({ rec, group, onOpen }) {
     sub = REVIEW.markedSub;
   } else {
     const isStandard = rec.kind === 'standard' || head.tag?.text === SOURCE.tag.standard.text;
+    const isIntake = rec.type === 'answer' && rec.kind === 'intake' && !rec.changed;
     shownVal = head.value ?? '';
-    sub = rec.changed || (isStandard ? '' : head.tag?.text) || '';
+    sub = rec.changed || (isStandard || isIntake ? '' : head.tag?.text) || '';
+  }
+
+  if (group === 'worth' || group === 'rest') {
+    const open = Boolean(rec.open);
+    return (
+      <div className={`review-item${open ? ' open' : ''}`}>
+        <button
+          type="button"
+          className="review-row"
+          data-group={group}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          onClick={() => (onToggle ? onToggle(rec) : onOpen?.(rec))}
+        >
+          <span className="review-row-main">
+            <span className="review-row-label">{label}</span>
+            {sub ? <span className="review-row-sub">{sub}</span> : null}
+          </span>
+          {shownVal ? <span className="review-row-val">{shownVal}</span> : null}
+          <span className="review-chev" aria-hidden="true">{open ? '\u25be' : '\u25b8'}</span>
+        </button>
+        <div id={bodyId} className="review-row-body" hidden={!open}>
+          {rec.type === 'answer' ? (
+            <AnswerBody rec={rec} ctx={ctx} act={rowActs} />
+          ) : (
+            <>
+              {rec.x?.why ? <p className="row-say">{rec.x.why}</p> : null}
+              {rec.x?.key ? (
+                <div className="row-actions">
+                  <button type="button" className="ghost show-on-page" title="Scroll the carrier page to this question and flash its mark"
+                    aria-label={`Show on page: ${label}`} onClick={() => rowActs?.showRow?.(rec, ctx)}>Show on page</button>
+                </div>
+              ) : null}
+              {rec.x?.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
+              <Note note={rec.note} />
+            </>
+          )}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -98,6 +144,8 @@ function ReviewRow({ rec, group, onOpen }) {
  *   host?: HTMLElement,
  *   act?: {
  *     openRow?: (rec: Record<string, any>) => void,
+ *     toggleWorth?: (rec: Record<string, any>) => void,
+ *     rowActs?: Record<string, any>,
  *     showAll?: () => void,
  *     showReview?: () => void,
  *   },
@@ -105,6 +153,7 @@ function ReviewRow({ rec, group, onOpen }) {
  */
 function Review({ act = {}, host } = {}) {
   const entry = useStore(panelStore, (/** @type {PanelState} */ s) => s.reportFor);
+  const tab = useStore(panelStore, (/** @type {PanelState} */ s) => s.tab);
   const filling = useStore(panelStore, (/** @type {PanelState} */ s) => Boolean(s.filling));
   const pastOpen = useStore(panelStore, (/** @type {PanelState} */ s) => Boolean(s.feed?.pastKey || s.pastKey));
   const inAll = useStore(
@@ -120,13 +169,15 @@ function Review({ act = {}, host } = {}) {
     const id = focusNextRef.current;
     if (!id) return;
     focusNextRef.current = null;
-    document.getElementById(id)?.focus();
+    (document.getElementById(id) ?? document.getElementById('review-title'))?.focus();
   }, [inAll]);
 
   if (!entry || !Array.isArray(entry.list) || filling || pastOpen) return null;
 
-  const { needs, worth, intakeCount, all } = reviewGroups(entry.list);
+  const { needs, worth, rest, intakeCount, all } = reviewGroups(entry.list);
+  const focusNeed = entry.list.some((r) => r.type === 'need' && !r.gone && r.open && (!r.settled || r.pending));
   const hasStandard = worth.some((r) => !r.changed && (r.kind === 'standard' || reviewRowHead(r).tag?.text === SOURCE.tag.standard.text));
+  const rowCtx = entry.ctx ?? { tabId: tab?.id ?? null, page: entry.page ?? '', carrier: tab?.carrier ?? null };
   const ownHead = !dock || screen === 'review' || screen === 'ai';
   const filled = typeof entry.filled === 'number' ? entry.filled : 0;
 
@@ -189,12 +240,41 @@ function Review({ act = {}, host } = {}) {
           </div>
           <div className="review-rows">
             {worth.map((rec, i) => (
-              <ReviewRow key={rec.id ?? i} rec={rec} group="worth" onOpen={act.openRow} />
+              <ReviewRow
+                key={rec.id ?? i}
+                rec={rec}
+                group="worth"
+                ctx={rowCtx}
+                rowActs={act.rowActs}
+                onOpen={act.openRow}
+                onToggle={act.toggleWorth}
+              />
             ))}
           </div>
         </section>
       ) : null}
-      {all.length > 0 ? (
+      {rest.length > 0 ? (
+        <section className="review-group reference-card" id="review-answers" aria-labelledby="review-answers-head">
+          <div className="reference-head">
+            <h3 id="review-answers-head" className="review-group-head">{worth.length > 0 ? REVIEW.restGroup : REVIEW.answersGroup}</h3>
+            <span className="reference-count">{rest.length}</span>
+          </div>
+          <div className="review-rows">
+            {rest.map((rec, i) => (
+              <ReviewRow
+                key={rec.id ?? i}
+                rec={rec}
+                group="rest"
+                ctx={rowCtx}
+                rowActs={act.rowActs}
+                onOpen={act.openRow}
+                onToggle={act.toggleWorth}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+      {focusNeed && all.length > 0 ? (
         <div className="review-tools">
           <button type="button" id="see-all-answers" className="link review-see-all" onClick={showAll}>
             {REVIEW.seeAll(all.length, intakeCount)}
@@ -210,6 +290,8 @@ function Review({ act = {}, host } = {}) {
  * @param {HTMLElement} host
  * @param {{
  *   openRow?: (rec: Record<string, any>) => void,
+ *   toggleWorth?: (rec: Record<string, any>) => void,
+ *   rowActs?: Record<string, any>,
  *   showAll?: () => void,
  *   showReview?: () => void,
  * }} [act]

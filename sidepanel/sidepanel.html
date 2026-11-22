@@ -61,7 +61,7 @@
       <div id="client-root"></div>
       <!-- The intake, then the page in front (its fill and what is left on it). The header's
            "Stage n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
-      <nav id="steps" class="steps" aria-label="Intake or this page"></nav>
+      <div id="steps" class="steps" role="tablist" aria-label="Intake or this page"></div>
     </section>
 
     <span class="top-right">
@@ -101,10 +101,10 @@
 
     <!-- Step 1: what looked wrong or missing on the intake (#warnings), then every answer on it
          (#details-row): drawn by checks-view.jsx (mountChecks). -->
-    <section id="check-view" class="pane" hidden></section>
+    <section id="check-view" class="pane" role="tabpanel" aria-labelledby="step-check" hidden></section>
 
     <!-- Steps 2 and 3: the page's answers, one list -->
-    <section id="page-view" hidden>
+    <section id="page-view" role="tabpanel" aria-labelledby="step-fill" hidden>
       <!-- A rater to open, and what's wrong or different about this tab's quote, above its answers
            (#fill-waiting, #issues): drawn by cards-view.jsx (mountCards). -->
       <div id="cards-root"></div>

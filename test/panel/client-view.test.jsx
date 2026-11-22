@@ -63,7 +63,7 @@ test('the file tools\' question: hidden until asked, what it says and its two bu
   const { container } = render(<ClientHead act={acts(calls)} />);
   const ask = $(container, '#file-confirm');
   // A popover under the button that asked: its title names the question, its text says what goes.
-  expect([ask.hidden, ask.getAttribute('role'), ask.getAttribute('aria-labelledby'), ask.getAttribute('aria-describedby')]).toEqual([true, 'group', 'file-confirm-title', 'file-confirm-text']);
+  expect([ask.hidden, ask.getAttribute('role'), ask.getAttribute('aria-labelledby'), ask.getAttribute('aria-describedby')]).toEqual([true, 'alertdialog', 'file-confirm-title', 'file-confirm-text']);
   act(() => { state.client = { name: 'Acme', title: '', meta: '', pdf: true, ask: { text: 'Clear Acme? Your corrections, checks and reports go.', yes: 'Clear this client' } }; });
   expect([ask.hidden, $(container, '#file-confirm-text').textContent, $(container, '#file-confirm-yes').textContent, $(container, '#file-confirm-no').textContent])
     .toEqual([false, 'Clear Acme? Your corrections, checks and reports go.', 'Clear this client', 'Cancel']);

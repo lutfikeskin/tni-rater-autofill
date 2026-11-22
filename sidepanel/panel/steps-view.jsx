@@ -12,12 +12,14 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { useAnnounce } from './announce.js';
 import { CHECKS } from './messages.js';
+import { handleRovingKey } from './roving-focus.js';
 import { headShown } from './screen-view.jsx';
 
-// Both tabs always show in #steps: #step-check ("Intake checks", its note #check-summary "N to check"
-// while checks are open) and #step-fill ("This page", its note #fill-summary); the tab in view wears
-// aria-current="page". Once the page is filled (`review`), #step-fill asks the panel to read the page
-// again (act.confirm); before, it only shows the page (act.fill).
+// Both tabs always show in #steps (role="tablist"): #step-check ("Intake checks", its note
+// #check-summary "N to check" in amber while checks are open) and #step-fill ("This page", its note
+// #fill-summary); the tab in view wears aria-selected="true" and takes Tab (roving tabindex with
+// ArrowLeft/ArrowRight/Home/End). Once the page is filled (`review`), #step-fill asks the panel to
+// read the page again (act.confirm); before, it only shows the page (act.fill).
 function Steps({ act }) {
   const said = useStore(panelStore, (s) => s.steps);
   const checksOpen = useStore(panelStore, (s) => s.checks?.open);
@@ -25,17 +27,30 @@ function Steps({ act }) {
   const f = said?.fill ?? {};
   const onCheck = !!c.current;
   const open = checksOpen ?? c.open ?? 0;
+  const activeId = onCheck ? 'step-check' : 'step-fill';
+  const [focusedId, setFocusedId] = useState(/** @type {string | null} */ (null));
+  useEffect(() => { setFocusedId(null); }, [activeId]);
+  const stopId = focusedId ?? activeId;
+  const onKeyDown = (e) => handleRovingKey(e, e.currentTarget.parentElement, '[role="tab"]', {
+    wrap: true,
+    onMove: (el) => setFocusedId(el.id),
+  });
+  const onBlur = (e) => {
+    if (!e.currentTarget.parentElement?.contains(e.relatedTarget)) setFocusedId(null);
+  };
   // Two tabs, both always shown, the one in view joined to the view under it (as a browser's tab).
   // The intake's note counts what is left to check as the checks say it now.
   return (
     <>
-      <button type="button" id="step-check" className="step" aria-controls="check-view" data-state={c.tone}
-        aria-current={onCheck ? 'page' : undefined} onClick={() => act.check()}>
+      <button type="button" id="step-check" className="step" role="tab" aria-controls="check-view" data-state={c.tone}
+        aria-selected={onCheck ? 'true' : 'false'} tabIndex={stopId === 'step-check' ? 0 : -1}
+        onKeyDown={onKeyDown} onBlur={onBlur} onFocus={() => setFocusedId('step-check')} onClick={() => act.check()}>
         <span className="step-label">{CHECKS.stepAll}</span>
         <span id="check-summary" className="step-note">{open > 0 ? CHECKS.stepLeft(open) : (c.note ?? '')}</span>
       </button>
-      <button type="button" id="step-fill" className="step" aria-controls="page-view" data-state={f.tone}
-        aria-current={onCheck ? undefined : 'page'} onClick={() => act[f.review ? 'confirm' : 'fill']()}>
+      <button type="button" id="step-fill" className="step" role="tab" aria-controls="page-view" data-state={f.tone}
+        aria-selected={onCheck ? 'false' : 'true'} tabIndex={stopId === 'step-fill' ? 0 : -1}
+        onKeyDown={onKeyDown} onBlur={onBlur} onFocus={() => setFocusedId('step-fill')} onClick={() => act[f.review ? 'confirm' : 'fill']()}>
         <span className="step-label">{CHECKS.stepBack}</span>
         <span id="fill-summary" className="step-note">{f.note ?? ''}</span>
       </button>

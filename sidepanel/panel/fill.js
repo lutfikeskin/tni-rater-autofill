@@ -1159,13 +1159,15 @@ function answerSource(rec) {
     yours: { kind: 'you', ...words.yours },
     changed: { kind: 'page', ...words.changed },
   }[kind];
+  const known = (path) => Boolean(path && (fieldInfo(path).label !== path || get(state.intake?.record ?? {}, path) !== undefined));
   const said = (path) => `${fieldInfo(path).label}: ${SOURCE.value(get(state.intake?.record ?? {}, path))}`;
+  const quoteFrom = (from, path) => (from?.length ? from.map(said).join(' · ') : known(path) ? said(path) : SOURCE.answer(rec.value));
   const [title, quote] = {
-    intake: [open.intake(place ? pdfPageSaid(place.page, ', page ') : null), rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    intake: [open.intake(place ? pdfPageSaid(place.page, ', page ') : null), quoteFrom(rec.from, rec.path)],
     derived: [open.derived, (rec.from ?? []).map(said).join(' · ')],
     standard: [open.standard, SOURCE.answer(rec.value)],
     own: [open.own, open.ownQuote(rec.value)],
-    edited: [open.edited, rec.path ? said(rec.path) : SOURCE.answer(rec.value)],
+    edited: [open.edited, quoteFrom(rec.from, rec.path)],
     page: open.page,
     clicked: [open.clicked, `“${rec.value}”`],
     yours: open.yours,
@@ -1178,6 +1180,7 @@ function answerSource(rec) {
 // The report's list of answers and items (renderReport), drawn by React from the report's records
 // (report-view.jsx), its buttons doing what rowActs says, on the report's own tab and page (`ctx`).
 function rowsHost(entry, ctx) {
+  entry.ctx = ctx;
   const host = reportNode('rows');
   entry.unmountRows = mountRows(host, entry, ctx, rowActs);
   return host;
@@ -1543,4 +1546,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, runKit, showNextNeed, toggleRow, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, rowActs, runKit, showNextNeed, toggleRow, unitArrival, worldFor };

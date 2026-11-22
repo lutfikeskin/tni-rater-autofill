@@ -5,12 +5,13 @@
 // clientNote (state.clientNote) and renderSteps (state.newQuoteOff). What its buttons do is the
 // panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountClient).
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { useAnnounce } from './announce.js';
+import { handleRovingKey } from './roving-focus.js';
 // agent defaults: the quote's defaults, once answered, as a pill among the tools.
 import { DefaultsChip } from './agent-defaults/view.jsx';
 
@@ -71,6 +72,21 @@ function ClientHead({ act }) {
   const askFrom = useStore(panelStore, (s) => s.fileConfirmFrom);
   const popover = usePopover(!!ask, askFrom, act.cancel);
   const noteLine = useRef(null);
+  const [toolStop, setToolStop] = useState(/** @type {string | null} */ (null));
+  const enabledTools = [
+    ...(client?.pdf ? ['open-pdf'] : []),
+    'quote-summary',
+    'replace',
+    ...(newQuoteOff ? [] : ['new-quote']),
+    'clear-client',
+  ];
+  const activeTool = toolStop && enabledTools.includes(toolStop) ? toolStop : enabledTools[0];
+  useEffect(() => {
+    if (!ask || !popover.current) return;
+    if (!popover.current.contains(document.activeElement)) {
+      /** @type {HTMLButtonElement | null} */ (popover.current.querySelector('#file-confirm-no'))?.focus();
+    }
+  }, [ask, popover]);
   useAnnounce(note, noteLine);
   return (
     <>
@@ -91,20 +107,31 @@ function ClientHead({ act }) {
         </p>
         <div className="client-tools">
           <DefaultsChip />
-          {/* One joined group (canvas: a button group): icon and word, the word hidden on a narrow panel
-              where the button's own name still says it. */}
-          <div className="btn-group" role="group" aria-label="Client tools">
-            <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
-            <button type="button" id="quote-summary" className="ghost tool-btn" aria-label="Quote summary" title="Quote summary: every answer of this quote, with where it came from" onClick={() => act.summary()}><svg aria-hidden="true"><use href="#list" /></svg><span className="tool-word" aria-hidden="true">Summary</span></button>
-            <button type="button" id="replace" className="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF" onClick={() => act.replace()}><svg aria-hidden="true"><use href="#file-in" /></svg><span className="tool-word" aria-hidden="true">Change file</span></button>
+          {/* One joined toolbar (APG toolbar, single roving Tab stop + ArrowLeft/ArrowRight/Home/End):
+              icon and word, the word hidden on a narrow panel where aria-label still names it. */}
+          <div className="btn-group" role="toolbar" aria-label="Client tools"
+            onFocus={(e) => { if (e.target instanceof HTMLButtonElement && e.target.id) setToolStop(e.target.id); }}
+            onKeyDown={(e) => handleRovingKey(e, e.currentTarget, 'button', { onMove: (el) => setToolStop(el.id) })}>
+            <button type="button" id="open-pdf" className="ghost intake-btn" title="Show the intake PDF" hidden={!client?.pdf} tabIndex={activeTool === 'open-pdf' ? 0 : -1} onClick={() => act.pdf()}><span className="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
+            <button type="button" id="quote-summary" className="ghost tool-btn" aria-label="Quote summary" title="Quote summary: every answer of this quote, with where it came from" tabIndex={activeTool === 'quote-summary' ? 0 : -1} onClick={() => act.summary()}><svg aria-hidden="true"><use href="#list" /></svg><span className="tool-word" aria-hidden="true">Summary</span></button>
+            <button type="button" id="replace" className="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF" tabIndex={activeTool === 'replace' ? 0 : -1} onClick={() => act.replace()}><svg aria-hidden="true"><use href="#file-in" /></svg><span className="tool-word" aria-hidden="true">Change file</span></button>
             <button type="button" id="new-quote" className="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"
-              disabled={newQuoteOff} onClick={() => act.newQuote()}><svg aria-hidden="true"><use href="#restart" /></svg><span className="tool-word" aria-hidden="true">New quote</span></button>
-            <button type="button" id="clear-client" className="ghost tool-btn danger" aria-label="Clear this client" title="Clear this client" onClick={() => act.clear()}><svg aria-hidden="true"><use href="#trash" /></svg><span className="tool-word" aria-hidden="true">Clear</span></button>
+              tabIndex={activeTool === 'new-quote' ? 0 : -1} disabled={newQuoteOff} onClick={() => act.newQuote()}><svg aria-hidden="true"><use href="#restart" /></svg><span className="tool-word" aria-hidden="true">New quote</span></button>
+            <button type="button" id="clear-client" className="ghost tool-btn danger" aria-label="Clear this client" title="Clear this client" tabIndex={activeTool === 'clear-client' ? 0 : -1} onClick={() => act.clear()}><svg aria-hidden="true"><use href="#trash" /></svg><span className="tool-word" aria-hidden="true">Clear</span></button>
           </div>
-          {/* Asked before work the agent did on this intake would go (askFile): a popover under the
-              button that asked. */}
-          <div id="file-confirm" ref={popover} className="file-confirm popover" role="group" aria-labelledby="file-confirm-title" aria-describedby="file-confirm-text" hidden={!ask}
-            onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); act.cancel(); } }}>
+          {/* Asked before work the agent did on this intake would go (askFile): a modal alertdialog
+              popover under the button that asked, trapping Tab between Cancel and its action. */}
+          <div id="file-confirm" ref={popover} className="file-confirm popover" role="alertdialog" aria-modal="true" aria-labelledby="file-confirm-title" aria-describedby="file-confirm-text" hidden={!ask}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') { e.stopPropagation(); act.cancel(); return; }
+              if (e.key !== 'Tab') return;
+              const stops = /** @type {HTMLButtonElement[]} */ ([...e.currentTarget.querySelectorAll('button:not([hidden]):not(:disabled)')]);
+              if (stops.length < 2) return;
+              const first = stops[0];
+              const last = stops.at(-1);
+              if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+              else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }}>
             <p id="file-confirm-title" className="popover-title">{ASK_TITLES[askFrom] ?? 'Are you sure?'}</p>
             <p id="file-confirm-text" className="popover-text">{ask?.text ?? ''}</p>
             <div className="popover-actions">

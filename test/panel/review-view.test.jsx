@@ -154,7 +154,7 @@ test('Review groups Needs you uncapped, pending AI picks, Q1 Worth a look, Marke
   expect(aiRow.textContent).toContain('The AI assistant\u2019s pick, waiting for you');
   expect(aiRow.textContent).toContain('LLC');
 
-  // Worth a look renders edited, own, marked, standard — and leaves derived + intake out.
+  // Worth a look renders edited, own, marked, standard — and leaves derived + intake for Other answers below.
   const worthRows = [...document.querySelectorAll('#review-worth .review-row')];
   expect(worthRows.map((r) => r.querySelector('.review-row-label')?.textContent)).toEqual([
     'Garaging ZIP',
@@ -168,9 +168,23 @@ test('Review groups Needs you uncapped, pending AI picks, Q1 Worth a look, Marke
   expect(markedRow.textContent).not.toContain('Answered');
   expect(markedRow.textContent).not.toContain('You');
 
-  // See all N answers uses list.length (14) and intakeCount (2, not counting derived).
-  const seeAll = document.getElementById('see-all-answers');
-  expect(seeAll?.textContent).toBe('See all 14 answers (2 straight from the intake)');
+  // Other answers renders directly beneath Worth a look in the same inline-disclosure reference card.
+  const answersCard = document.getElementById('review-answers');
+  expect(answersCard?.querySelector('#review-answers-head')?.textContent).toBe('Other answers');
+  expect(answersCard?.querySelector('.reference-count')?.textContent).toBe('3');
+  const restRows = [...document.querySelectorAll('#review-answers .review-row')];
+  expect(restRows.map((r) => r.querySelector('.review-row-label')?.textContent)).toEqual([
+    'Years in business',
+    'DOT number',
+    'Legal name',
+  ]);
+  expect(restRows[0].querySelector('.review-row-sub')?.textContent).toBe('Worked out');
+  expect(restRows[1].querySelector('.review-row-sub')).toBeNull();
+  expect(restRows.every((r) => r.getAttribute('aria-expanded') === 'false')).toBe(true);
+
+  // All answers are already shown inline across Needs you, Worth a look, and Other answers,
+  // so grouped Review omits #see-all-answers (it appears only while focus-need hides the lists).
+  expect(document.getElementById('see-all-answers')).toBeNull();
   expect(document.getElementById('feed')?.getAttribute('data-grouped')).toBe('true');
   // Flat filter bar: no sliding .filters-thumb element.
   expect(document.querySelector('.filters-thumb')).toBeNull();
@@ -238,16 +252,28 @@ test('See all answers, Back to summary, opening a Review row via toggleRow, and 
   expect(document.querySelector('#report .rows > .row.open')?.textContent).toContain('Medical payments');
   expect(nameless(document.body)).toEqual([]);
 
-  // Back to summary returns to Review and moves focus to #see-all-answers.
+  // Back to summary returns to Review and moves focus to #review-title when #see-all-answers is omitted.
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (document.getElementById('back-to-review'))));
+  expect(state.allAnswers).toBe(false);
+  expect(document.activeElement?.id).toBe('review-title');
+  expect(document.getElementById('feed')?.getAttribute('data-grouped')).toBe('true');
+  expect(document.getElementById('see-all-answers')).toBeNull();
+
+  // In focus-need mode (where grouped cards hide), See all answers appears and toggles with focus restored.
+  act(() => {
+    toggleRow(need, true);
+    state.dock = { phase: 'needs', eyebrow: '2 filled · 1 needs you', title: 'Answer 1 question', sub: '' };
+  });
+  const seeAll = document.getElementById('see-all-answers');
+  expect(seeAll?.textContent).toBe('See all 3 answers (1 straight from the intake)');
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (seeAll)));
+  expect(state.allAnswers).toBe(true);
+  expect(document.activeElement?.id).toBe('back-to-review');
   act(() => fireEvent.click(/** @type {HTMLElement} */ (document.getElementById('back-to-review'))));
   expect(state.allAnswers).toBe(false);
   expect(document.activeElement?.id).toBe('see-all-answers');
-  expect(document.getElementById('feed')?.getAttribute('data-grouped')).toBe('true');
-
-  // See all answers switches to All answers and moves focus to #back-to-review.
   act(() => fireEvent.click(/** @type {HTMLElement} */ (document.getElementById('see-all-answers'))));
   expect(state.allAnswers).toBe(true);
-  expect(document.activeElement?.id).toBe('back-to-review');
 
   // Moving to another page's report automatically shows Review (allAnswersFor !== reportFor).
   const nextEntry = { key: '1|/Drivers||Drivers', step: 'Drivers', filled: 1, list: [intake], drawn: 0 };
@@ -430,14 +456,13 @@ test('grouped Review, focus-need, and All answers keep DOM focus order matching 
     showReview: () => setAllAnswers(false),
   });
 
-  // 1. grouped-review: .ai-holder -> #review (#review-needs, #see-all-answers) -> #feed-tools-root > .feed-tools (#unmark)
+  // 1. grouped-review: .ai-holder -> #review (#review-needs, #review-worth) -> #feed-tools-root > .feed-tools (#unmark)
   const reviewRow = document.querySelector('#review-needs .review-row');
-  const seeAll = document.getElementById('see-all-answers');
   const unmark = document.getElementById('unmark');
+  expect(document.getElementById('see-all-answers')).toBeNull();
   expect(document.querySelector('#feed-tools-root > .feed-tools #unmark')).toBe(unmark);
   expect(isBefore(aiBtn, reviewRow)).toBe(true);
-  expect(isBefore(reviewRow, seeAll)).toBe(true);
-  expect(isBefore(seeAll, unmark)).toBe(true);
+  expect(isBefore(reviewRow, unmark)).toBe(true);
 
   // 2. focus-need: .ai-holder -> .row.need.open -> #feed .feed-tools (#unmark) -> #see-all-answers
   act(() => {
@@ -445,8 +470,10 @@ test('grouped Review, focus-need, and All answers keep DOM focus order matching 
   });
   const openNeedBtn = document.querySelector('#report .row.need.open .row-head');
   const unmarkFocus = document.querySelector('#feed > .feed-tools #unmark');
+  const seeAll = document.getElementById('see-all-answers');
   expect(document.getElementById('report')?.getAttribute('data-focus')).toBe('need');
   expect(unmarkFocus).not.toBeNull();
+  expect(seeAll).not.toBeNull();
   expect(isBefore(aiBtn, openNeedBtn)).toBe(true);
   expect(isBefore(openNeedBtn, unmarkFocus)).toBe(true);
   expect(isBefore(unmarkFocus, seeAll)).toBe(true);
@@ -463,4 +490,98 @@ test('grouped Review, focus-need, and All answers keep DOM focus order matching 
   expect(isBefore(aiBtn, unmarkAll)).toBe(true);
 
   unmountRows();
+});
+
+test('Worth a look and Other answers rows expand inline inside Review without switching to All answers or triggering focus-need', () => {
+  const need = mkNeed('Radius of operation');
+  const standard = mkAnswer('standard', 'Medical payments', '$5,000', {
+    key: 'medpay',
+    answer: true,
+    source: { title: 'TNI standard answer', quote: 'Standard $5,000', place: { page: 1 }, seeTitle: 'Show in intake', tag: { kind: 'standard', text: 'TNI standard' } },
+  });
+  const intake = mkAnswer('intake', 'DOT number', '1234567', {
+    key: 'dot',
+    answer: true,
+    source: { title: 'From the intake', quote: 'DOT 1234567', place: { page: 1 }, seeTitle: 'Show in intake', tag: SOURCE.tag.intake(' (p. 1)') },
+  });
+  const markedNeed = mkNeed('Upload loss runs');
+  settleRow(markedNeed, 'marked', vi.fn());
+  const entry = {
+    key: '1|/Vehicles||Vehicles',
+    step: 'Vehicles',
+    filled: 3,
+    list: [need, standard, intake, markedNeed],
+    drawn: 0,
+  };
+  state.reportFor = entry;
+  state.reports.set(entry.key, entry);
+
+  const rowActs = {
+    toggleRow: (rec) => toggleRow(rec),
+    markRow: vi.fn(),
+    showRow: vi.fn(),
+    pickRow: vi.fn(),
+    changeRow: vi.fn(),
+    seeRow: vi.fn(),
+    node: () => {},
+  };
+
+  mountFeed(/** @type {HTMLElement} */ (document.getElementById('feed-root')), {
+    setFilter: () => {},
+    showPast: () => {},
+    toggleKey: () => {},
+    clearMarks: () => {},
+  });
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), {
+    openRow: () => { setAllAnswers(true); },
+    toggleWorth: (rec) => toggleRow(rec),
+    rowActs,
+    showAll: () => setAllAnswers(true),
+    showReview: () => setAllAnswers(false),
+  });
+
+  const worthBtns = [...document.querySelectorAll('#review-worth .review-row')];
+  const standardBtn = worthBtns.find((b) => b.textContent?.includes('Medical payments'));
+  expect(standardBtn?.getAttribute('aria-expanded')).toBe('false');
+  const bodyId = standardBtn?.getAttribute('aria-controls');
+  expect(bodyId).toBeTruthy();
+  expect(/** @type {HTMLElement} */ (document.getElementById(bodyId ?? '')).hidden).toBe(true);
+
+  // Clicking expands inline inside Worth a look, staying in grouped Review.
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (standardBtn)));
+  expect(state.allAnswers).toBe(false);
+  expect(standardBtn?.getAttribute('aria-expanded')).toBe('true');
+  const body = /** @type {HTMLElement} */ (document.getElementById(bodyId ?? ''));
+  expect(body.hidden).toBe(false);
+  expect(body.textContent).toContain('TNI standard answer');
+  const seeBtn = body.querySelector('.intake-action');
+  expect(seeBtn?.textContent).toBe('See in intake');
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (seeBtn)));
+  expect(rowActs.seeRow).toHaveBeenCalledWith(standard);
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (body.querySelector('.change'))));
+  expect(rowActs.changeRow).toHaveBeenCalled();
+
+  // Clicking a row in Other answers below Worth a look expands inline in the exact same style.
+  const restBtn = /** @type {HTMLElement} */ (document.querySelector('#review-answers .review-row'));
+  expect(restBtn.textContent).toContain('DOT number');
+  expect(restBtn.getAttribute('aria-expanded')).toBe('false');
+  act(() => fireEvent.click(restBtn));
+  expect(state.allAnswers).toBe(false);
+  expect(restBtn.getAttribute('aria-expanded')).toBe('true');
+  const restBody = /** @type {HTMLElement} */ (document.getElementById(restBtn.getAttribute('aria-controls') ?? ''));
+  expect(restBody.hidden).toBe(false);
+  expect(restBody.textContent).toContain('From the intake');
+  expect(restBody.querySelector('.intake-action')?.textContent).toBe('See in intake');
+
+  // Expanding a settled/marked need inside Worth a look stays in grouped Review (no focus-need hijack).
+  const markedBtn = worthBtns.find((b) => b.textContent?.includes('Upload loss runs'));
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (markedBtn)));
+  expect(state.allAnswers).toBe(false);
+  expect(document.getElementById('report')?.getAttribute('data-focus')).toBeNull();
+  expect(markedBtn?.getAttribute('aria-expanded')).toBe('true');
+  expect(document.getElementById(markedBtn?.getAttribute('aria-controls') ?? '')?.textContent).toContain('Undo');
+
+  // Clicking again collapses it cleanly in place.
+  act(() => fireEvent.click(/** @type {HTMLElement} */ (markedBtn)));
+  expect(markedBtn?.getAttribute('aria-expanded')).toBe('false');
 });

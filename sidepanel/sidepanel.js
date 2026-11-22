@@ -11,7 +11,7 @@ import { closeSettings, firstView, jumpTo, openSettings, pickUnit, render, setAl
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { flushPendingTextChanges, onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, scrollBehavior, showPast, stopFill } from './panel/coordinator.js';
-import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed, toggleRow } from './panel/fill.js';
+import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, rowActs, showNextNeed, toggleRow } from './panel/fill.js';
 import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
@@ -159,6 +159,8 @@ function wire() {
       openEl.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
       (openEl.querySelector('.row-body button:not([hidden]):not(:disabled), .row-head') ?? openEl).focus?.({ preventScroll: true });
     },
+    toggleWorth: (rec) => { toggleRow(rec); },
+    rowActs,
     showAll: () => { setFilter('all'); setAllAnswers(true); },
     showReview: () => {
       for (const r of state.reportFor?.list ?? []) {

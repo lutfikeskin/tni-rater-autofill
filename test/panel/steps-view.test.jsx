@@ -17,21 +17,22 @@ const acts = () => {
   const call = (name) => (...args) => { calls.push([name, ...args]); };
   return { calls, act: Object.fromEntries(['check', 'fill', 'confirm', 'stop', 'next', 'lookRight', 'approve', 'alt'].map((n) => [n, call(n)])) };
 };
-const steps = (container) => [...container.querySelectorAll('.step')].map((b) => [b.id, b.hidden, b.dataset.state ?? null, b.getAttribute('aria-current'),
+const steps = (container) => [...container.querySelectorAll('.step')].map((b) => [b.id, b.hidden, b.dataset.state ?? null, b.getAttribute('aria-selected'),
   b.querySelector('.step-label').textContent, b.querySelector('.step-note').textContent]);
 const shown = (container) => [...container.querySelectorAll('.dock-body > button')].filter((b) => !b.hidden).map((b) => [b.id, b.textContent, b.disabled]);
 const $ = (container, id) => container.querySelector(`#${id}`);
 
-test('#steps draws both views as tabs, the one in view current, with each tab\'s note, aria-controls and view action', () => {
+test('#steps draws both views as APG tabs, the one in view selected, with each tab\'s note, aria-controls and view action', () => {
   const t = acts();
   const { container } = render(<Steps act={t.act} />);
   // Before the panel says anything: both tabs show, This page in view.
   expect(steps(container)).toEqual([
-    ['step-check', false, null, null, 'Intake checks', ''],
-    ['step-fill', false, null, 'page', 'This page', ''],
+    ['step-check', false, null, 'false', 'Intake checks', ''],
+    ['step-fill', false, null, 'true', 'This page', ''],
   ]);
   expect(container.querySelector('.step-num')).toBe(null);
   expect(container.querySelector('.step-bar')).toBe(null);
+  expect([...container.querySelectorAll('.step')].map((b) => b.getAttribute('role'))).toEqual(['tab', 'tab']);
   expect([...container.querySelectorAll('.step')].map((b) => b.getAttribute('aria-controls'))).toEqual(['check-view', 'page-view']);
 
   // On page view with all checks done.
@@ -42,8 +43,8 @@ test('#steps draws both views as tabs, the one in view current, with each tab\'s
     };
   });
   expect(steps(container)).toEqual([
-    ['step-check', false, 'done', null, 'Intake checks', 'All checked'],
-    ['step-fill', false, 'active', 'page', 'This page', '2 need you'],
+    ['step-check', false, 'done', 'false', 'Intake checks', 'All checked'],
+    ['step-fill', false, 'active', 'true', 'This page', '2 need you'],
   ]);
   // Mark done lowers what is left.
   act(() => { state.steps = { ...state.steps, fill: { tone: 'active', note: '1 needs you', current: true, review: true } }; });
@@ -54,12 +55,12 @@ test('#steps draws both views as tabs, the one in view current, with each tab\'s
     .toEqual(['Intake checks', '3 to check', null]);
   fireEvent.click($(container, 'step-check'));
 
-  // On check view: the intake tab is current. A filled page's tab reads the page again (confirm);
+  // On check view: the intake tab is selected. A filled page's tab reads the page again (confirm);
   // before the fill it only shows the page (fill).
   act(() => { state.steps = { check: { tone: 'warn', note: '3 to check', open: 3, current: true }, fill: { tone: 'active', note: '1 needs you', current: false, review: true } }; });
   expect(steps(container)).toEqual([
-    ['step-check', false, 'warn', 'page', 'Intake checks', '3 to check'],
-    ['step-fill', false, 'active', null, 'This page', '1 needs you'],
+    ['step-check', false, 'warn', 'true', 'Intake checks', '3 to check'],
+    ['step-fill', false, 'active', 'false', 'This page', '1 needs you'],
   ]);
   fireEvent.click($(container, 'step-fill'));
   act(() => { state.steps = { check: { tone: 'warn', note: '1 to check', open: 1, current: true }, fill: { tone: 'active', note: 'Ready to fill', current: false, review: false } }; });

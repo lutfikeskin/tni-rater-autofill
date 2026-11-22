@@ -1,6 +1,7 @@
 // @ts-check
-// Grouping a page report's rows into the Review screen's two visible groups ("Needs you" and
-// "Worth a look") plus the untouched intake answers counted on the "See all N answers" link.
+// Grouping a page report's rows into the Review screen's visible groups ("Needs you",
+// "Worth a look", and the remaining filled answers shown right underneath) plus the untouched
+// intake answers counted on the "See all N answers" link.
 // Pure decision logic: imports only report-rows.js, with no DOM and no browser globals.
 
 import { rowHead } from './report-rows.js';
@@ -37,11 +38,13 @@ function reviewRowHead(rec) {
 }
 
 /**
- * Partitions a report's `list` into `{ needs, worth, intakeCount, all }`.
+ * Partitions a report's `list` into `{ needs, worth, rest, intakeCount, all }`.
  * - `needs`: every non-gone unsettled need (including pending AI picks), in page order, uncapped.
  * - `worth`: Q1 default rows (`edited`, `changed`, `own`, settled `answered`/`picked`/`ai`,
  *   settled `marked`, `standard`), stably ordered by rank while preserving page order per tier.
  *   `intake` and `derived` stay out of `worth`.
+ * - `rest`: every other non-gone answered row (`intake`, `derived`, `page`, `clicked`, `yours`,
+ *   etc.), in page order, uncapped, rendered beneath `worth` in the same inline-disclosure style.
  * - `intakeCount`: non-gone `intake` answers unchanged on the page.
  * - `all`: `list` (`all.length === list.length` for "See all N").
  *
@@ -52,6 +55,8 @@ function reviewGroups(list = []) {
   const needs = [];
   /** @type {Array<{ rec: Record<string, any>, rank: number }>} */
   const worthRanked = [];
+  /** @type {Array<Record<string, any>>} */
+  const rest = [];
   let intakeCount = 0;
 
   for (const rec of list) {
@@ -63,15 +68,18 @@ function reviewGroups(list = []) {
     const rank = worthRank(rec);
     if (rank >= 0) {
       worthRanked.push({ rec, rank });
-    } else if (rec.type === 'answer' && rec.kind === 'intake' && !rec.changed) {
-      intakeCount += 1;
+    } else {
+      rest.push(rec);
+      if (rec.type === 'answer' && rec.kind === 'intake' && !rec.changed) {
+        intakeCount += 1;
+      }
     }
   }
 
   worthRanked.sort((a, b) => a.rank - b.rank);
   const worth = worthRanked.map((entry) => entry.rec);
 
-  return { needs, worth, intakeCount, all: list };
+  return { needs, worth, rest, intakeCount, all: list };
 }
 
 export { reviewGroups, reviewRowHead };

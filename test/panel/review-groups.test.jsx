@@ -40,8 +40,8 @@ function mkNeed(label, extra = {}) {
 
 describe('reviewGroups', () => {
   test('empty or missing list returns empty groups and zero counts', () => {
-    expect(reviewGroups()).toEqual({ needs: [], worth: [], intakeCount: 0, all: [] });
-    expect(reviewGroups([])).toEqual({ needs: [], worth: [], intakeCount: 0, all: [] });
+    expect(reviewGroups()).toEqual({ needs: [], worth: [], rest: [], intakeCount: 0, all: [] });
+    expect(reviewGroups([])).toEqual({ needs: [], worth: [], rest: [], intakeCount: 0, all: [] });
   });
 
   test('Needs you holds every unsettled need and pending AI pick in page order without capping', () => {
@@ -96,6 +96,7 @@ describe('reviewGroups', () => {
       std1,
       ...extraStandards,
     ]);
+    expect(grouped.rest).toEqual([intake1, derived1, intake2]);
     expect(grouped.intakeCount).toBe(2);
     expect(grouped.all.length).toBe(list.length);
   });
@@ -113,6 +114,7 @@ describe('reviewGroups', () => {
     const grouped = reviewGroups([need, intakeGone]);
     expect(grouped.needs).toEqual([]);
     expect(grouped.worth).toEqual([]);
+    expect(grouped.rest).toEqual([]);
     expect(grouped.intakeCount).toBe(0);
     expect(grouped.all).toHaveLength(2);
   });
