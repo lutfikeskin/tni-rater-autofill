@@ -174,3 +174,48 @@ test('open need outside All answers marks #report data-focus="need" and clears i
   expect(css).toContain('#report[data-focus="need"] .rows > .row.need:not(.open)');
   expect(css).not.toMatch(/#report\[data-focus="need"\][^{]*\.(report-head|ai-holder)/);
 });
+
+const findNestedHas = (source) => {
+  const nested = [];
+  const stack = [];
+  let inComment = false;
+  let quote = '';
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (inComment) {
+      if (ch === '*' && source[i + 1] === '/') { inComment = false; i += 1; }
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') { i += 1; continue; }
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') { inComment = true; i += 1; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (source.startsWith(':has(', i)) {
+      if (stack.some((entry) => entry.isHas)) {
+        nested.push(source.slice(Math.max(0, i - 40), i + 40));
+      }
+      stack.push({ isHas: true });
+      i += 4;
+      continue;
+    }
+    if (ch === '(') {
+      stack.push({ isHas: false });
+    } else if (ch === ')' && stack.length > 0) {
+      stack.pop();
+    }
+  }
+  return nested;
+};
+
+test('grouped Review CSS avoids nested :has(), uses #feed-root display:contents, and fuses portaled bottom tools', () => {
+  const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
+  expect(findNestedHas('.a:has(> .b:not(:has(.c))) {}')).toHaveLength(1);
+  expect(findNestedHas(css)).toEqual([]);
+  expect(css).toContain('#feed-root { display: contents; }');
+  expect(css).toContain('#feed-tools-root:not(:has(> :not([hidden]))) { display: none; }');
+  expect(css).toContain('#page-view:has(#see-all-answers:not([hidden])):has(#feed-tools-root > .feed-tools:not([hidden])):has(#report:not([data-focus="need"]))');
+  expect(css).not.toContain('#page-view:has(#report[data-focus="need"]) > #feed-root { order:');
+});

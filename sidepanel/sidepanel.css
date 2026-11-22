@@ -449,6 +449,10 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .field.pulse :is(input, select, textarea) { outline: 3px solid color-mix(in srgb, var(--focus) 35%, transparent); }
 
 /* Steps 2 and 3: the raters to open, the unit pickers, grouped Review, focused Need, and All answers */
+#review-all-root:empty,
+#review-root:empty,
+#feed-tools-root:not(:has(> :not([hidden]))) { display: none; }
+#feed-root { display: contents; }
 .waiting { margin: 10px 12px 0; padding: 14px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
 .rater-logos { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
 .rater-logo { display: inline-flex; align-items: center; padding: 6px 8px; margin: -6px -8px; background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
@@ -525,9 +529,9 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .feed-tools:has(> #unmark[hidden]) { display: none; }
 .unmark { margin: 0; width: 100%; min-height: 38px; padding: 6px 10px; text-align: center; text-decoration: none; font-weight: 500; color: var(--ink-secondary); }
 .unmark:hover { color: var(--ink-strong); }
-/* Grouped Review: join .review-tools (top) and .feed-tools (bottom) when nothing visible in #feed sits between them */
-#page-view:has(#feed[data-grouped="true"]):has(.review-tools):not(:has(#feed[data-grouped="true"] .feed-head #page-menu:not([hidden]))):not(:has(#feed[data-grouped="true"] #report-age:not([hidden]))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .review-tools { border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
-#page-view:has(#feed[data-grouped="true"]):has(.review-tools):not(:has(#feed[data-grouped="true"] .feed-head #page-menu:not([hidden]))):not(:has(#feed[data-grouped="true"] #report-age:not([hidden]))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .feed-tools { margin: 0 12px 14px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
+/* Grouped Review: join .review-tools (top) and portaled .feed-tools (bottom) into one Page & View Tools card */
+#page-view:has(#see-all-answers:not([hidden])):has(#feed-tools-root > .feed-tools:not([hidden])):has(#report:not([data-focus="need"])) .review-tools { border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
+#page-view:has(#see-all-answers:not([hidden])):has(#feed-tools-root > .feed-tools:not([hidden])):has(#report:not([data-focus="need"])) .feed-tools { margin: 0 12px 14px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
 #page-view:not(:has(.feed-tools > #unmark:not([hidden]))):not(:has(#report[data-focus="need"])) #review { padding-bottom: 14px; }
 /* R3 Bug 1 & Bug 2: hide duplicate .row.need under #review and empty .feed-head in grouped Review */
 #feed[data-grouped="true"] { margin-top: 0; }
@@ -539,16 +543,13 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 #feed[data-grouped="true"] .rows:not(:has(> .row.need)) { border-top: 0; border-bottom: 0; }
 #feed[data-grouped="true"] #report:not([data-focus="need"]) > .rows { display: none; }
 #feed[data-grouped="true"] #report:not([data-focus="need"]):not(:has(> :not(.rows):not(:empty):not([hidden]))) { min-height: 0; }
-/* When a need is open in focus mode (Phase 7, canvas screens 12-16), put the focused need row
-   above "See all N answers" and hide Review's grouped lists so only that need and the link show. */
-#page-view:has(#report[data-focus="need"]) { display: flex; flex-direction: column; }
-#page-view:has(#report[data-focus="need"]) > #feed-root { order: 2; }
-#page-view:has(#report[data-focus="need"]) > #review-root { order: 3; }
+/* When a need is open in focus mode (Phase 7, canvas screens 12-16), hide Review's grouped
+   lists so only the focused need, Clear the marks, and See all N answers show in DOM order. */
 #page-view:has(#report[data-focus="need"]) #review { padding-top: 0; padding-bottom: 14px; }
 #page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }
 #page-view:has(#report[data-focus="need"]):not(:has(.feed-tools > #unmark:not([hidden]))) #review { padding-top: 10px; }
-#page-view:has(#report[data-focus="need"]):has(.feed-tools > #unmark:not([hidden])) .feed-tools { margin: 10px 12px 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
-#page-view:has(#report[data-focus="need"]):has(.feed-tools > #unmark:not([hidden])) .review-tools { border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
+#page-view:has(#report[data-focus="need"]):has(#see-all-answers:not([hidden])):has(.feed-tools > #unmark:not([hidden])) .feed-tools { margin: 10px 12px 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
+#page-view:has(#report[data-focus="need"]):has(#see-all-answers:not([hidden])):has(.feed-tools > #unmark:not([hidden])) .review-tools { border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
 /* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
 .report-head { display: contents; }
 .report > .issue, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 10px 12px 0; }
@@ -932,8 +933,10 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .problem-said { margin: 0; padding: 6px 14px 0; font-size: 13px; color: var(--ink-secondary); }
 .foot-row { padding: 0 14px 6px; min-height: 40px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 4px 8px; border-top: 1px solid var(--border-row); background: var(--surface-sunken); }
 .foot-row > :not(#report-problem) { align-self: center; margin-top: 3px; }
-.dock-root:has(> .dock[hidden], > .dock:not([data-head-out]):not(:has(.progress:not([hidden]), .dock-body > button:not([hidden]), .dock-body > .dock-alt:not([hidden]), .dock-text > :not(.sr-only):not([hidden])))) + .problem[hidden] + .problem-said[hidden] + .foot-row { border-top: 0; }
-.dock-root:has(> .dock[hidden], > .dock:not([data-head-out]):not(:has(.progress:not([hidden]), .dock-body > button:not([hidden]), .dock-body > .dock-alt:not([hidden]), .dock-text > :not(.sr-only):not([hidden])))) + .problem { border-top: 0; }
+.dock-root:has(> .dock[hidden]) + .problem[hidden] + .problem-said[hidden] + .foot-row,
+.dock-root:has(> .dock[hidden]) + .problem,
+.dock-root:not(:has(> .dock[data-head-out])):not(:has(> .dock .progress:not([hidden]))):not(:has(> .dock .dock-body > button:not([hidden]))):not(:has(> .dock .dock-body > .dock-alt:not([hidden]))):not(:has(> .dock .dock-text > :not(.sr-only):not([hidden]))) + .problem[hidden] + .problem-said[hidden] + .foot-row,
+.dock-root:not(:has(> .dock[data-head-out])):not(:has(> .dock .progress:not([hidden]))):not(:has(> .dock .dock-body > button:not([hidden]))):not(:has(> .dock .dock-body > .dock-alt:not([hidden]))):not(:has(> .dock .dock-text > :not(.sr-only):not([hidden]))) + .problem { border-top: 0; }
 /* Report a problem as a tab hanging from the white dock above, as the client tools hang from the
    header: white, covering the line under it, light grey edges on its sides and bottom. */
 .foot-row #report-problem { position: relative; z-index: 1; min-height: 34px; margin-top: -1px; padding: 1px 14px 0; display: inline-flex; align-items: center; white-space: nowrap; background: var(--surface); border: 1px solid var(--border); border-top: 0; border-radius: 0 0 var(--radius-md) var(--radius-md); color: var(--ink-secondary); font-weight: 600; text-decoration: none; }

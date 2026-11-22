@@ -9,7 +9,7 @@
 
 import { createRoot } from 'react-dom/client';
 import { useEffect, useRef } from 'react';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { screenFor } from './screen.js';
@@ -95,6 +95,7 @@ function ReviewRow({ rec, group, onOpen }) {
 
 /**
  * @param {{
+ *   host?: HTMLElement,
  *   act?: {
  *     openRow?: (rec: Record<string, any>) => void,
  *     showAll?: () => void,
@@ -102,7 +103,7 @@ function ReviewRow({ rec, group, onOpen }) {
  *   },
  * }} [props]
  */
-function Review({ act = {} } = {}) {
+function Review({ act = {}, host } = {}) {
   const entry = useStore(panelStore, (/** @type {PanelState} */ s) => s.reportFor);
   const filling = useStore(panelStore, (/** @type {PanelState} */ s) => Boolean(s.filling));
   const pastOpen = useStore(panelStore, (/** @type {PanelState} */ s) => Boolean(s.feed?.pastKey || s.pastKey));
@@ -139,7 +140,7 @@ function Review({ act = {} } = {}) {
   };
 
   if (inAll) {
-    return (
+    const allHead = (
       <div id="review" className="review review-all-head">
         <button type="button" id="back-to-review" className="link small review-back" onClick={showReview}>
           {REVIEW.backToReview}
@@ -152,6 +153,10 @@ function Review({ act = {} } = {}) {
         ) : null}
       </div>
     );
+    const allRoot = host
+      ? (host.isConnected ? host.parentElement?.querySelector('#review-all-root') : null)
+      : (typeof document !== 'undefined' ? document.getElementById('review-all-root') : null);
+    return allRoot ? createPortal(allHead, allRoot) : allHead;
   }
 
   return (
@@ -209,8 +214,15 @@ function Review({ act = {} } = {}) {
  *   showReview?: () => void,
  * }} [act]
  */
+/** @type {{ root: import('react-dom/client').Root, host: HTMLElement } | null} */
+let mountedReview = null;
 function mountReview(host, act) {
-  flushSync(() => createRoot(host).render(<Review act={act} />));
+  if (mountedReview && (!mountedReview.host.isConnected || mountedReview.host === host)) {
+    mountedReview.root.unmount();
+  }
+  const root = createRoot(host);
+  mountedReview = { root, host };
+  flushSync(() => root.render(<Review act={act} host={host} />));
 }
 
 export { Review, mountReview };

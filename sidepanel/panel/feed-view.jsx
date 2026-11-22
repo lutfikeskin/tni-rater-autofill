@@ -13,7 +13,7 @@
 
 import { useLayoutEffect, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { flushSync } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { HelpLink } from './help-link.jsx';
@@ -55,6 +55,7 @@ function AnswerKey({ open }) {
 /**
  * The answers of the page in front, or of one filled earlier on this tab, read-only.
  * @param {{
+ *   host?: HTMLElement,
  *   act?: {
  *     setFilter?: (filter: string) => void,
  *     showPast?: (key: string | null) => void,
@@ -63,7 +64,7 @@ function AnswerKey({ open }) {
  *   },
  * }} props
  */
-function Feed({ act }) {
+function Feed({ act, host }) {
   const f = useStore(panelStore, (/** @type {PanelState} */ s) => s.feed) ?? {
     shown: true,
     title: FEED.defaultTitle,
@@ -107,6 +108,17 @@ function Feed({ act }) {
   const grouped = hasReport && !past && !inAll;
   const allOpen = hasReport && !past && inAll;
   const showFocus = focusNeed && !past && !!f.report;
+
+  const tools = (
+    <div className="feed-tools" hidden={!f.unmark}>
+      <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
+        {FEED.clearMarks}
+      </button>
+    </div>
+  );
+  const toolsRoot = f.shown && grouped && !showFocus
+    ? (host ? (host.isConnected ? host.parentElement?.querySelector('#feed-tools-root') : null) : (typeof document !== 'undefined' ? document.getElementById('feed-tools-root') : null))
+    : null;
 
   return (
     <div
@@ -179,11 +191,7 @@ function Feed({ act }) {
       <div id="report" className="report" data-filter={f.filter} data-focus={showFocus ? 'need' : undefined} hidden={!f.report} />
       <div id="past" className="report past" hidden={!past} />
       <p id="feed-empty" className="feed-empty" hidden={f.empty == null}>{f.empty ?? ''}</p>
-      <div className="feed-tools">
-        <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
-          {FEED.clearMarks}
-        </button>
-      </div>
+      {toolsRoot ? createPortal(tools, toolsRoot) : tools}
     </div>
   );
 }
@@ -199,8 +207,15 @@ function Feed({ act }) {
  *   clearMarks: () => void,
  * }} act
  */
+/** @type {{ root: import('react-dom/client').Root, host: HTMLElement } | null} */
+let mountedFeed = null;
 function mountFeed(host, act) {
-  flushSync(() => createRoot(host).render(<Feed act={act} />));
+  if (mountedFeed && (!mountedFeed.host.isConnected || mountedFeed.host === host)) {
+    mountedFeed.root.unmount();
+  }
+  const root = createRoot(host);
+  mountedFeed = { root, host };
+  flushSync(() => root.render(<Feed act={act} host={host} />));
 }
 
 export { Feed, mountFeed };

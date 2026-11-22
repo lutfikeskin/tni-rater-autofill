@@ -380,3 +380,87 @@ test("a pending AI pick the agent answered on the page shows the agent's answer 
   expect(row.querySelector('.review-row-val')?.textContent).toBe('Corporation');
   expect(row.textContent).not.toContain('LLC');
 });
+
+test('grouped Review, focus-need, and All answers keep DOM focus order matching top-to-bottom visual order', () => {
+  const isBefore = (a, b) => Boolean(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+  const need = mkNeed('USDOT Information');
+  need.open = false;
+  const standard = mkAnswer('standard', 'Medical payments', '$5,000');
+  const entry = {
+    key: '1|/BusinessInfo||Business Info',
+    step: 'Business Info',
+    filled: 1,
+    list: [need, standard],
+    drawn: 0,
+  };
+  state.reportFor = entry;
+  state.reports.set(entry.key, entry);
+  state.feed = { ...state.feed, unmark: true };
+
+  mountFeed(/** @type {HTMLElement} */ (document.getElementById('feed-root')), {
+    setFilter: () => {},
+    showPast: () => {},
+    toggleKey: () => {},
+    clearMarks: () => {},
+  });
+  const aiNode = document.createElement('div');
+  aiNode.className = 'ai-holder';
+  const aiBtn = document.createElement('button');
+  aiBtn.type = 'button';
+  aiBtn.textContent = 'Add the key';
+  aiNode.appendChild(aiBtn);
+  document.getElementById('report')?.appendChild(aiNode);
+
+  const rowsHost = document.createElement('div');
+  rowsHost.className = 'rows';
+  document.getElementById('report')?.appendChild(rowsHost);
+  const unmountRows = mountRows(rowsHost, entry, { tabId: 1, page: '/BusinessInfo', carrier: null }, {
+    toggleRow: (rec) => toggleRow(rec),
+    markRow: vi.fn(),
+    showRow: vi.fn(),
+    pickRow: vi.fn(),
+    changeRow: vi.fn(),
+    seeRow: vi.fn(),
+    node: () => {},
+  });
+
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), {
+    openRow: () => {},
+    showAll: () => setAllAnswers(true),
+    showReview: () => setAllAnswers(false),
+  });
+
+  // 1. grouped-review: .ai-holder -> #review (#review-needs, #see-all-answers) -> #feed-tools-root > .feed-tools (#unmark)
+  const reviewRow = document.querySelector('#review-needs .review-row');
+  const seeAll = document.getElementById('see-all-answers');
+  const unmark = document.getElementById('unmark');
+  expect(document.querySelector('#feed-tools-root > .feed-tools #unmark')).toBe(unmark);
+  expect(isBefore(aiBtn, reviewRow)).toBe(true);
+  expect(isBefore(reviewRow, seeAll)).toBe(true);
+  expect(isBefore(seeAll, unmark)).toBe(true);
+
+  // 2. focus-need: .ai-holder -> .row.need.open -> #feed .feed-tools (#unmark) -> #see-all-answers
+  act(() => {
+    toggleRow(need, true);
+  });
+  const openNeedBtn = document.querySelector('#report .row.need.open .row-head');
+  const unmarkFocus = document.querySelector('#feed > .feed-tools #unmark');
+  expect(document.getElementById('report')?.getAttribute('data-focus')).toBe('need');
+  expect(unmarkFocus).not.toBeNull();
+  expect(isBefore(aiBtn, openNeedBtn)).toBe(true);
+  expect(isBefore(openNeedBtn, unmarkFocus)).toBe(true);
+  expect(isBefore(unmarkFocus, seeAll)).toBe(true);
+
+  // 3. all-answers: #review-all-root (#back-to-review) -> #feed (.ai-holder, #report, #unmark)
+  act(() => {
+    setAllAnswers(true);
+  });
+  const backBtn = document.getElementById('back-to-review');
+  const unmarkAll = document.querySelector('#feed > .feed-tools #unmark');
+  expect(document.querySelector('#review-all-root > #review.review-all-head #back-to-review')).toBe(backBtn);
+  expect(unmarkAll).not.toBeNull();
+  expect(isBefore(backBtn, aiBtn)).toBe(true);
+  expect(isBefore(aiBtn, unmarkAll)).toBe(true);
+
+  unmountRows();
+});

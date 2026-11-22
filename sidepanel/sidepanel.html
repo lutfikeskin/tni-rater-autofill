@@ -110,10 +110,14 @@
       <div id="cards-root"></div>
       <!-- Which driver, vehicle or trailer the page is about: drawn by checks-view.jsx (mountPickers). -->
       <div id="pickers" class="pickers"></div>
-      <!-- Post-fill grouped Review (#review) and All answers header: drawn by review-view.jsx (mountReview). -->
-      <div id="review-root"></div>
+      <!-- All answers header (#review.review-all-head), portaled above #feed when All answers is open. -->
+      <div id="review-all-root"></div>
       <!-- The page's answers (#feed), drawn by feed-view.jsx (mountFeed). -->
       <div id="feed-root"></div>
+      <!-- Post-fill grouped Review (#review), drawn by review-view.jsx (mountReview). -->
+      <div id="review-root"></div>
+      <!-- Clear marks tool (.feed-tools), portaled below #see-all-answers in grouped Review. -->
+      <div id="feed-tools-root"></div>
     </section>
 
     <!-- Settings, over everything but the header: drawn by settings-view.jsx (mountSettings). -->
