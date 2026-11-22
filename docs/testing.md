@@ -13,6 +13,7 @@ The extension's files are plain ES modules that run as written, except two that 
 | Affected behavior | Relevant checks |
 | --- | --- |
 | Intake extraction or cleanup | `test/normalize.test.mjs`, `test/intake-regressions.test.mjs`, `test/intake-forms.test.mjs` (the pre- and post-2026-10 intake forms), `test/intake-source.test.mjs` (where answers are on the PDF, the page strip's step order); affected synthetic intake cases |
+| A shared parser (`src/shared/`), or code moved between the shared modules, the engine and a product | `test/boundaries.test.mjs` (the import rules: shared modules import only shared ones, the engine and the panel no commercial-auto module but the crossings it lists, a product no other product's; imports read with Vite's parser), `test/import-cycles.test.mjs`, `test/usage.test.mjs` (`RULE_FILES` covers the rules' import graph), and the intake checks above |
 | Progressive rules or page execution | `test/progressive.test.mjs`, `test/pagekit.test.mjs`, `npm run e2e -- --fixtures` |
 | AmWINS rules or application flow | `npm run mock:amwins` before completing an AmWINS rule change |
 | GEICO rules or quote flow | `test/geico.test.mjs`, `test/provenance.test.mjs` (GEICO's TNI standards and review mode), the GEICO tests in `test/pagekit.test.mjs`, `test/recorder.test.mjs` and `test/sidepanel-safety.test.mjs` (shadow-DOM controls, the progress-bar step, stop steps, unit forms), `test/geico-fixture.test.mjs` (the fixture's privacy and shape), and `npm run mock:geico` before completing a GEICO rule change |

@@ -1,9 +1,13 @@
 // @ts-check
 // Shared value parsers: blank answers, amounts, yes/no, numbers, dates, phones, VINs, names and
 // license numbers, as an intake writes them. Every product reads its own intake with these (the
-// commercial-auto normalizer, src/normalize.js, today), so they know no product, no form and no
-// carrier: a module here imports only src/shared/ and src/states.js (test/boundaries.test.mjs).
-// Something only one product means goes in that product's own code, never here behind a flag.
+// commercial-auto normalizer, src/normalize.js, today), so they import no product's code: a module
+// here imports only src/shared/ and src/states.js (test/boundaries.test.mjs). Some still read a
+// value the way TNI decided for commercial auto, where they were written: a two-digit year above
+// 40 is 19xx, else 20xx (toDate), a license number keeps a leading state code (parseLicense), and a
+// lone letter after a first name is the middle initial (splitName). A product that needs otherwise
+// reads that value its own way, in its own code; something only one product means never goes here
+// behind a product check.
 
 import { STATES } from '../states.js';
 
