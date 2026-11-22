@@ -6,7 +6,7 @@
 // (an edit made on an older build) is still one. A carrier writes the number in its own boxes
 // (src/carriers/<carrier>.js): whole, or in the parts it asks for.
 
-import { toPhone } from '../normalize.js';
+import { toPhone } from '../shared/parse.js';
 
 // The intake's phone as its ten digits; null with no phone, or one that isn't a 10-digit US number.
 /** @returns {string | null} */

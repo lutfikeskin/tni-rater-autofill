@@ -17,7 +17,7 @@ import { isStandard, resolutionOf } from '../src/resolution.js';
 import { buildPlan } from '../src/plan.js';
 import { checkHolds, intakeNotes, noNumberEdit, normalizeIntake, rederive } from '../src/normalize.js';
 import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
-import { get as getPath, set as setPath } from '../src/util.js';
+import { get as getPath, set as setPath } from '../src/shared/record-paths.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
@@ -4086,7 +4086,7 @@ test('editing the Additional Notes box retires Luna\'s items and reads again', a
 });
 
 test('a panel edit of the claims box or the Additional Notes box asks Luna again; other edits do not', async () => {
-  const { get, set } = await import('../src/util.js');
+  const { get, set } = await import('../src/shared/record-paths.js');
   const { rederive } = await import('../src/normalize.js');
   const calls = [];
   const sandbox = {
@@ -4110,7 +4110,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
 // as the intake had it. The edit recomputes it from the corrected record (the claims answer, the
 // ownership its notes give), the checks follow in place, and the check list is said again.
 test('a panel edit of the claims box recomputes what derives from it and says the checks again', async () => {
-  const { get, set } = await import('../src/util.js');
+  const { get, set } = await import('../src/shared/record-paths.js');
   const { rederive } = await import('../src/normalize.js');
   const calls = [];
   const intake = {
@@ -7522,7 +7522,8 @@ test('failed manual and automatic fills retain bounded run metadata without a re
 // React PR 9 (2026-11-01): client details are said as data (renderSections, details-view.jsx draws
 // them): the row is read from what the drawer says, its edit is the row's own.
 test('editing a source field in the panel recomputes what derives from it and refreshes that row', async () => {
-  const { get, set, STATES } = await import('../src/util.js');
+  const { get, set } = await import('../src/shared/record-paths.js');
+  const { STATES } = await import('../src/util.js');
   const { parseEdit, rederive } = await import('../src/normalize.js');
   const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
   const calls = [];
@@ -7588,7 +7589,8 @@ test('editing a source field in the panel recomputes what derives from it and re
 // search. An edited row says so, with the intake's value and Restore; a box finds fields, and Your
 // corrections lists only the agent's.
 test('client details mark the agent\'s corrections, show the intake\'s value with Restore, and find fields', async () => {
-  const { get, set, STATES } = await import('../src/util.js');
+  const { get, set } = await import('../src/shared/record-paths.js');
+  const { STATES } = await import('../src/util.js');
   const { parseEdit, rederive } = await import('../src/normalize.js');
   const read = { operations: { radius: '100', radiusMiles: 100 }, applicant: { name: 'Acme Freight', yearEstablished: 2010, yearsInBusiness: 15 } };
   const record = structuredClone(read);
@@ -8259,7 +8261,7 @@ test('Luna checks driver first names once per intake, never with its switch off,
 });
 
 test('Luna\'s GL and driver-gender check cards set the record as the agent\'s edit, or dismiss', async () => {
-  const { get, set } = await import('../src/util.js');
+  const { get, set } = await import('../src/shared/record-paths.js');
   const { rederive } = await import('../src/normalize.js');
   const { ownerDrivesAnswered } = await import('../src/answers/owner.js');
   const { GL_CHOICES, genderChoices } = await import('../src/ai/luna.js');
@@ -11428,7 +11430,8 @@ test('client details hide the fields the intake leaves blank unless flagged, fol
   assert.match(css, /\.field \{[^}]*min-height: 30px;/);
   // What the drawer says (renderSections; details-view.jsx draws it, with data-empty on the
   // panel: test/panel/details-view.test.jsx).
-  const { get, STATES } = await import('../src/util.js');
+  const { get } = await import('../src/shared/record-paths.js');
+  const { STATES } = await import('../src/util.js');
   const record = { applicant: { name: 'Acme' }, garaging: { city: 'Austin' }, operations: {}, coverage: {}, drivers: [{ first: 'A' }], vehicles: [], trailers: [], priorInsurance: [] };
   const intake = { record, agentEdited: [], done: [], warnings: [{ code: 'x', level: 'check', path: 'garaging.zip', msg: 'Zip missing' }] };
   const context = { state: { intake, detailsClosed: new Set(['coverage']), showEmpty: false, details: null }, get, fieldInfo, SECTIONS, STATES, parseEdit: (k, v) => v, agentEdit() {} };
@@ -11575,7 +11578,7 @@ test('an agent change on the finishing step after the print, or a stopped fill, 
 // saved as no number, as the intake's own No: the box empty, noDot true, the note said, and the row
 // and the checks said again.
 test('a panel edit of "No" into the USDOT box saves no number, and says the row and the note again', async () => {
-  const { get, set } = await import('../src/util.js');
+  const { get, set } = await import('../src/shared/record-paths.js');
   const { noNumberEdit, rederive } = await import('../src/normalize.js');
   const calls = [];
   const intake = { record: { applicant: { dot: '1234567', noDot: null } }, warnings: [], done: [], agentEdited: [] };

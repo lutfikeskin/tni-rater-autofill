@@ -46,7 +46,7 @@ Missing today: whether the business has a USDOT or MC number, the 60-day answer,
 
 The line it draws: **the profile describes the business without names, numbers or addresses.** It keeps no name, identification number, address, contact, date of birth, VIN or plate. Where an identifier matters for analysis, it keeps a fact about it instead: whether a USDOT number was given, not the number; a driver's age, not the date of birth. It is pseudonymous, not anonymous: state, fleet, makes and years in business together can still point to one carrier, for example beside public FMCSA records, and free text can name someone the intake doesn't (a shipper). Treat the database as client data.
 
-Yes/no answers keep three values, as the record does (`yesNo` in [normalize.js](../src/normalize.js)): `true`, `false`, and `null` when the intake left the question unanswered. A blank is missing information, never a No.
+Yes/no answers keep three values, as the record does (`yesNo` in [shared/parse.js](../src/shared/parse.js)): `true`, `false`, and `null` when the intake left the question unanswered. A blank is missing information, never a No.
 
 ### Business
 
