@@ -42,6 +42,8 @@ function layoutErrorKind(e) {
 // A fill's error in words the agent can act on, with the browser's own message (redacted with the
 // intake: it may quote the page) after it for a problem report.
 function fillErrorMessage(ctx, e) {
+  // Stop, and the page's fill never came back (runKit): what it put in isn't known to the panel.
+  if (e?.stopUnanswered) return 'You stopped the fill, but the page didn’t answer: it may hold some of the answers. Check it, then fill again.';
   const raw = String(e?.message ?? e ?? '');
   const plain = /cannot access|permission|not allowed|cannot be scripted|chrome:\/\//i.test(raw)
     ? 'The browser blocked the extension on this page. Reload it, then fill again.'

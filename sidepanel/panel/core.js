@@ -334,6 +334,15 @@ const state = storeState({
   agentKeys: new Map(),
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,
+  // Whose `filling` is: the id of what took it (a fill's run, an AI apply's or a row pick's token),
+  // null once let go. Only its holder lets go of it and resumes the recorder; an intake change lets
+  // go of one that never answered Stop (stopFillFirst), and that one, ending later, leaves alone
+  // whatever holds it since.
+  fillingLock: null,
+  // The panel's calls into a tab's frames that gave up on a frame that never answered
+  // (noteFrameTimeout), by tab: what each was, until that tab's next fill logs them (fillPage,
+  // autoFill) or an intake change that lets go of a fill does (stopFillFirst).
+  frameTimeouts: new Map(),
   // What goes in while `filling` (the developer recording's span says it): 'fill' (Fill this page, an
   // automatic fill), 'pick' (the agent's pick from a row), 'ai' (an AI answer applied).
   fillingKind: null,
@@ -568,6 +577,62 @@ panelStore.subscribe((stateNow) => {
 // REC-14): a developer recording runs on this tab.
 /** @param {number | null | undefined} tabId */
 const traced = (tabId) => !!state.recording && !state.recording.stopping && state.recording.tabId === tabId;
+
+// A call into a tab's frames gave up on a frame that never answered, and went on without it (the
+// top frame alone, or nothing): `what` says which (the recorder's injection, its pause or resume,
+// the kit's check or injection, Stop). Kept once per tab and call, for the usage log: nothing on the
+// page or in a report shows it, and a review of a slow or stuck fill needs to know.
+/** @param {number} tabId @param {string} what */
+function noteFrameTimeout(tabId, what) {
+  state.frameTimeouts.set(tabId, (state.frameTimeouts.get(tabId) ?? new Set()).add(what));
+}
+
+// The documents whose frame answered a call (readyDocs), and those that didn't in time, left out of
+// the panel's calls until they do (stuckDocs), by the id Chrome gives each document.
+const readyDocs = new Set();
+const stuckDocs = new Set();
+// How long a frame that may not have loaded is waited for, once per document. One still on its first,
+// empty document is waited for as long as one still loading: its page may only be slow to answer, and
+// its questions are the fill's too (a frame whose page came after 1.5 s was left out of the fill and
+// of the recorder when it got 300 ms: real Chromium, 2026-11-22).
+const FRAME_READY_MS = 4000;
+// Told when a frame left out answers after all (whenFrameLate; sidepanel.js: the recorder goes into it).
+/** @type {((tabId: number) => void) | null} */
+let frameLate = null;
+/** @param {(tabId: number) => void} fn */
+function whenFrameLate(fn) { frameLate = fn; }
+
+/**
+ * The frames of a tab a call can be made in now. Chrome holds a call made in every frame until each
+ * frame's document has loaded, so one frame that never loads (a widget's page that doesn't answer,
+ * another origin's too) held every fill, Stop and Clear for good (real Chromium, 2026-11-22). A read
+ * made at once (`injectImmediately`), which waits on no frame, says which frames may not have: one
+ * still loading, or still on its first, empty document. Each of those is asked by itself and waited
+ * for (FRAME_READY_MS), once per document; one that doesn't answer is left out and noted for the
+ * usage log (noteFrameTimeout, "frame not ready") until its own call comes back, and the panel is
+ * told then (whenFrameLate), so the frame is watched from there on. The top frame is never left out:
+ * the page's own load is waited for by the call (runKit's bounds).
+ * @param {number} tabId
+ * @returns {Promise<number[] | null>} their ids, or null where every frame can be called as one
+ */
+async function framesReady(tabId) {
+  let frames;
+  try {
+    frames = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, injectImmediately: true,
+      func: () => [document.readyState === 'loading', location.href === 'about:blank'] });
+  } catch { return null; /* no page to ask: the call itself says why */ }
+  const unsure = frames.filter((f) => f.frameId !== 0 && f.documentId && !readyDocs.has(f.documentId) && !stuckDocs.has(f.documentId) && (f.result?.[0] || f.result?.[1]));
+  await Promise.all(unsure.map((f) => new Promise((resolve) => {
+    const timer = setTimeout(() => { stuckDocs.add(f.documentId); noteFrameTimeout(tabId, 'frame not ready'); resolve(undefined); }, FRAME_READY_MS);
+    // Left to come back by itself where the wait ran out: the frame is called again from then on.
+    chrome.scripting.executeScript({ target: { tabId, frameIds: [f.frameId] }, func: () => true })
+      .then(() => { readyDocs.add(f.documentId); if (stuckDocs.delete(f.documentId)) frameLate?.(tabId); }, () => { stuckDocs.delete(f.documentId); /* the frame went */ })
+      .finally(() => { clearTimeout(timer); resolve(undefined); });
+  })));
+  if (readyDocs.size > 500) readyDocs.clear();
+  const ready = frames.filter((f) => !stuckDocs.has(f.documentId));
+  return ready.length === frames.length ? null : ready.map((f) => f.frameId);
+}
 
 /**
  * A filling switch: what Settings says (state.switches), else its box (the test harnesses' vm has
@@ -1211,4 +1276,4 @@ async function retireAiOrigins(ctx, frames = null) {
   return changed;
 }
 
-export { $, logCrash, traced, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };
+export { $, framesReady, logCrash, noteFrameTimeout, traced, whenFrameLate, storageSaid, FILLS_HELD_NOTE, fillsHeld, holdFills, releaseFills, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, clearAgentKeys, discardAiSuggestions, doneRestored, forgetKeptReports, keepReport, memory, migrateStoredData, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, persistUnitForms, pruneAgentRecords, restoreAgentKeys, restoreAiPending, restoreDoneActions, restoreReports, retireAiOrigins, settleRejectedAi, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, store, switchOn, testIntakes, clearKeptWork, forgetKeptWork, keptWorkCleared, keptWorkLocal, forgetJournals, keepJournal, restoreJournal };
