@@ -867,6 +867,25 @@ test('fill report says when the carrier seems to have changed the page', () => {
   assert.equal(alarmIn(), undefined);
 });
 
+// Review of #596: a frame the panel left out of a fill (framesReady, or the top frame alone after a
+// timeout) had its questions neither read nor filled, and only the usage log said so. The report
+// says it above its list, and a page that read as having nothing to fill isn't said done.
+test('fill report says a frame of the page was left out, and such a page is not said done', () => {
+  const { context, box } = reportHarness({ tab: { id: 1, url: 'AddVehicle' } }, { pageOf: () => 'AddVehicle' });
+  const frame = { fields: 2, filled: [{ label: 'VIN', shown: '1FTBR3X87MKA12345' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  context.renderReport([frame], { tabId: 1, page: 'AddVehicle', leftOut: true });
+  assert.deepEqual(plain(headCards(box)), [{ tone: 'warn', title: 'Part of this page wasn’t filled',
+    text: 'A part of the page hadn’t loaded, so its questions weren’t read or filled. Check the page, then fill again.', notes: [], compare: [], actions: [], role: 'status' }]);
+  context.renderReport([frame], { tabId: 1, page: 'AddVehicle' });
+  assert.deepEqual(headOf(box), [], 'every frame filled: nothing said');
+  const empty = { fields: 0, filled: [], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  context.renderReport([empty], { tabId: 1, page: 'AddVehicle', leftOut: true });
+  assert.equal(context.state.reportFor.empty, undefined, 'not offered as done');
+  assert.match(context.state.reportFor.notice, /^Part of this page wasn’t filled. /);
+  context.renderReport([empty], { tabId: 1, page: 'AddVehicle' });
+  assert.equal(context.state.reportFor.empty, true);
+});
+
 // React PR (notes and cards, 2026-11-01): a fill that stopped short is said above the report's list, in
 // red and at once when the page or the panel stopped it ("Filling stopped", with its reason: a review
 // signal), quietly when the agent pressed Stop; a page continued says it is done. Drawn by
@@ -948,7 +967,7 @@ test('fill report says Continue wasn\'t clicked when something was open over it'
   assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }]), ['Lookup VIN wasn’t clicked']);
   assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }, { ...frame, covered: true }]), ['Lookup VIN and Continue weren’t clicked']);
   // A follow-up fill shows its report for it, as for a page held for the agent's check.
-  assert.match(extractFunction('autoFill'), /const covered = frames\.some\(\(f\) => f\.covered \|\| f\.coveredHelpers\?\.length\);[\s\S]{0,1500}const rendered = current && \([^)]*\bcovered\b[^)]*\);[\s\S]{0,120}if \(current && \(newStep \|\| unseen \|\| held \|\| covered\)\) showFinish/);
+  assert.match(extractFunction('autoFill'), /const covered = frames\.some\(\(f\) => f\.covered \|\| f\.coveredHelpers\?\.length\);[\s\S]{0,1500}const rendered = current && \([^)]*\bcovered\b[^)]*\);[\s\S]{0,120}if \(current && \(newStep \|\| unseen \|\| held \|\| covered \|\| leftOut\)\) showFinish/);
 });
 
 test('each item left for the agent has a labelled Mark done bound to its field and page', () => {
@@ -4781,7 +4800,7 @@ test('after an intake is loaded, only a tab opened since may give its first page
 
 test('after Luna\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {
   const body = extractFunction('applyAi');
-  assert.match(body, /await tellRecorder\('resume', ctx\.tabId\);\s+state\.filling = false;[\s\S]{0,400}if \(dispatched && state\.tab\?\.id === ctx\.tabId\) scheduleLayout\(ctx\.page, 'changed'\);/);
+  assert.match(body, /await tellRecorder\('resume', ctx\.tabId\);\s+if \(held\(\)\) \{ state\.fillingLock = null; state\.filling = false; \}[\s\S]{0,400}if \(dispatched && state\.tab\?\.id === ctx\.tabId\) scheduleLayout\(ctx\.page, 'changed'\);/);
 });
 
 test('a queued page-change capture waits again when a fill starts before it reads the page', async () => {
@@ -6205,7 +6224,7 @@ test('helper records are listed by key, without reading the stored values where 
 test('a recorder already in the page is told to resume, unless a fill or AI apply is under way', async () => {
   const sent = [];
   const state = { intake: {}, tab: { id: 4, carrier: { id: 'progressive' } }, filling: false };
-  const context = { state, inExtension: true, chrome: { scripting: { executeScript: async () => {} } }, tellRecorder: async (cmd, tabId) => sent.push([cmd, tabId]) };
+  const context = { state, inExtension: true, framesReady: async () => null, chrome: { scripting: { executeScript: async () => {} } }, tellRecorder: async (cmd, tabId) => sent.push([cmd, tabId]) };
   vm.runInNewContext(extractFunction('ensureRecorder'), context);
   await context.ensureRecorder();
   assert.deepEqual(sent, [['resume', 4]]);
@@ -7021,7 +7040,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,700}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\) \|\| results\.some\(\(r\) => r\.frameId === 0 && r\.result == null\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
   // (runPendingPage then runs from every end of a fill, whichever tab is in front: FLOW-07.)
-  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,700}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n[^\n]*\n\s+resumeHeldFill\(\);\n\s+\}/);
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,1300}if \(moved && fillCurrent\(ctx\) && stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);\n[^\n]*\n\s+resumeHeldFill\(\);\n\s+\}/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
@@ -7274,8 +7293,8 @@ test('after a hold lifts, the page whose opening fill it held fills as on openin
   // Tried as each thing that goes in ends: a fill, an automatic one, a pick from a row, an AI answer.
   assert.match(fillPage, /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?resumeHeldFill\(\);\n\s*\}/);
   assert.match(extractFunction('autoFill'), /\} finally \{[\s\S]*?state\.filling = false;[\s\S]*?resumeHeldFill\(\);\n\s*\}/);
-  assert.match(extractFunction('agentAnswer'), /state\.filling = false;\n\s*if \(button\) button\.disabled = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
-  assert.match(extractFunction('applyAi'), /state\.filling = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
+  assert.match(extractFunction('agentAnswer'), /state\.filling = false; \}\n\s*if \(button\) button\.disabled = false;\n[^\n]*\n\s*resumeHeldFill\(\);/);
+  assert.match(extractFunction('applyAi'), /state\.filling = false; \}\n[^\n]*\n\s*resumeHeldFill\(\);/);
 });
 
 // #414 review: AmWINS' next step opens at the same address (new_fields -> scheduleAutoFill ->
@@ -10324,6 +10343,7 @@ test('runKit puts the kit only into frames that lack this build, and calls again
       });
     } } },
   };
+  context.framesReady = async () => null;
   vm.createContext(context);
   const declared = (re) => SIDEPANEL.match(re)?.[0] ?? '';
   vm.runInContext(`${declared(/const kitIn = .*;/)}\n${declared(/const kitBuild = .*;/)}\n${['injectKit', 'runKit'].map(extractFunction).join('\n')}`, context);
@@ -10381,7 +10401,7 @@ test('the developer recording\'s trace is injected with the recorder, into the r
   // The carrier's page adapter goes in first.
   const geico = { id: 'geico', pageAdapter: 'src/content/carriers/geico.js' };
   const state = { intake: {}, tab: { id: 4, carrier: geico }, filling: false, recording: null };
-  const context = { state, inExtension: true, tellRecorder: async () => {},
+  const context = { state, inExtension: true, tellRecorder: async () => {}, framesReady: async () => null,
     chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, files.map((f) => f.split('/').pop())]); } } } };
   vm.runInNewContext(extractFunction('ensureRecorder'), context);
   await context.ensureRecorder();
@@ -10539,7 +10559,7 @@ test('loading another client\'s intake stops and saves the recording, redacted w
 // intake's answers for the rest of its rounds. Now the fill, on any tab, gets Stop's stop first and
 // is waited for, with no fill starting meanwhile (`resetting`), before the intake changes.
 function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
-  const seen = { stops: [], order: [] };
+  const seen = { stops: [], order: [], logged: [] };
   const intakeA = { record: { garaging: { state: 'TX' }, drivers: [], vehicles: [], trailers: [], applicant: { name: 'A' } }, done: [], agentEdited: [], warnings: [] };
   let session = { id: 's1', intakeId: 'a' };
   // A fill on tab 9 while the panel shows tab 4: it ends a little after its stop reaches the page.
@@ -10549,7 +10569,8 @@ function intakeChangeHarness({ fillEndMs = 15000 } = {}) {
   const context = { state, Date, Promise, setTimeout: (fn, ms) => setTimeout(fn, Math.min(ms, 5)), clearTimeout, FILL_END_MS: fillEndMs, doneRestored: new Set(),
     DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
     aiPendingStore: { get: async () => [], set: async () => {} },
-    usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: 's2', intakeId }), restoreSession: (s) => { session = s; }, log: (e) => seen.order.push([e.type, state.resetting]) },
+    usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: 's2', intakeId }), restoreSession: (s) => { session = s; }, log: (e) => { seen.order.push([e.type, state.resetting]); seen.logged.push(e); } },
+    pageOf: () => '/quote',
     $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, forgetPdf: async () => {},
     readIntake: () => ({ record: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] }, warnings: [] }), intakeSummary: async () => ({ intakeId: 'b' }),
     store: { set: async () => {}, remove: async () => {} }, pruneAgentRecords: async () => [], clearAgentKeys: async () => {}, testIntakes: { get: async () => [] }, logSettings: async () => {},
@@ -10753,20 +10774,344 @@ test('a fill that only gets its tab\'s word while the intake waits is stopped th
   setTimeout(() => { t.state.fillingFor = fill; }, 10);
   await t.context.loadFile({ name: 'next-client.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
   assert.deepEqual(JSON.parse(JSON.stringify(t.seen.stops)), [[9, ['run-1'], true, true]]);
-  // A fill that doesn't end: the intake changes after FILL_END_MS, and its late results are dropped
-  // as stale (staleFill: the intake it filled from isn't the panel's).
+  // A fill that doesn't end: the intake changes after FILL_END_MS, abandons the stuck fill lock so
+  // Clear / Change file / adding a new intake are never blocked behind it, and late results are
+  // dropped as stale (staleFill: the intake it filled from isn't the panel's).
   t = intakeChangeHarness({ fillEndMs: 40 });
   t.context.chrome.scripting.executeScript = async (spec) => { t.seen.stops.push(spec.target.tabId); return []; };
   await t.context.clearClient();
   assert.deepEqual(t.seen.stops, [9], 'stopped once');
   assert.equal(t.state.intake, null);
-  assert.equal(t.state.filling, true, 'still running, now stale');
+  assert.equal(t.state.filling, false, 'abandoned stuck fill releases panel lock');
+  assert.equal(t.state.fillingFor, null);
+  assert.equal(t.state.fillingLock, null, 'and its holder has it no more, so it lets go of nothing as it ends');
+  // Said in the usage log as it happens, with the fill's run: the fill may never end to say it.
+  assert.deepEqual(JSON.parse(JSON.stringify(t.seen.logged.filter((e) => e.type === 'fill_error'))),
+    [{ type: 'fill_error', carrier: 'progressive', page: '/quote', run: 'run-1', error: 'let go: fill still going 40 ms after Stop and an intake change' }]);
+  // With the calls that gave up on a frame of its tab, and nothing logged on a practice page.
+  t = intakeChangeHarness({ fillEndMs: 40 });
+  t.context.chrome.scripting.executeScript = async () => [];
+  t.state.fillingKind = 'fill';
+  t.state.frameTimeouts = new Map([[9, new Set(['kit check', 'stop'])], [4, new Set(['recorder injection'])]]);
+  await t.context.clearClient();
+  assert.deepEqual(t.seen.logged.filter((e) => e.type === 'fill_error').map((e) => e.error), ['let go: fill still going 40 ms after Stop and an intake change (frame timeout: kit check, stop)']);
+  assert.deepEqual([...t.state.frameTimeouts.keys()], [4], 'the other tab\'s wait for its own fill');
+  t = intakeChangeHarness({ fillEndMs: 40 });
+  t.context.chrome.scripting.executeScript = async () => [];
+  t.state.fillingFor = { ...t.state.fillingFor, carrier: { id: 'amwins', practice: true } };
+  await t.context.clearClient();
+  assert.deepEqual(t.seen.logged.filter((e) => e.type === 'fill_error'), []);
   assert.equal(t.state.resetting, false);
   // A bad file stops nothing: the intake doesn't change.
   t = intakeChangeHarness();
   await t.context.loadFile({ name: 'notes.txt', type: 'text/plain', arrayBuffer: async () => new ArrayBuffer(1) }).catch(() => {});
   assert.deepEqual(t.seen.stops, []);
   assert.equal(t.state.intake, t.intakeA);
+});
+
+test('runKit and ensureRecorder fall back to the top frame when allFrames hangs, and Stop unwinds a wedged fill', async () => {
+  // 1. ensureRecorder falls back to frameIds: [0] when allFrames: true times out.
+  const recTargets = [];
+  // What gave up on a frame, for the usage log (noteFrameTimeout).
+  const noted = [];
+  const recContext = {
+    state: { intake: {}, tab: { id: 4, carrier: { id: 'amwins' } }, filling: true, recording: null },
+    inExtension: true,
+    tellRecorder: async () => {},
+    // Every frame read as loaded (framesReady has its own test, below): one stops answering after.
+    framesReady: async () => null,
+    noteFrameTimeout: (tabId, what) => { noted.push([tabId, what]); },
+    Promise,
+    setTimeout: (fn) => setTimeout(fn, 5),
+    clearTimeout,
+    chrome: {
+      scripting: {
+        executeScript: ({ target }) => {
+          recTargets.push(target);
+          if (target.allFrames) return new Promise(() => {});
+          return Promise.resolve([{ frameId: 0 }]);
+        },
+      },
+    },
+  };
+  vm.runInNewContext(extractFunction('ensureRecorder'), recContext);
+  await recContext.ensureRecorder();
+  assert.deepEqual(JSON.parse(JSON.stringify(recTargets)), [{ tabId: 4, allFrames: true }, { tabId: 4, frameIds: [0] }]);
+  assert.deepEqual(noted, [[4, 'recorder injection']]);
+  // A pause or resume the page doesn't answer in time is noted too, and one it answers isn't.
+  const tellContext = { state: { tab: { id: 4 } }, Promise, setTimeout: (fn) => setTimeout(fn, 5), clearTimeout, noteFrameTimeout: recContext.noteFrameTimeout,
+    chrome: { tabs: { sendMessage: (tabId, msg) => (msg.cmd === 'pause' ? new Promise(() => {}) : Promise.resolve()) } } };
+  vm.runInNewContext(extractFunction('tellRecorder'), tellContext);
+  await tellContext.tellRecorder('pause');
+  await tellContext.tellRecorder('resume');
+  assert.deepEqual(noted.splice(0), [[4, 'recorder injection'], [4, 'recorder pause']]);
+
+  // 2. runKit falls back to frameIds: [0] when allFrames: true hangs on kitIn, and pressing Stop
+  //    unwinds a wedged executeScript fill call via the stop-grace timer.
+  const kitTargets = [];
+  const kitState = { fillingFor: { run: 'run-stuck', tabId: 4, carrier: { id: 'amwins' }, stopping: false } };
+  const stopBtn = { disabled: false };
+  const kitContext = {
+    state: kitState,
+    worldFor: () => 'ISOLATED',
+    kitIn: () => '99:b1',
+    kitBuild: { now: '99:b1' },
+    injectKit: async () => [{ frameId: 0, documentId: 'd0' }],
+    renderSteps() {},
+    $: () => stopBtn,
+    framesReady: async () => null,
+    noteFrameTimeout: recContext.noteFrameTimeout,
+    Promise,
+    Symbol,
+    setTimeout: (fn) => setTimeout(fn, 5),
+    clearTimeout,
+    chrome: {
+      scripting: {
+        executeScript: ({ target, func, args }) => {
+          kitTargets.push({ target, isStop: Array.isArray(args) && args[0] === 'run-stuck' });
+          if (target.allFrames && func === kitContext.kitIn) return new Promise(() => {});
+          if (func === kitContext.kitIn) return Promise.resolve([{ frameId: 0, documentId: 'd0', result: '99:b1' }]);
+          if (Array.isArray(args) && args[0] === 'run-stuck') return new Promise(() => {});
+          // Wedged fill call that never resolves on its own.
+          return new Promise(() => {});
+        },
+      },
+    },
+  };
+  vm.runInNewContext(['runKit', 'stopFill'].map(extractFunction).join('\n'), kitContext);
+  const runPromise = kitContext.runKit(4, { id: 'amwins' }, (p, o) => globalThis.__raterKit?.fill(p, o), [[], { run: 'run-stuck' }]);
+  // Let kitIn fallback complete and fill exec start, then click Stop.
+  await new Promise((r) => setTimeout(r, 25));
+  // No report is made up for the call that never came back: it rejects as a Stop left unanswered.
+  const unanswered = assert.rejects(runPromise, (e) => e.stopUnanswered === true && /^stop unanswered: /.test(e.message));
+  await kitContext.stopFill();
+  await unanswered;
+  assert.deepEqual(noted, [[4, 'kit check'], [4, 'stop']]);
+  assert.ok(kitTargets.some((x) => x.target.allFrames === true) && kitTargets.some((x) => Array.isArray(x.target.frameIds) && x.target.frameIds[0] === 0));
+  assert.equal(stopBtn.disabled, true);
+});
+
+// Review of #596: what runKit returns says when a frame was left out of the call, for the report.
+test('runKit says on its results when a frame of the page was left out', async () => {
+  let ready = null;
+  const context = { state: {}, worldFor: () => 'ISOLATED', kitIn: () => 'k', kitBuild: { now: 'k' }, injectKit: async () => [], framesReady: async () => ready,
+    noteFrameTimeout() {}, Promise, Symbol, setTimeout, clearTimeout,
+    chrome: { scripting: { executeScript: async ({ target }) => (target.frameIds ?? [0, 5]).map((id) => ({ frameId: id, documentId: `d${id}`, result: 'k' })) } } };
+  vm.runInNewContext(extractFunction('runKit'), context);
+  assert.equal((await context.runKit(1, { id: 'amwins' }, () => 1)).leftOut, undefined, 'every frame called');
+  ready = [0];
+  const results = await context.runKit(1, { id: 'amwins' }, () => 1);
+  assert.deepEqual([results.map((r) => r.frameId), results.leftOut], [[0], true]);
+  assert.equal((await context.runKit(1, { id: 'amwins' }, () => 1, [], [0])).leftOut, undefined, 'the caller named the frames');
+});
+
+// Real Chromium, 2026-11-22: a call made in every frame comes back only once each frame's document
+// has loaded, so an iframe whose page never answered held every fill, Stop and Clear, and with the
+// calls bounded each one still waited four seconds and then went into the top frame alone. A read
+// made at once says which frames may not have loaded; each of those is asked by itself, once, and one
+// that doesn't answer is left out of the calls until it does.
+test('the frames a call is made in leave out one whose document never loads, until it does', async () => {
+  const noted = [];
+  const asked = [];
+  // The panel told that a frame left out answered after all.
+  const late = [];
+  let frames = [];
+  // The frames' own calls still unanswered, by frame.
+  const pending = new Map();
+  const context = {
+    Promise, readyDocs: new Set(), stuckDocs: new Set(), FRAME_READY_MS: 40, setTimeout, clearTimeout, frameLate: (tabId) => { late.push(tabId); },
+    noteFrameTimeout: (tabId, what) => { noted.push([tabId, what]); },
+    chrome: { scripting: { executeScript: ({ target, injectImmediately, func }) => {
+      if (injectImmediately) {
+        assert.equal(target.allFrames, true, 'the read is made in every frame, at once');
+        return Promise.resolve(frames.map((f) => { context.document = { readyState: f.loading ? 'loading' : 'complete' }; context.location = { href: f.blank ? 'about:blank' : 'https://carrier.test/' };
+          try { return { frameId: f.id, documentId: f.doc, result: func() }; } finally { delete context.document; delete context.location; } }));
+      }
+      const [id] = target.frameIds;
+      asked.push(id);
+      const f = frames.find((x) => x.id === id);
+      if (!f.never) return Promise.resolve([{ frameId: id, result: true }]);
+      return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); });
+    } } },
+  };
+  vm.runInNewContext(extractFunction('framesReady'), context);
+  // Every frame loaded: all are called as one, and none is asked by itself.
+  frames = [{ id: 0, doc: 'd0' }, { id: 3, doc: 'd3' }];
+  assert.equal(await context.framesReady(1), null);
+  assert.deepEqual(asked, []);
+  // A frame still on its first, empty document whose page never answers (5), one still loading that
+  // never ends (6), an empty one that is just empty (7) and one loading that answers (8).
+  frames = [{ id: 0, doc: 'd0', loading: true }, { id: 3, doc: 'd3' }, { id: 5, doc: 'd5', blank: true, never: true }, { id: 6, doc: 'd6', loading: true, never: true },
+    { id: 7, doc: 'd7', blank: true }, { id: 8, doc: 'd8', loading: true }];
+  assert.deepEqual([...await context.framesReady(1)], [0, 3, 7, 8], 'the top frame is never left out');
+  assert.deepEqual(asked.splice(0), [5, 6, 7, 8], 'only the frames that may not have loaded are asked, and never the top one');
+  assert.deepEqual(noted.splice(0), [[1, 'frame not ready'], [1, 'frame not ready']]);
+  // From then on neither is waited for, nor asked again, and the ones that answered aren't either.
+  const before = Date.now();
+  assert.deepEqual([...await context.framesReady(1)], [0, 3, 7, 8]);
+  assert.ok(Date.now() - before < 10, 'no wait');
+  assert.deepEqual([asked.splice(0), noted], [[], []]);
+  // The empty frame's page came in the end: its own call comes back, and it is called again.
+  assert.deepEqual(late, [], 'a frame that answered in time is no news');
+  pending.get(5).resolve([{ frameId: 5, result: true }]);
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.deepEqual(late, [1], 'the panel is told, so the recorder goes into it');
+  assert.deepEqual([...await context.framesReady(1)], [0, 3, 5, 7, 8]);
+  // A frame that went (its call rejects) isn't remembered as stuck: another document there is asked anew.
+  pending.get(6).reject(new Error('Frame with ID 6 was removed.'));
+  await new Promise((resolve) => { setImmediate(resolve); });
+  assert.equal(context.stuckDocs.size, 0);
+  assert.deepEqual(late, [1], 'and a frame that went is no news');
+  // An empty frame is waited for as long as a loading one: its page may only be slow.
+  assert.doesNotMatch(extractFunction('framesReady'), /BLANK/);
+  // No page to ask (a tab gone, a page the extension can't script): the call itself says so.
+  context.chrome.scripting.executeScript = () => Promise.reject(new Error('No tab with id: 1'));
+  assert.equal(await context.framesReady(1), null);
+  // The calls made in every frame take those frames; a caller's own frames are its own.
+  assert.match(extractFunction('runKit'), /let loaded = frameIds \? null : await framesReady\(tabId\);\s+let target = \{ tabId, \.\.\.\(frameIds \? \{ frameIds \} : loaded \? \{ frameIds: loaded \} : \{ allFrames: true \}\) \};/);
+  assert.match(extractFunction('ensureRecorder'), /let ready = await framesReady\(tabId\);\s+try \{\s+await inject\(ready \? \{ tabId, frameIds: ready \} : \{ tabId, allFrames: true \}\);/);
+  // A frame named in a call went meanwhile: Chrome refuses the whole call (real Chromium, 2026-11-22:
+  // "No frame with id 6 in tab with id …", where a call in every frame has one frame less), so the
+  // frames are read again, once, and the call made in those.
+  const calls = [];
+  let lists = [[0, 5, 6], [0, 5]];
+  const kit = {
+    state: {}, worldFor: () => 'ISOLATED', kitIn: () => '99:b1', kitBuild: { now: '99:b1' }, injectKit: async () => [], noteFrameTimeout() {}, Promise, setTimeout, clearTimeout,
+    framesReady: async () => lists.shift() ?? null,
+    chrome: { scripting: { executeScript: ({ target, func }) => {
+      calls.push([func === kit.kitIn ? 'check' : 'call', [...target.frameIds ?? ['all']]]);
+      if (target.frameIds?.includes(6)) return Promise.reject(new Error('No frame with id 6 in tab with id 4'));
+      return Promise.resolve((target.frameIds ?? [0]).map((id) => ({ frameId: id, documentId: `d${id}`, result: func === kit.kitIn ? '99:b1' : 'done' })));
+    } } },
+  };
+  vm.runInNewContext(extractFunction('runKit'), kit);
+  assert.deepEqual((await kit.runKit(4, {}, () => 'done')).map((r) => r.frameId), [0, 5]);
+  assert.deepEqual(calls.splice(0), [['check', [0, 5, 6]], ['check', [0, 5]], ['call', [0, 5]]]);
+  // And where it went between the check and the call itself.
+  lists = [[0, 5], [0]];
+  kit.chrome.scripting.executeScript = ({ target, func }) => {
+    calls.push([func === kit.kitIn ? 'check' : 'call', [...target.frameIds]]);
+    if (func !== kit.kitIn && target.frameIds.includes(5)) return Promise.reject(new Error('No frame with id 5 in tab with id 4'));
+    return Promise.resolve(target.frameIds.map((id) => ({ frameId: id, documentId: `d${id}`, result: func === kit.kitIn ? '99:b1' : 'done' })));
+  };
+  assert.deepEqual((await kit.runKit(4, {}, () => 'done')).map((r) => r.frameId), [0]);
+  assert.deepEqual(calls.splice(0), [['check', [0, 5]], ['call', [0, 5]], ['call', [0]]]);
+  // A caller's own frames aren't read again: its error is its own.
+  await assert.rejects(kit.runKit(4, {}, () => 'done', [], [5]), /No frame with id 5/);
+  // The recorder's injection, the same.
+  const targets = [];
+  lists = [[0, 6], null];
+  const rec = { state: { intake: {}, tab: { id: 4, carrier: { id: 'amwins' } }, filling: true, recording: null }, inExtension: true, tellRecorder: async () => {}, noteFrameTimeout() {}, Promise, setTimeout, clearTimeout,
+    framesReady: async () => lists.shift(),
+    chrome: { scripting: { executeScript: ({ target }) => { targets.push(target.frameIds ? [...target.frameIds] : 'all'); return target.frameIds?.includes(6) ? Promise.reject(new Error('No frame with id 6 in tab with id 4')) : Promise.resolve([]); } } } };
+  vm.runInNewContext(extractFunction('ensureRecorder'), rec);
+  await rec.ensureRecorder();
+  assert.deepEqual(targets, [[0, 6], 'all']);
+  // Stop and the fill's progress go in at once, which waits on no frame.
+  assert.match(extractFunction('stopFill'), /executeScript\(\{ target, world: worldFor\(f\.carrier\), injectImmediately: true,/);
+  assert.match(extractFunction('watchFill'), /allFrames: true \}, world: worldFor\(ctx\.carrier\), injectImmediately: true,\s+func: \(s\) => globalThis\.__raterKit\?\.progress/);
+});
+
+// A Stop the page never answered (runKit's rejection above) ends the fill as one that failed. It was
+// handed on as a kit report of no fields, so the fill went through a finished fill's bookkeeping (the
+// tab's layouts may be taken, its quote bound to the intake, the page one that fills by itself), and
+// the usage log held an ordinary stopped run in place of the call that never returned.
+test('a Stop the page never answers ends the fill as a failed one, with no report made up for it', async () => {
+  for (const auto of [false, true]) {
+    const which = auto ? 'a follow-up' : 'a fill the agent asked for';
+    const t = fillHarness();
+    if (auto) t.state.autoPages.add('/quote-A');
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    t.reject(Object.assign(new Error('stop unanswered: the fill’s call did not return within 3 s of Stop'), { stopUnanswered: true }));
+    await run;
+    assert.equal(t.seen.rendered, 0, `${which}: no report`);
+    assert.equal(t.state.layoutReadyTabs.size, 0, `${which}: the fill didn't go through`);
+    if (!auto) assert.equal(t.state.autoPages.size, 0, `${which}: the page isn't one that fills by itself`);
+    assert.deepEqual(t.seen.afterFill, [], which);
+    assert.match(t.seen.problems.at(-1).text, /^You stopped the fill, but the page didn’t answer: it may hold some of the answers\. Check it, then fill again\.$/, which);
+    assert.deepEqual(t.seen.logged.filter((e) => e.type === 'fill_error').map((e) => e.error), ['stop unanswered: the fill’s call did not return within 3 s of Stop'], which);
+    assert.equal(t.seen.logged.some((e) => e.type === 'fill_run'), false, `${which}: not logged as a run`);
+    assert.equal(t.state.tabSessions.get(7)?.autoPaused ?? t.state.autoPaused, true, `${which}: automatic filling pauses`);
+    assert.equal(t.state.filling, false, which);
+  }
+});
+
+// `filling` let go of by an intake change (stopFillFirst) may be held by something else when the fill
+// it was taken from ends, much later (a wedged call rejects as its page reloads). That fill's
+// `finally` let go of it again whenever no fill was named (`fillingFor`, which a fill names only
+// after its first waits and an AI apply or a row pick never does) and resumed the recorder under
+// what was writing.
+test('a fill an intake change let go of leaves the next holder\'s lock and the recorder alone as it ends', async () => {
+  for (const auto of [false, true]) {
+    const which = auto ? 'a follow-up' : 'a fill the agent asked for';
+    const t = fillHarness();
+    const told = [];
+    t.context.tellRecorder = async (what) => { told.push(what); };
+    if (auto) t.state.autoPages.add('/quote-A');
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    assert.equal(typeof t.state.fillingLock, 'string', `${which}: holds the lock by its run`);
+    // stopFillFirst let go of it, and an AI apply took it since.
+    Object.assign(t.state, { filling: false, fillingLock: null, fillingFor: null });
+    Object.assign(t.state, { filling: true, fillingLock: 'ai-apply' });
+    told.length = 0;
+    t.reject(new Error('Frame was removed'));
+    await run;
+    assert.equal(t.state.filling, true, `${which}: the apply still holds it`);
+    assert.equal(t.state.fillingLock, 'ai-apply', which);
+    assert.deepEqual(told, [], `${which}: the recorder stays paused under the apply`);
+    // With nothing holding it since, the fill still resumes the recorder it paused.
+    const u = fillHarness();
+    u.context.tellRecorder = async (what) => { told.push(what); };
+    if (auto) u.state.autoPages.add('/quote-A');
+    const left = auto ? u.context.autoFill('/quote-A') : u.context.fillPage();
+    await u.started;
+    Object.assign(u.state, { filling: false, fillingLock: null, fillingFor: null });
+    told.length = 0;
+    u.reject(new Error('Frame was removed'));
+    await left;
+    assert.deepEqual(told, ['resume'], which);
+    assert.equal(u.state.filling, false, which);
+  }
+  // Everything that takes `filling` lets go of it only while it still holds it.
+  for (const name of ['fillPage', 'autoFill', 'agentAnswer', 'applyAi']) {
+    const body = extractFunction(name);
+    assert.match(body, /^\s*state\.fillingLock = (?:ctx\.run|token|guardToken);$/m, `${name}: takes the lock by its own id`);
+    assert.match(body, /if \(held\(\) \|\| !state\.filling\) await tellRecorder\('resume', [\w.]+\);\n(?:[\s\S]{0,400}?\n)?\s+if \(held\(\)\) \{ state\.fillingLock = null; state\.filling = false; \}/, name);
+    assert.doesNotMatch(body, /^\s*state\.filling = false;/m, `${name}: never lets go of another's`);
+  }
+});
+
+// A call that gave up on a frame went on in the top frame alone, and nothing said so: a fill that took
+// four seconds longer, or left a frame's questions unread, looked like any other in the usage log.
+// Each fill logs what gave up on its tab since the last one, once, as a fill_error with its run.
+test('a fill logs the calls that gave up on a frame of its tab, once, with its run', async () => {
+  for (const auto of [false, true]) {
+    const which = auto ? 'a follow-up' : 'a fill the agent asked for';
+    const t = fillHarness();
+    if (auto) t.state.autoPages.add('/quote-A');
+    t.state.frameTimeouts = new Map([[7, new Set(['recorder injection', 'kit check'])], [8, new Set(['stop'])]]);
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    // A follow-up that answers nothing logs no run of its own: what gave up is logged all the same.
+    const quiet = [{ frameId: 0, result: { ...t.results[0].result, filled: [], actions: [] } }];
+    t.release(auto ? quiet : t.results);
+    await run;
+    const errors = t.seen.logged.filter((e) => e.type === 'fill_error');
+    assert.deepEqual(errors.map((e) => e.error), ['frame timeout: recorder injection, kit check'], which);
+    if (auto) assert.match(errors[0].run, /^[0-9a-f-]{36}$/, which);
+    else assert.equal(errors[0].run, t.seen.logged.find((e) => e.type === 'fill_run').run, `${which}: the fill's own run`);
+    assert.deepEqual([...t.state.frameTimeouts.keys()], [8], `${which}: another tab's wait for its own fill`);
+    // Nothing gave up since: the next fill logs none.
+    const u = fillHarness();
+    if (auto) u.state.autoPages.add('/quote-A');
+    const next = auto ? u.context.autoFill('/quote-A') : u.context.fillPage();
+    await u.started;
+    u.release(auto ? quiet : u.results);
+    await next;
+    assert.deepEqual(u.seen.logged.filter((e) => e.type === 'fill_error'), [], which);
+  }
 });
 
 // An intake correction while a fill runs doesn't stop it: the fill goes on with the answers it
@@ -13186,7 +13531,7 @@ test('wire() connects tabs.onRemoved, pagehide and visibilitychange to flushPend
     fillPage: noop, stopFill: noop, showNextNeed: noop, lookRight: noop, pageOf: noop, dismissState: noop,
     captureFromShortcut: noop, noteCaptured: noop, toggleRecording: noop, onTraceMessage: noop,
     recordedTabUpdated: noop, recordedTabRemoved: noop, renderUnfinished: noop, wireUsage: noop, noteStep: noop,
-    onRecorderMessage: noop, noteLiveItems: noop, onPanelMessage: noop, refreshTab: noop, onTabUpdated: noop,
+    onRecorderMessage: noop, noteLiveItems: noop, onPanelMessage: noop, refreshTab: noop, onTabUpdated: noop, whenFrameLate: noop, ensureRecorder: noop,
     startRecording: noop, noteRecording: noop, stopRecording: noop, recoverRecording: noop, discardUnfinished: noop,
   };
   vm.runInNewContext(`${extractFunction('wire')}\nwire();`, wireCtx);

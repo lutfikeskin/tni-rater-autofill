@@ -14,7 +14,7 @@ import { notePremium, premiumHere } from '../../src/premium.js';
 import { isStandard } from '../../src/resolution.js';
 import * as usage from '../usage-log.js';
 import { inExtension, popped } from './env.js';
-import { $, forgetKeptReports, keepJournal, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn } from './core.js';
+import { $, forgetKeptReports, keepJournal, noteFrameTimeout, persistAgentKeys, persistDoneActions, persistUnitForms, retireAiOrigins, state, store, switchOn } from './core.js';
 import { firstUnits, save } from './intake.js';
 import { checkShown, renderPickers, renderWarnings, showScreen } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -22,7 +22,7 @@ import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pick
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
 import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
-import { fillCurrent, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
+import { fillCurrent, fillErrorMessage, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
 import { DOCK_PHASES, QUIET_MS, fillShown, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
 import { leftOf, listCounts } from './report-rows.js';
@@ -250,7 +250,9 @@ function watchFill(ctx) {
     let frames;
     try {
       const seen = Object.fromEntries([...[...lists].map(([list, rows]) => [list, rows.length]), ...[...judged].map(([frame, x]) => [`items@${frame}`, x.at])]);
-      frames = await chrome.scripting.executeScript({ target: { tabId: ctx.tabId, allFrames: true }, world: worldFor(ctx.carrier),
+      // At once (`injectImmediately`): a frame still loading holds no call of Chrome's then (framesReady),
+      // so the list goes on while one never loads, and only a page whose scripts are held is unanswered.
+      frames = await chrome.scripting.executeScript({ target: { tabId: ctx.tabId, allFrames: true }, world: worldFor(ctx.carrier), injectImmediately: true,
         func: (s) => globalThis.__raterKit?.progress?.(s) ?? null, args: [seen] });
     } catch { return; /* the page is navigating */ } finally { reading = null; }
     const f = state.fillingFor;
@@ -296,10 +298,23 @@ async function stopFill() {
   state.fillingFor = { ...f, stopping: true };
   /** @type {*} */ ($('fill-stop')).disabled = true;
   renderSteps();
+  f.onStop?.();
+  // At once (`injectImmediately`), so Stop reaches every frame while one is still loading (framesReady).
+  const send = (target) => chrome.scripting.executeScript({ target, world: worldFor(f.carrier), injectImmediately: true,
+    func: (run) => globalThis.__raterKit?.stop?.(run) ?? false, args: [f.run] });
   try {
     // With the fill's run id: a fill that hasn't begun in a frame yet halts as it starts there.
-    await chrome.scripting.executeScript({ target: { tabId: f.tabId, allFrames: true }, world: worldFor(f.carrier),
-      func: (run) => globalThis.__raterKit?.stop?.(run) ?? false, args: [f.run] });
+    // Bounded so a stuck child frame never prevents Stop from unwinding the panel.
+    if (typeof setTimeout === 'function') {
+      let timer;
+      const timed = new Promise((resolve) => { timer = setTimeout(() => resolve('timeout'), 2000); });
+      const res = await Promise.race([send({ tabId: f.tabId, allFrames: true }), timed]);
+      clearTimeout(timer);
+      if (res === 'timeout') noteFrameTimeout(f.tabId, 'stop');
+      if (res === 'timeout') await Promise.race([send({ tabId: f.tabId, frameIds: [0] }), new Promise((r) => setTimeout(r, 1000))]).catch(() => {});
+    } else {
+      await send({ tabId: f.tabId, allFrames: true });
+    }
   } catch { /* the page is navigating: the fill ends anyway */ }
 }
 
@@ -308,13 +323,34 @@ async function stopFill() {
 // is filled or clicked), and waited for, up to FILL_END_MS, as a panel giving way does (giveWay), so
 // none of the earlier intake's answers go in after the agent moved on. Its results come back for the
 // intake it filled from. A fill that only gets its tab's word (`fillingFor`) while this waits is
-// stopped then. One still running after the wait is dropped as stale when it ends (staleFill). The
-// caller holds `resetting`, so no fill starts meanwhile.
-const FILL_END_MS = 15000;
+// stopped then. One still stuck after the wait is abandoned (`filling = false`) so Clear, Change
+// file, and loading a new intake are never blocked behind a dead fill; its late results are still
+// dropped as stale (staleFill). The caller holds `resetting`, so no fill starts meanwhile.
+const FILL_END_MS = 4000;
 async function stopFillFirst() {
+  if (state.filling) state.clientNote = 'Stopping the fill\u2026';
   for (const end = Date.now() + FILL_END_MS; state.filling && Date.now() < end;) {
     if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
     await new Promise((r) => setTimeout(r, 100));
+  }
+  if (state.filling) {
+    // Said in the usage log as it happens, with its fill's run and the calls that gave up on a frame
+    // of its tab (noteFrameTimeout): the fill let go of may never end, and one that does ends as any
+    // stale fill.
+    const f = state.fillingFor;
+    const carrier = f?.carrier ?? state.tab?.carrier;
+    const tabId = f?.tabId ?? state.tab?.id;
+    const gaveUp = state.frameTimeouts?.get(tabId);
+    if (gaveUp?.size) state.frameTimeouts.delete(tabId);
+    if (carrier && !carrier.practice) {
+      usage.log({ type: 'fill_error', carrier: carrier.id, page: f?.page ?? pageOf(state.tab?.url), ...(f?.run ? { run: f.run } : {}),
+        error: `let go: ${state.fillingKind ?? 'fill'} still going ${FILL_END_MS} ms after ${f?.stopping ? 'Stop and ' : ''}an intake change${gaveUp?.size ? ` (frame timeout: ${[...gaveUp].join(', ')})` : ''}` });
+    }
+    // Let go of for its holder (`fillingLock`), which lets go of nothing when it ends.
+    state.fillingLock = null;
+    state.filling = false;
+    state.fillingFor = null;
+    if (typeof renderSteps === 'function') renderSteps();
   }
 }
 
@@ -425,6 +461,7 @@ async function autoFill(page) {
   // A fill the agent started while the list was read (Fill this page, Looks right) goes first;
   // this one follows it rather than running beside it.
   if (state.filling) { state.autoPending = true; if (drawn) state.autoDrawn = page; return; }
+  state.fillingLock = ctx.run;
   state.fillingKind = 'fill';
   state.filling = true;
   state.autoPending = false;
@@ -484,15 +521,17 @@ async function autoFill(page) {
     const covered = frames.some((f) => f.covered || f.coveredHelpers?.length);
     // Stopped by the agent: said as a stop, not as an error (as fillPage does).
     const stopped = state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted);
+    // A frame of the page left out of the fill (runKit `leftOut`): said in the report, as `covered`.
+    const leftOut = !!results.leftOut;
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
     const step = carrier.layoutSteps ? stepOfResults(carrier, results) : null;
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
-    const rendered = current && (newStep || unseen || held || covered || state.autoPaused || hasWarnings || state.assistPage === page);
-    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped }); assistFrames = frames; }
-    if (current && (newStep || unseen || held || covered)) showFinish({ auto: true });
+    const rendered = current && (newStep || unseen || held || covered || leftOut || state.autoPaused || hasWarnings || state.assistPage === page);
+    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped, leftOut }); assistFrames = frames; }
+    if (current && (newStep || unseen || held || covered || leftOut)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
     const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);
@@ -515,16 +554,23 @@ async function autoFill(page) {
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
-    // The message may quote the page, so it's redacted with the origin intake.
-    fillProblem(ctx, 'Automatic filling paused after an error. Check the page, then fill again.');
+    // The message may quote the page, so it's redacted with the origin intake. A Stop the page
+    // didn't answer is said as that (runKit).
+    fillProblem(ctx, e?.stopUnanswered ? fillErrorMessage(ctx, e) : 'Automatic filling paused after an error. Check the page, then fill again.');
     // Its timeline read before `finally` resumes the recorder or starts the next fill, which empties
     // the kit's ring (traceReset); a second at most (CodeRabbit on #431).
     logFillError(ctx, e, await fillTimeline(ctx));
   } finally {
     unwatch();
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
-    await tellRecorder('resume', tabId);
-    state.filling = false;
+    // Only while `filling` is still this fill's (as fillPage's `finally`: an intake change may have
+    // let go of it, stopFillFirst).
+    const held = () => state.fillingLock === ctx.run;
+    if (held() || !state.filling) await tellRecorder('resume', tabId);
+    // The calls that gave up on a frame of this tab (noteFrameTimeout), logged once with this fill's run.
+    const gaveUp = state.frameTimeouts?.get(tabId);
+    if (gaveUp?.size) { state.frameTimeouts.delete(tabId); logFillError(ctx, `frame timeout: ${[...gaveUp].join(', ')}`); }
+    if (held()) { state.fillingLock = null; state.filling = false; }
     keepJournal(tabId);
     renderSteps();
     // A follow-up asked for while this ran: this page's, or the tab's the agent moved to meanwhile (a

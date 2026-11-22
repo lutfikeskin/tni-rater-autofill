@@ -11,7 +11,7 @@ import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../.
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';
 import { inExtension, popped } from './env.js';
-import { $, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
+import { $, framesReady, traced, aiSnapshotFieldMatches, keepJournal, keepReport, memory, noteFrameTimeout, persistAgentKeys, persistAiPending, persistDoneActions, persistGuardedEdits, retireAiOrigins, state, switchOn } from './core.js';
 import { save } from './intake.js';
 import { renderPickers, showScreen } from './record.js';
 import { ensureRecorder, flushPendingTextChanges, pageOf, tellRecorder } from './usage.js';
@@ -80,21 +80,93 @@ const kitBuild = { now: /** @type {string | null} */ (null) };
 // moved on (fillPage, autoFill).
 async function runKit(tabId, carrier, func, args = [], frameIds) {
   const world = worldFor(carrier);
-  const target = { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) };
-  const held = await chrome.scripting.executeScript({ target, world, func: kitIn });
+  const timed = (p, ms) => (typeof setTimeout !== 'function' ? p : new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('kit timeout')), ms);
+    Promise.resolve(p).then((v) => { clearTimeout(t); resolve(v); }, (e) => { clearTimeout(t); reject(e); });
+  }));
+  // Every frame, less those whose document hasn't loaded and isn't waited for (framesReady).
+  let loaded = frameIds ? null : await framesReady(tabId);
+  let target = { tabId, ...(frameIds ? { frameIds } : loaded ? { frameIds: loaded } : { allFrames: true }) };
+  // Chrome refuses a call that names a frame its tab no longer has ("No frame with id"), before it
+  // runs anywhere, where one made in every frame just has one frame less. The frames named here
+  // (framesReady) are read again then, once.
+  const frameGone = (e) => !!loaded && /No frame with id/i.test(String(e?.message));
+  const reread = async () => { loaded = await framesReady(tabId); target = { tabId, ...(loaded ? { frameIds: loaded } : { allFrames: true }) }; };
+  let held;
+  try {
+    held = await timed(chrome.scripting.executeScript({ target, world, func: kitIn }), 4000).catch(async (e) => {
+      if (!frameGone(e)) throw e;
+      await reread();
+      return timed(chrome.scripting.executeScript({ target, world, func: kitIn }), 4000);
+    });
+  } catch (e) {
+    // A frame that stopped answering since it was read (framesReady) would hold the call for good:
+    // the top frame alone then, so the quote page still fills instead of staying on "Reading the page".
+    if (frameIds || e?.message !== 'kit timeout') throw e;
+    // Said in the usage log with the tab's next fill (noteFrameTimeout), as the injection's below.
+    noteFrameTimeout(tabId, 'kit check');
+    target = { tabId, frameIds: [0] };
+    held = await timed(chrome.scripting.executeScript({ target, world, func: kitIn }), 4000);
+  }
   const missing = held.filter((r) => kitBuild.now == null || r.result !== kitBuild.now).map((r) => r.frameId);
   // The documents known to hold this kit, by the id Chrome gives each.
   const ready = new Set(held.filter((r) => !missing.includes(r.frameId)).map((r) => r.documentId));
   if (missing.length) {
-    for (const r of await injectKit(tabId, carrier, missing)) ready.add(r.documentId);
-    if (kitBuild.now == null) kitBuild.now = (await chrome.scripting.executeScript({ target: { tabId, frameIds: missing }, world, func: kitIn })).find((r) => r.result)?.result ?? null;
+    let injected;
+    try {
+      injected = await timed(injectKit(tabId, carrier, missing), 4000);
+    } catch (e) {
+      if (frameIds || e?.message !== 'kit timeout' || !missing.includes(0)) throw e;
+      noteFrameTimeout(tabId, 'kit injection');
+      target = { tabId, frameIds: [0] };
+      injected = await timed(injectKit(tabId, carrier, [0]), 4000);
+    }
+    for (const r of injected) ready.add(r.documentId);
+    const checkFrames = 'frameIds' in target ? target.frameIds : missing;
+    if (kitBuild.now == null) kitBuild.now = (await timed(chrome.scripting.executeScript({ target: { tabId, frameIds: checkFrames }, world, func: kitIn }), 4000)).find((r) => r.result)?.result ?? null;
   }
-  const results = await chrome.scripting.executeScript({ target, world, func, args });
+  const exec = chrome.scripting.executeScript({ target, world, func, args }).catch(async (e) => {
+    if (!frameGone(e)) throw e;
+    await reread();
+    return chrome.scripting.executeScript({ target, world, func, args });
+  });
+  const runId = args?.[1]?.run;
+  const active = runId && typeof state !== 'undefined' && state.fillingFor?.run === runId ? state.fillingFor : null;
+  let results;
+  if (active && typeof setTimeout === 'function') {
+    const STOP_ABORT = Symbol('stop-abort');
+    let graceTimer;
+    const stopRace = new Promise((resolve) => {
+      const arm = () => { if (!graceTimer) graceTimer = setTimeout(() => resolve(STOP_ABORT), 3000); };
+      if (active.stopping) arm();
+      else {
+        const prev = active.onStop;
+        active.onStop = () => { prev?.(); arm(); };
+      }
+    });
+    const out = await Promise.race([exec, stopRace]);
+    clearTimeout(graceTimer);
+    if (out === STOP_ABORT) {
+      // The call is left to end by itself. What the page's fill put in never reaches the panel, so
+      // no report is made up in its place: the fill ends as one that failed, said and logged as a
+      // Stop the page didn't answer (fillErrorMessage), with none of a finished fill's bookkeeping.
+      exec.catch(() => {});
+      throw Object.assign(new Error('stop unanswered: the fill’s call did not return within 3 s of Stop'), { stopUnanswered: true });
+    }
+    results = out;
+  } else {
+    results = await exec;
+  }
+  // A frame of the page this call left out (framesReady, or the top frame alone after a timeout):
+  // said on what it returns (`leftOut`), so a fill's report tells the agent that part of the page
+  // wasn't read or filled.
+  const leftOut = !frameIds && 'frameIds' in target;
+  const said = (list) => (leftOut ? Object.assign(list, { leftOut: true }) : list);
   const again = results.filter((r) => r.documentId && !ready.has(r.documentId) && r.result == null).map((r) => r.frameId);
-  if (!again.length) return results;
-  await injectKit(tabId, carrier, again);
+  if (!again.length) return said(results);
+  await timed(injectKit(tabId, carrier, again), 4000);
   const retried = await chrome.scripting.executeScript({ target: { tabId, frameIds: again }, world, func, args });
-  return results.map((r) => retried.find((x) => x.frameId === r.frameId) ?? r);
+  return said(results.map((r) => retried.find((x) => x.frameId === r.frameId) ?? r));
 }
 
 // The page whose opening fill a hold kept back (fillPage): the quote's defaults question (agent
@@ -196,6 +268,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   if (retried) ctx.retried = retried;
+  // `filling` is this fill's from here (nothing awaited since it was taken): only it lets go of it.
+  state.fillingLock = ctx.run;
   let plan;
   // Preparing the fill (the list's pick saved, the plan for it) can fail too (a storage write
   // refused): filling then ends here, rather than staying on with the dock's Fill disabled until the
@@ -205,7 +279,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // The agent moved to another tab while the list was read: that tab's page waiting is filled now.
     // A fill the tab switch dropped says so on its page (noteTabLeft), as one dropped later does.
     if (staleFill(ctx) || state.tab?.id !== tabId) {
-      state.filling = false;
+      if (state.fillingLock === ctx.run) { state.fillingLock = null; state.filling = false; }
       renderSite();
       if (!staleFill(ctx)) noteTabLeft(ctx);
       runPendingPage(ctx);
@@ -217,7 +291,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
     plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
   } catch (e) {
-    state.filling = false;
+    if (state.fillingLock === ctx.run) { state.fillingLock = null; state.filling = false; }
     renderSite();
     if (staleFill(ctx)) { noteStaleFill(ctx); runPendingPage(ctx); resumeHeldFill(); return; }
     // The list page may have moved the tab to another unit before the failure (pickUnitForm): the
@@ -294,7 +368,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
     // fill the rest.
-    renderReport(frames, { ...ctx, plan, retrying, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
+    renderReport(frames, { ...ctx, plan, retrying, leftOut: !!results.leftOut, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
     if (!fillCurrent(ctx)) return;
     recordLayout(page);
     assistFrames = frames;
@@ -308,8 +382,15 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     logFillError(ctx, e, await fillTimeline(ctx));
   } finally {
     unwatch();
-    await tellRecorder('resume', tabId);
-    state.filling = false;
+    // Only while `filling` is still this fill's. One an intake change let go of (stopFillFirst: it
+    // never answered Stop) ends beside whatever holds it since: it neither lets go of that one's
+    // lock nor resumes the recorder under it (ensureRecorder resumes one left paused).
+    const held = () => state.fillingLock === ctx.run;
+    if (held() || !state.filling) await tellRecorder('resume', tabId);
+    // The calls that gave up on a frame of this tab (noteFrameTimeout), logged once with this fill's run.
+    const gaveUp = state.frameTimeouts?.get(tabId);
+    if (gaveUp?.size) { state.frameTimeouts.delete(tabId); logFillError(ctx, `frame timeout: ${[...gaveUp].join(', ')}`); }
+    if (held()) { state.fillingLock = null; state.filling = false; }
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     // Steps continued, pages filled, a pause: kept for the panel opened again (FLOW-06).
     keepJournal(tabId);
@@ -1001,7 +1082,7 @@ function renderReport(frames, ctx = {}) {
   const key = ctx.keptKey ?? reportKey(tabId, page, carrier, ctx.active ?? state.active);
   // Kept for the panel opened again (keepReport); one made again from what was kept isn't, nor
   // one that says nothing while its page is filled again.
-  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped,
+  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped, ...(ctx.leftOut ? { leftOut: true } : {}),
     // What earlier passes on this page filled, for the report shown again (restoreReports).
     filledBefore: Object.fromEntries(frames.flatMap((fr) => fr.kept ?? []).filter((x) => maps.filled?.get?.(x.key)).map((x) => [x.key, maps.filled.get(x.key)])), frames }); };
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
@@ -1021,7 +1102,11 @@ function renderReport(frames, ctx = {}) {
     const judged = frames.some((f) => f.held || f.advanced || f.advanceDue);
     putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
-      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : REPORT.paused}${halted.reason ?? REPORT.reviewFirst}` }
+      ? (ctx.stopped
+        ? { notice: `${REPORT.youStopped.title}. ${REPORT.youStopped.text}` }
+        : { error: `${halted.stepUnread || ctx.restoredAt ? '' : REPORT.paused}${halted.reason ?? REPORT.reviewFirst}` })
+      // A frame left out (runKit `leftOut`) may hold the page's questions: not said as done.
+      : ctx.leftOut ? { notice: `${REPORT.leftOut.title}. ${REPORT.leftOut.text}` }
       : frames.some((f) => f.notDrawn) && !judged ? { notice: REPORT.noQuestions }
         : { notice: REPORT.nothingToFill, empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
@@ -1106,6 +1191,8 @@ function renderReport(frames, ctx = {}) {
       ? issueSaid({ tone: 'quiet', ...REPORT.youStopped })
       : issueSaid({ ...REPORT.fillStopped(halted.reason), role: 'alert' }) } : null,
     pageChanged ? { card: issueSaid({ ...pageChanged, role: 'alert' }) } : null,
+    // A frame of the page that never loaded was left out (runKit `leftOut`): its questions weren't read.
+    ctx.leftOut ? { card: issueSaid({ tone: 'warn', ...REPORT.leftOut }) } : null,
     advanced ? { done: REPORT.continued(count, advanced) } : null,
   ].filter(Boolean);
   const nodes = [
@@ -1324,6 +1411,7 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
   let edited = [];
   state.fillingKind = 'pick';
   state.filling = true;
+  state.fillingLock = token;
   if (button) button.disabled = true;
   // Our own answer isn't the agent's change on the page: the recorder is paused, as for a fill.
   await tellRecorder('pause', tabId);
@@ -1357,8 +1445,11 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       } catch { /* a removed or navigating frame no longer has live listeners */ }
     }
     await persistGuardedEdits(editOrigin, edited);
-    await tellRecorder('resume', tabId);
-    state.filling = false;
+    // Only while `filling` is still this pick's (as a fill's `finally`: an intake change may have
+    // let go of it, stopFillFirst).
+    const held = () => state.fillingLock === token;
+    if (held() || !state.filling) await tellRecorder('resume', tabId);
+    if (held()) { state.fillingLock = null; state.filling = false; }
     if (button) button.disabled = false;
     // A page a hold kept back, whose hold lifted while the pick went in.
     resumeHeldFill();

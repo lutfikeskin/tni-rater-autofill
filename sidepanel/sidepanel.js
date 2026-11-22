@@ -5,11 +5,11 @@
 import * as usage from './usage-log.js';
 import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
-import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals } from './panel/core.js';
+import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals, whenFrameLate } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
 import { closeSettings, firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
-import { flushPendingTextChanges, onRecorderMessage, pageOf } from './panel/usage.js';
+import { ensureRecorder, flushPendingTextChanges, onRecorderMessage, pageOf } from './panel/usage.js';
 import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
 import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
 import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
@@ -205,6 +205,9 @@ function wire() {
     // The step first: a field change or new question is scoped by the step it came with.
     chrome.runtime.onMessage.addListener(noteStep);
     chrome.runtime.onMessage.addListener(onRecorderMessage);
+    // A frame left out of the panel's calls while its page hadn't come (framesReady) is here after all:
+    // the recorder goes into it, so its questions are seen and filled as any that a page draws later.
+    whenFrameLate((tabId) => { if (state.tab?.id === tabId) ensureRecorder(); });
     chrome.runtime.onMessage.addListener(noteLiveItems);
     chrome.runtime.onMessage.addListener(onPanelMessage);
     chrome.tabs.onActivated.addListener(refreshTab);

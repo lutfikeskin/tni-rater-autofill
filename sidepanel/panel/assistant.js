@@ -519,6 +519,7 @@ async function applyAi(list, ctx, decision) {
   const guardToken = crypto.randomUUID();
   state.fillingKind = 'ai';
   state.filling = true;
+  state.fillingLock = guardToken;
   await tellRecorder('pause', ctx.tabId);
   try {
     if (!isCurrent()) return false;
@@ -675,8 +676,11 @@ async function applyAi(list, ctx, decision) {
       state.aiCache.set(sig, x);
       aiRetiredSignatures.delete(sig);
     }
-    await tellRecorder('resume', ctx.tabId);
-    state.filling = false;
+    // Only while `filling` is still this apply's (as a fill's `finally`: an intake change may have
+    // let go of it, stopFillFirst).
+    const held = () => state.fillingLock === guardToken;
+    if (held() || !state.filling) await tellRecorder('resume', ctx.tabId);
+    if (held()) { state.fillingLock = null; state.filling = false; }
     // A page a hold kept back, whose hold lifted while the picks went in.
     resumeHeldFill();
     // The recorder was paused while Luna's picks went in, so it won't report the questions they
