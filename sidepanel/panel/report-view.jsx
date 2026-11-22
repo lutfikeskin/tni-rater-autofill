@@ -1,4 +1,4 @@
-// @ts-nocheck -- not type-checked yet (audit 2026-11-07, QA-08): fix its errors and take this line out
+// @ts-check
 // The report's list in React: each answer and each item left for the agent, one row each, drawn from
 // its record (report-rows.js). The panel changes a record and drawRow (fill.js) has the list draw
 // that row again; a row that didn't change isn't drawn again, so the button the agent is on keeps its
@@ -13,6 +13,7 @@ import { NEEDS } from './messages.js';
 import { choiceSaid } from './report-model.js';
 import { needId, needSay, nowSaid, optionsSaid, rowClass, rowHead } from './report-rows.js';
 import { AiCard } from './ai-view.jsx';
+import { HelpLink } from './help-link.jsx';
 
 const VIN_PATH = /^(vehicles|trailers)\[\d+\]\.vin$/;
 let onJumpPath = null;
@@ -53,7 +54,7 @@ function Choices({ options: all, pressed = null, aiPick = null, onPick }) {
     return (
       <div className="opts" role="group" aria-label="Answers">
         {options.map((o) => (
-          <button key={o} type="button" className={o === aiPick ? 'opt-btn ai-pick' : 'opt-btn'} aria-pressed={String(o === pressed)} data-choice={o}
+          <button key={o} type="button" className={o === aiPick ? 'opt-btn ai-pick' : 'opt-btn'} aria-pressed={o === pressed} data-choice={o}
             onClick={(e) => onPick(o, e.currentTarget)}>
             <span>{choiceSaid(o)}</span>
             {o === aiPick ? <span className="ai-badge">AI pick</span> : null}
@@ -76,7 +77,7 @@ function Choices({ options: all, pressed = null, aiPick = null, onPick }) {
 // The row's head: icon, label, what it shows, its tag; opens or closes the row.
 function Head({ rec, head, act, children }) {
   return (
-    <button type="button" className="row-head" aria-expanded={String(!!rec.open)} onClick={() => act.toggleRow(rec)}>
+    <button type="button" className="row-head" aria-expanded={!!rec.open} onClick={() => act.toggleRow(rec)}>
       <span className="row-icon" aria-hidden="true">{head.icon}</span>
       {children}
       {head.tag ? <Tag tag={head.tag} /> : null}
@@ -88,7 +89,7 @@ function Head({ rec, head, act, children }) {
 // opening to its source with Change answer and See in intake. `rec.kind` 'clicked', 'page' (left as
 // the page had it) or 'yours' (the agent's own answer, not filled); otherwise an answer, by its
 // source. `v`: the record's draw count, so the row is drawn again when it changes.
-const AnswerRow = memo(function AnswerRow({ rec, ctx, act }) {
+const AnswerRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any }} props */ function AnswerRow({ rec, ctx, act }) {
   const source = rec.source ?? {};
   const head = rowHead(rec, source.tag ?? null);
   const { change } = rec;
@@ -126,7 +127,7 @@ const AnswerRow = memo(function AnswerRow({ rec, ctx, act }) {
 // (rec.pickable; the AI's pick marked), with Show on page and Mark done. The AI's card in its slot
 // is the record's (`aiCard`, renderAi says it; ai-view.jsx), drawn with the row, so a row drawn
 // again keeps it and the agent's focus on its buttons.
-const NeedRow = memo(function NeedRow({ rec, ctx, act, needPos = 1, needTotal = 1 }) {
+const NeedRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any, needPos?: number, needTotal?: number }} props */ function NeedRow({ rec, ctx, act, needPos = 1, needTotal = 1 }) {
   const { x, label } = rec;
   const head = rowHead(rec);
   const markNoteId = useId();
@@ -139,7 +140,10 @@ const NeedRow = memo(function NeedRow({ rec, ctx, act, needPos = 1, needTotal = 
   return (
     <div className={rowClass(rec)} hidden={!!rec.gone} tabIndex={-1} ref={(el) => { act.node(rec, el); }}
       data-need={needId(rec)} data-key={rec.key} data-field={rec.field} data-offpage={rec.offPage ? '1' : ''} data-icon={rec.icon} data-wait={rec.wait} data-finish={rec.finish ? '1' : ''}>
-      <p className="eyebrow amber need-eyebrow">{NEEDS.eyebrow(needPos, needTotal)}</p>
+      <div className="need-card-head">
+        <p className="eyebrow amber need-eyebrow">{NEEDS.eyebrow(needPos, needTotal)}</p>
+        <HelpLink topic="page" />
+      </div>
       <Head rec={rec} head={head} act={act}>
         <span className="row-text"><span className="row-label">{label}</span><span className="row-value">{head.value}</span></span>
       </Head>

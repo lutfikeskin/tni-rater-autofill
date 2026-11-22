@@ -14,7 +14,8 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { screenFor } from './screen.js';
 import { reviewGroups, reviewRowHead } from './review-groups.js';
-import { REVIEW } from './messages.js';
+import { REVIEW, SOURCE } from './messages.js';
+import { HelpLink } from './help-link.jsx';
 
 /**
  * Formats the report's human-readable page or step name from `entry.step`, `entry.page` or `entry.key`.
@@ -70,8 +71,9 @@ function ReviewRow({ rec, group, onOpen }) {
     shownVal = REVIEW.markedValue;
     sub = REVIEW.markedSub;
   } else {
+    const isStandard = rec.kind === 'standard' || head.tag?.text === SOURCE.tag.standard.text;
     shownVal = head.value ?? '';
-    sub = rec.changed || head.tag?.text || '';
+    sub = rec.changed || (isStandard ? '' : head.tag?.text) || '';
   }
 
   return (
@@ -123,6 +125,7 @@ function Review({ act = {} } = {}) {
   if (!entry || !Array.isArray(entry.list) || filling || pastOpen) return null;
 
   const { needs, worth, intakeCount, all } = reviewGroups(entry.list);
+  const hasStandard = worth.some((r) => !r.changed && (r.kind === 'standard' || reviewRowHead(r).tag?.text === SOURCE.tag.standard.text));
   const ownHead = !dock || screen === 'review' || screen === 'ai';
   const filled = typeof entry.filled === 'number' ? entry.filled : 0;
 
@@ -155,13 +158,17 @@ function Review({ act = {} } = {}) {
     <div id="review" className="review">
       {ownHead ? (
         <div className="pane-head">
+          <HelpLink topic="page" />
           <h2 id="review-title" tabIndex={-1}>{REVIEW.title(pageName(entry))}</h2>
           <p id="review-lead" className="pane-sub">{REVIEW.lead(filled, needs.length)}</p>
         </div>
       ) : null}
       {needs.length > 0 ? (
         <section className="review-group" id="review-needs" aria-labelledby="review-needs-head">
-          <h3 id="review-needs-head" className="review-group-head">{REVIEW.needsGroup}</h3>
+          <div className="primary-card-head">
+            <h3 id="review-needs-head" className="review-group-head">{REVIEW.needsGroup}</h3>
+            <span className="card-count">{needs.length}</span>
+          </div>
           <div className="review-rows">
             {needs.map((rec, i) => (
               <ReviewRow key={rec.id ?? i} rec={rec} group="needs" onOpen={act.openRow} />
@@ -170,8 +177,11 @@ function Review({ act = {} } = {}) {
         </section>
       ) : null}
       {worth.length > 0 ? (
-        <section className="review-group" id="review-worth" aria-labelledby="review-worth-head">
-          <h3 id="review-worth-head" className="review-group-head">{REVIEW.worthGroup}</h3>
+        <section className="review-group reference-card" id="review-worth" aria-labelledby="review-worth-head">
+          <div className="reference-head">
+            <h3 id="review-worth-head" className="review-group-head">{REVIEW.worthGroup}</h3>
+            {hasStandard ? <span className="reference-badge">{SOURCE.tag.standard.text}</span> : null}
+          </div>
           <div className="review-rows">
             {worth.map((rec, i) => (
               <ReviewRow key={rec.id ?? i} rec={rec} group="worth" onOpen={act.openRow} />
@@ -180,9 +190,11 @@ function Review({ act = {} } = {}) {
         </section>
       ) : null}
       {all.length > 0 ? (
-        <button type="button" id="see-all-answers" className="link review-see-all" onClick={showAll}>
-          {REVIEW.seeAll(all.length, intakeCount)}
-        </button>
+        <div className="review-tools">
+          <button type="button" id="see-all-answers" className="link review-see-all" onClick={showAll}>
+            {REVIEW.seeAll(all.length, intakeCount)}
+          </button>
+        </div>
       ) : null}
     </div>
   );

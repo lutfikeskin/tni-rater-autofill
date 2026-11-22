@@ -179,9 +179,11 @@ function Feed({ act }) {
       <div id="report" className="report" data-filter={f.filter} data-focus={showFocus ? 'need' : undefined} hidden={!f.report} />
       <div id="past" className="report past" hidden={!past} />
       <p id="feed-empty" className="feed-empty" hidden={f.empty == null}>{f.empty ?? ''}</p>
-      <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
-        {FEED.clearMarks}
-      </button>
+      <div className="feed-tools">
+        <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
+          {FEED.clearMarks}
+        </button>
+      </div>
     </div>
   );
 }

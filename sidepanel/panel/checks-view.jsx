@@ -89,21 +89,22 @@ function CheckCard({ card }) {
 // choice buttons, primary Looks right + See intake / Show details, and Check the rest later (or on
 // CheckSerious an outline "Decide later and fill" button + quote note) plus See all whenever more
 // items or cleanup notes exist.
-function FocusCheck({ card, at, total, hasCleanup, later, onSeeAll }) {
+function FocusCheck({ card, at, total, later }) {
   const noteRef = useRef(null);
   useAnnounce(card.alert ? CHECKS.seriousNote : '', noteRef);
-  const canSeeAll = total > 1 || hasCleanup;
   const pdf = card.pdf ? <button type="button" className="ghost" onClick={card.pdf.onClick}>{card.pdf.label}</button> : null;
   return (
     <div className={card.alert ? 'check check-focus alert' : 'check check-focus'} data-check={card.i}>
       <div className="pane-head">
-        <p className="check-eyebrow" role={card.alert ? 'alert' : undefined}>
-          {card.alert
-            ? <><b className="serious">{CHECKS.serious}</b>{CHECKS.seriousAt(at, total)}</>
-            : CHECKS.eyebrow(at, total)}
-        </p>
+        <div className="check-card-head">
+          <p className="check-eyebrow" role={card.alert ? 'alert' : undefined}>
+            {card.alert
+              ? <><b className="serious">{CHECKS.serious}</b>{CHECKS.seriousAt(at, total)}</>
+              : CHECKS.eyebrow(at, total)}
+          </p>
+          <HelpLink topic="intake" />
+        </div>
         <h2 id="check-title">{card.title || CHECKS.fallbackTitle}</h2>
-        <HelpLink topic="intake" />
         <p id="check-sub" className="pane-sub">{card.msg}</p>
       </div>
       <div className="check-focus-body">
@@ -129,22 +130,9 @@ function FocusCheck({ card, at, total, hasCleanup, later, onSeeAll }) {
               {CHECKS.decideLater}
             </button>
             <p ref={noteRef} className="check-serious-note">{CHECKS.seriousNote}</p>
-            {canSeeAll ? (
-              <div className="check-foot">
-                <button type="button" id="see-all-checks" className="link" onClick={onSeeAll}>
-                  {CHECKS.seeAll}
-                </button>
-              </div>
-            ) : null}
           </>
         ) : (
           <div className="check-foot">
-            {/* All the checks at once, first and in the link colour: agents often prefer the list. */}
-            {canSeeAll ? (
-              <button type="button" id="see-all-checks" className="link" onClick={onSeeAll}>
-                {CHECKS.seeAll}
-              </button>
-            ) : null}
             <button type="button" id="check-later" className="link subtle" onClick={later}>
               {CHECKS.later}
             </button>
@@ -168,6 +156,7 @@ function Checks({ act }) {
   const focusCard = !checksAll && open > 0 ? openCards[0] : null;
   const focusAt = focusCard ? cards.indexOf(focusCard) + 1 : 1;
   const cleanup = checks?.cleanup ?? [];
+  const canSeeAll = cards.length > 1 || cleanup.length > 0;
   const showAll = () => {
     flushSync(() => act.showAll?.());
     document.getElementById('one-check-mode')?.focus();
@@ -180,7 +169,7 @@ function Checks({ act }) {
     <>
       {focusCard ? (
         <div id="warnings" className="checks checks-focus">
-          <FocusCheck key={focusCard.i} card={focusCard} at={focusAt} total={cards.length} hasCleanup={cleanup.length > 0} later={checks?.later} onSeeAll={showAll} />
+          <FocusCheck key={focusCard.i} card={focusCard} at={focusAt} total={cards.length} later={checks?.later} />
         </div>
       ) : (
         <>
@@ -209,11 +198,18 @@ function Checks({ act }) {
           </div>
         </>
       )}
-      <button type="button" id="details-row" className="list-row" aria-controls="details-view" aria-expanded={detailsOpen} onClick={act.openDetails}>
-        <span className="grow">All client details</span>
-        <span id="details-count" className="small muted">{filled == null ? '' : `${filled} answers`}</span>
-        <span className="chev" aria-hidden="true">{'\u203a'}</span>
-      </button>
+      <section className="tools-card" aria-label="Page and view tools">
+        {focusCard && canSeeAll ? (
+          <button type="button" id="see-all-checks" className="tools-pill" onClick={showAll}>
+            {CHECKS.seeAll}
+          </button>
+        ) : null}
+        <button type="button" id="details-row" className="list-row" aria-controls="details-view" aria-expanded={detailsOpen} onClick={act.openDetails}>
+          <span className="grow">All client details</span>
+          <span id="details-count" className="small muted">{filled == null ? '' : `${filled} answers`}</span>
+          <span className="chev" aria-hidden="true">{'\u203a'}</span>
+        </button>
+      </section>
     </>
   );
 }

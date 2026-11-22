@@ -14,6 +14,7 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { screenFor } from './screen.js';
 import { FILLING, SCREEN } from './messages.js';
+import { HelpLink } from './help-link.jsx';
 
 // Screens where the view or the dock carries the heading: Intake checks, Settings, post-fill
 // review, and AI review (Phase 4 decision e).
@@ -104,7 +105,7 @@ function Screen({ scrollBehavior, summary } = {}) {
   // surfaces #dock-eyebrow, #dock-title and #dock-sub visually until #screen-title returns.
   useEffect(() => {
     const heading = titleRef.current;
-    if (!shown || !heading) {
+    if (!shown || !heading || screen === 'owner') {
       document.getElementById('dock')?.removeAttribute('data-head-out');
       return undefined;
     }
@@ -122,10 +123,11 @@ function Screen({ scrollBehavior, summary } = {}) {
       io.disconnect();
       document.getElementById('dock')?.removeAttribute('data-head-out');
     };
-  }, [shown]);
+  }, [shown, screen]);
 
   return (
     <div id="screen-head" className="screen-head" hidden={!shown} data-screen={screen}>
+      <HelpLink topic={screen === 'start' ? 'home' : 'page'} />
       <span id="screen-eyebrow" className="screen-eyebrow" data-tone={tone || undefined} hidden={!eyebrow}>{eyebrow}</span>
       <h2 id="screen-title" ref={titleRef} tabIndex={-1}>{title}</h2>
       <p id="screen-lead" className="screen-lead" hidden={!sub}>{sub}</p>

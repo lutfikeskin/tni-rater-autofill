@@ -5,38 +5,42 @@
    test/panel-contrast.test.mjs. */
 :root {
   color-scheme: light;
-  --canvas: #ffffff;
+  --canvas: #eef2f6;
   --surface: #ffffff;
-  --surface-sunken: #f3f5f8;
-  --surface-hover: #eef2f6;
+  --surface-sunken: #e4eaf1;
+  --surface-hover: #e8eef4;
   --surface-selected: #e8f1fa;
   --surface-open: #fbfcfd;
   --ink: #17222b;
   --ink-strong: #17222b;
   --ink-secondary: #3a4650;
-  --ink-muted: #5d6975;
-  --border-faint: #e8edf1;
-  --border-row: #e8edf1;
-  --border-soft: #e8edf1;
-  --border: #dfe5ea;
+  --ink-muted: #55616d;
+  --border-faint: #e6ecf2;
+  --border-row: #e6ecf2;
+  --border-soft: #e6ecf2;
+  --border: #d9e2ec;
+  --border-card: #d9e2ec;
   --border-queued: #c9d2d9;
   --border-strong: #b5c0c9;
-  --border-control: #7d8c99;
+  --border-control: #6d7c89;
   --border-active: #9fc0de;
   --brand: #005aa9;
   --brand-dark: #004887;
-  --brand-soft: #eef6fc;
+  --brand-soft: #eaf3fc;
   --brand-faint: #f1f6fb;
   --success: #17775d;
   --success-ink: #125b47;
   --success-soft: #e5f5ee;
   --amber: #8a5200;
   --warning: #a65a00;
-  --warning-ink: #8a6a12;
+  --warning-ink: #854f00;
   --warning-line: #e0c56a;
   --warning-bar: #e0a52a;
   --warning-soft: #fff2dd;
   --warning-faint: #fffaf0;
+  --amber-soft: #fef6dc;
+  --recessed: #f4f6f9;
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
   --signal: #b42318;
   --signal-dark: #8d1b12;
   --signal-line: #efb4ad;
@@ -237,79 +241,87 @@ body:has(#settings:not([hidden])) .panel-head,
 .danger-solid { color: #ffffff; background: var(--signal); border: 1px solid var(--signal); }
 .danger-solid:hover:not(:disabled) { background: var(--signal-dark); border-color: var(--signal-dark); }
 .client-note { grid-row: note; grid-column: 1 / -1; margin: 0; padding: 6px 14px; border-top: 0; border-radius: 0; background: var(--surface-sunken); color: var(--success-ink); font-size: 13px; }
-.steps { grid-row: steps; grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 4px; padding: 5px 14px 0; background: var(--surface-sunken); border-bottom: 1px solid var(--border-row); }
-/* Browser-style tabs: the one in view is white and joins the view under it; the other sits on the strip. */
-.step { position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-height: 32px; padding: 6px 10px 5px; margin-bottom: -1px; background: none; border: 1px solid transparent; border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; text-align: left; cursor: pointer; }
+.steps { grid-row: steps; grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 6px; padding: 6px 12px 0; background: var(--surface-sunken); border-bottom: 1px solid var(--border-card); }
+/* Segmented dual-status tabs: equal height across both columns, color-coded active bar + pane bridge. */
+.step { position: relative; min-width: 0; display: grid; grid-template-rows: auto auto; align-content: start; gap: 2px; min-height: 48px; padding: 7px 11px; margin-bottom: -1px; background: transparent; border: 1px solid transparent; border-top: 3px solid transparent; border-bottom: 0; border-radius: var(--radius-md) var(--radius-md) 0 0; text-align: left; cursor: pointer; }
 .step[hidden] { display: none; }
 .step:hover:not([aria-current]) { background: var(--surface-hover); }
-.step[aria-current] { background: var(--surface); border-color: var(--border); cursor: default; }
+.step[aria-current] { background: var(--surface); border-color: var(--border-card); cursor: default; }
 .step[aria-current]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--surface); }
-.step-label { max-width: 100%; font-size: 13px; line-height: 1.4; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#step-check[aria-current="page"] { background: var(--amber-soft); border-color: var(--warning-line); border-top: 3px solid var(--warning-bar); }
+#step-check[aria-current="page"]::after { background: var(--amber-soft); }
+#step-fill[aria-current="page"] { background: var(--brand-soft); border-color: var(--border-active); border-top: 3px solid var(--brand); }
+#step-fill[aria-current="page"]::after { background: var(--brand-soft); }
+.step-label { max-width: 100%; font-size: 13px; line-height: 1.35; font-weight: 500; color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step[aria-current] .step-label { font-weight: 600; color: var(--ink-strong); }
-.step-note { max-width: 100%; font-size: 13px; line-height: 1.4; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.step-note { max-width: 100%; font-size: 13px; line-height: 1.35; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .step[data-state="done"] .step-note { color: var(--success-ink); }
 .step[data-state="warn"] .step-note { color: var(--amber); font-weight: 600; }
 .step[data-state="bad"] .step-note { color: var(--signal-dark); }
 
-/* The middle: one scrolling area between the header (and client strip) and the dock. Positioned, so
-   the absolutely placed screen-reader text in its rows (.sr-only) stays inside it: otherwise each
-   sits below the panel, the document grows taller than the window, and a fill's scrollIntoView
-   scrolled the header and client strip out of view (AmWINS' declaration, W44-10). */
-/* The scrollbar's room is kept when nothing scrolls, so a short list (a filter that hides most rows) doesn't widen the view. */
-.view { position: relative; flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; display: grid; align-content: start; grid-auto-rows: max-content; }
-/* Canvas screen head (screen-view.jsx): eyebrow, 26px h2 and 15px lead above the active pane. */
+.view { position: relative; flex: 1; min-height: 96px; overflow: auto; scrollbar-gutter: stable; display: grid; align-content: start; grid-auto-rows: max-content; background: var(--canvas); }
+.view:has(#check-view:not([hidden])):not(:has(#settings:not([hidden]))) { border-top: 6px solid var(--amber-soft); box-shadow: inset 0 1px 0 var(--warning-line); }
+.view:has(#page-view:not([hidden])):not(:has(#settings:not([hidden]))) { border-top: 6px solid var(--brand-soft); box-shadow: inset 0 1px 0 var(--border-active); }
+/* Canvas screen head (screen-view.jsx): elevated card on slate mist, deduplicated when #owner-note is shown. */
 #screen-root { display: contents; }
-.screen-head { padding: 20px 18px 8px; display: grid; gap: 6px; }
-.screen-eyebrow { font: 600 13px/1.3 var(--font-sans); color: var(--ink-muted); }
+.screen-head { position: relative; margin: 10px 12px 0; padding: 14px; display: grid; gap: 6px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
+.screen-head:not([data-screen="start"]) { border-top: 3px solid var(--brand); }
+.screen-head:has(#screen-eyebrow[data-tone="warn"]) { border-top-color: var(--warning-bar); }
+.screen-head:has(#screen-eyebrow[data-tone="bad"]) { border-top-color: var(--signal); }
+.screen-head:has(#screen-eyebrow[data-tone="good"]) { border-top-color: var(--success); }
+.screen-head:has(#screen-eyebrow[data-tone="ai"]) { border-top-color: var(--ai); }
+.screen-head > .help-link { position: absolute; top: 12px; right: 12px; }
+.view:has(#owner-note:not([hidden])) #screen-head[data-screen="owner"] { position: absolute; top: 0; left: 0; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; pointer-events: none; }
+.screen-eyebrow { padding-right: 36px; font: 600 13px/1.3 var(--font-sans); color: var(--ink-muted); }
 .screen-eyebrow[data-tone="blue"] { color: var(--brand); }
 .screen-eyebrow[data-tone="warn"] { color: var(--warning-ink); }
 .screen-eyebrow[data-tone="bad"] { color: var(--signal); }
 .screen-eyebrow[data-tone="good"] { color: var(--success); }
 .screen-eyebrow[data-tone="ai"] { color: var(--ai-ink); }
-.screen-head h2 { font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-strong); text-wrap: balance; overflow-wrap: break-word; }
-.screen-head[data-screen="start"] h2 { padding-right: 28px; }
-.screen-lead { font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; overflow-wrap: anywhere; }
+.screen-head h2 { padding-right: 36px; font-size: 22px; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-strong); text-wrap: balance; overflow-wrap: break-word; }
+.screen-lead { font-size: 14px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; overflow-wrap: anywhere; }
 .view:has(#screen-head:not([hidden])) #feed-title { display: none; }
+.view:has(#screen-head:not([hidden])) :is(#feed .help-link, .need-card-head > .help-link) { display: none; }
 /* Quote done's facts: hairline rows, the number at the end; a zero is muted. */
-.done-facts { margin: 10px 0 0; display: grid; }
-.done-fact { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border-row); font-size: 15px; }
+.done-facts { margin: 8px 0 0; display: grid; }
+.done-fact { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border-row); font-size: 14px; }
 .done-fact:last-child { border-bottom: 1px solid var(--border-row); }
 .done-fact dt { color: var(--ink-secondary); }
 .done-fact dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-strong); }
 .done-fact[data-fact="open"]:not([data-zero]) dd { color: var(--amber); }
 .done-fact[data-zero] dd { color: var(--ink-muted); font-weight: 500; }
-.pane { padding: 14px 14px 16px; display: grid; gap: 12px; align-content: start; }
+.pane { padding: 10px 12px 16px; display: grid; gap: 10px; align-content: start; }
+#settings { background: var(--surface); }
 .pane-head { display: grid; gap: 6px; position: relative; }
-.pane-head > .help-link { position: absolute; top: 0; right: 0; }
-.pane-head h2 { padding-right: 28px; font-size: 26px; line-height: 1.2; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); overflow-wrap: break-word; }
-.pane-sub { font-size: 15px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; }
-.notices { padding: 8px 14px 0; display: grid; gap: 0; }
-.notices:empty { display: none; }
+.pane-head > .help-link { position: absolute; top: 12px; right: 12px; }
+.pane-head h2 { padding-right: 36px; font-size: 22px; line-height: 1.2; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); overflow-wrap: break-word; }
+.pane-sub { font-size: 14px; line-height: 1.5; color: var(--ink-secondary); text-wrap: pretty; }
+.notices { padding: 10px 12px 0; display: grid; gap: 8px; }
+.notices:not(:has(> :not(:empty):not([hidden]))) { display: none; }
 
 /* Start: the drop zone */
-#home { padding-top: 8px; }
-#home > .help-link { justify-self: end; }
-.view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { position: absolute; top: 20px; right: 18px; }
-.drop { border: 0; border-radius: 14px; background: var(--surface-sunken); padding: 28px 16px; display: grid; gap: 10px; justify-items: center; text-align: center; cursor: pointer; transition: background .15s; }
-.drop:hover, .drop.over { background: var(--surface-selected); }
+#home { padding-top: 10px; }
+#home > .help-link { display: none; }
+.drop { border: 1.5px dashed var(--border-active); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--card-shadow); padding: 26px 16px; display: grid; gap: 10px; justify-items: center; text-align: center; cursor: pointer; transition: background .15s, border-color .15s; }
+.drop:hover, .drop.over { background: var(--surface-selected); border-color: var(--brand); }
 .drop-title { font-weight: 600; font-size: 15px; color: var(--ink-strong); }
 .drop-hint { font-size: 13px; color: var(--ink-muted); }
 #choose { min-height: 44px; padding: 0 22px; font-size: 15px; border-radius: var(--radius-lg); }
-.privacy-line { margin-top: -2px; color: var(--ink-muted); font-size: 13px; text-align: center; }
+.privacy-line { margin-top: 0; color: var(--ink-muted); font-size: 13px; text-align: center; }
 /* Home's setup checklist (home-view.jsx); #setup-root takes no room once all is done. */
 #setup-root:empty { display: none; }
-.setup-card { padding: 14px 0 0; background: none; border: 0; border-top: 1px solid var(--border-row); border-radius: 0; display: grid; gap: 8px; }
+.setup-card { padding: 14px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); display: grid; gap: 8px; }
 .setup-card h3 { font-size: 15px; font-weight: 600; color: var(--ink-strong); letter-spacing: -0.01em; }
 .setup-list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 0; }
 .setup-list li { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border-row); font-size: 14px; color: var(--ink); }
 .setup-list li:first-child { border-top: 0; }
-.setup-list li.done .setup-label { color: var(--ink-muted); }
-.setup-list .setup-label { flex: 1 1 auto; text-wrap: pretty; }
-.setup-list .tick { flex: 0 0 16px; width: 16px; height: 20px; display: grid; place-items: center; border-radius: 0; border: 0; background: none; color: var(--ink-muted); font-size: 13px; font-weight: 600; }
-.setup-list li.done .tick { color: var(--success); background: none; }
+.setup-list .ok { color: var(--success); font-weight: 700; width: 16px; text-align: center; flex-shrink: 0; }
+.setup-list .todo { color: var(--amber); font-weight: 700; width: 16px; text-align: center; flex-shrink: 0; }
+.setup-list .link { margin-left: auto; flex-shrink: 0; }
+.setup-more { font-size: 13px; color: var(--ink-muted); }
 
-/* Hairline issue notices: what's wrong, both sources side by side, one action */
-.issue { background: none; border: 0; border-top: 1px solid var(--signal-line); border-radius: 0; padding: 10px 0; display: grid; gap: 8px; }
+/* Notices / Alerts strip: compact tinted banner cards directly under tab seam */
+.issue { background: var(--signal-soft); border: 1px solid var(--signal-line); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); padding: 10px 12px; display: grid; gap: 8px; }
 .issue-head { display: flex; gap: 8px; align-items: flex-start; }
 .bang { flex: 0 0 16px; width: 16px; height: 20px; display: grid; place-items: center; border-radius: 0; font: 700 13px/1 var(--font-sans); background: none; color: var(--signal); }
 .issue-text { flex: 1; min-width: 0; display: grid; gap: 3px; }
@@ -325,24 +337,27 @@ body:has(#settings:not([hidden])) .panel-head,
 .compare { margin-left: 24px; display: grid; gap: 3px; padding: 6px 0 0; background: none; border-top: 1px solid var(--border-row); border-radius: 0; font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
 .compare .k { color: var(--ink-muted); }
 .issue-actions { margin-left: 24px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.issue.warn { border-color: var(--warning-line); }
+.issue.warn { background: var(--amber-soft); border-color: var(--warning-line); }
 .issue.warn .bang { background: none; color: var(--warning-ink); }
 .issue.warn .issue-title, .issue.info .issue-title { color: var(--ink-strong); }
-.issue.info { border-color: var(--border-row); }
+.issue.info { background: var(--brand-soft); border-color: var(--border-active); }
 .issue.info .bang { background: none; color: var(--brand); }
-.issue.quiet { border-color: var(--border-row); background: none; }
+.issue.quiet { border-color: var(--border-card); background: var(--surface); }
 .issue.quiet .bang { background: none; color: var(--ink-muted); }
 .issue.quiet .issue-title { color: var(--ink-strong); }
-.issues { padding: 8px 14px 0; display: grid; gap: 0; }
+.issues { padding: 10px 12px 0; display: grid; gap: 8px; }
 .issues:not(:has(> :not([hidden]))) { display: none; }
 #load-error .issue-title { color: var(--signal-dark); }
 
-/* Step 1: the intake's check items as hairline sections */
+/* Step 1: Intake checks — Reference card in full-list mode, Primary Action card in focus mode */
+#check-view > .pane-head { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border-card); border-top: 3px solid var(--warning-bar); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
 .checks { display: grid; gap: 0; }
-.check { background: none; border: 0; border-top: 1px solid var(--warning-line); border-radius: 0; padding: 12px 0; display: grid; gap: 8px; }
+.checks:not(.checks-focus) { background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; }
+.check { background: var(--surface); border: 0; border-top: 1px solid var(--border-row); border-radius: 0; padding: 12px 14px; display: grid; gap: 8px; }
+.checks:not(.checks-focus) > :first-child { border-top: 0; }
 .check .bang { background: none; color: var(--warning-ink); }
 /* An alert check (prior.carrier-is-quoted): red, as the carrier page's card says it */
-.check.alert { border-color: var(--signal-line); }
+.check.alert { border-color: var(--signal-line); background: var(--signal-soft); }
 .check.alert .bang { background: none; color: var(--signal); }
 
 .check-text { flex: 1; min-width: 0; display: grid; gap: 2px; }
@@ -353,25 +368,45 @@ body:has(#settings:not([hidden])) .panel-head,
 .check-body textarea { resize: vertical; min-height: 68px; }
 .check-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .check-choices { display: flex; flex-wrap: wrap; gap: 6px; }
-/* Focus mode (one open check at a time on the canvas: Check and CheckSerious) */
-.check.check-focus, .check.check-focus.alert { border-top: 0; padding: 0; gap: 14px; }
-.check-eyebrow { padding-right: 28px; font-size: 13px; line-height: 1.3; font-weight: 500; color: var(--ink-muted); }
-.check-eyebrow .serious { font-weight: 600; color: var(--signal-dark); }
-.check-focus-body { display: grid; gap: 12px; }
+/* Focus mode (Primary Action card: Check and CheckSerious) */
+.check.check-focus, .check.check-focus.alert { border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); background: var(--surface); overflow: hidden; padding: 0; gap: 0; }
+.check.check-focus.alert { border-color: var(--signal-line); }
+.check-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; background: var(--amber-soft); border-bottom: 1px solid var(--warning-line); }
+.check.check-focus.alert .check-card-head { background: var(--signal-soft); border-bottom-color: var(--signal-line); }
+.check.check-focus .pane-head { gap: 0; }
+.check-eyebrow { padding-right: 0; font-size: 13px; line-height: 1.3; font-weight: 600; color: var(--amber); }
+.check-eyebrow .serious { font-weight: 700; color: var(--signal-dark); }
+.check.check-focus.alert .check-eyebrow { color: var(--signal-dark); }
+.check.check-focus #check-title { padding: 12px 14px 4px; font-size: 21px; line-height: 1.25; }
+.check.check-focus #check-sub { padding: 0 14px 12px; font-size: 14px; line-height: 1.45; }
+.check-focus-body { padding: 0 14px 0; display: grid; gap: 12px; }
+.check-focus-body:not(:has(.check-foot, .check-serious-note)) { padding-bottom: 14px; }
 .check-focus-body :is(input, select, textarea) { min-height: 44px; padding: 6px 12px; font-size: 16px; font-weight: 500; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); width: 100%; }
 .check-focus-body textarea { resize: vertical; min-height: 84px; font-size: 14px; font-weight: 400; }
-.check-focus .check-actions :is(.primary, .tinted, .ghost) { min-height: 40px; }
-.check-decide-later { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 44px; font-size: 15px; }
-.check-serious-note { font-size: 13px; line-height: 1.45; color: var(--ink-muted); }
-.check-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding-top: 2px; }
-#see-all-checks { min-height: 32px; font-size: 14px; font-weight: 600; }
-.one-check-link { justify-self: start; }
-.checked-row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-radius: 0; background: none; border: 0; border-top: 1px solid var(--border-row); font-size: 14px; }
-.checked-row .tick { flex: 0 0 16px; width: 16px; height: 20px; display: grid; place-items: center; border-radius: 0; background: none; color: var(--success); font-weight: 600; font-size: 13px; }
+.check-focus-body .check-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.check-focus-body .check-actions:has(> .check-choices) { display: flex; flex-wrap: wrap; }
+.check-focus-body .check-actions > button { min-height: 44px; padding: 0 14px; font-size: 14px; font-weight: 600; }
+.check-focus-body .check-actions > button:only-child { grid-column: 1 / -1; }
+.check-focus-body .check-choices button { min-height: 44px; padding: 0 16px; font-size: 14px; font-weight: 500; }
+.check-foot { margin: 2px -14px 0; padding: 10px 14px; background: var(--recessed); border-top: 1px solid var(--border-row); display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
+.check-decide-later { min-height: 40px; width: 100%; }
+.check-serious-note { margin: 2px -14px 0; padding: 10px 14px; background: var(--recessed); border-top: 1px solid var(--border-row); font-size: 13px; line-height: 1.4; color: var(--ink-muted); text-wrap: pretty; }
+.one-check-link { justify-self: start; font-size: 13px; font-weight: 500; }
+/* Page & View Tools card in Intake checks */
+.tools-card { background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; display: grid; }
+.tools-pill { margin: 10px 12px; min-height: 40px; padding: 6px 14px; border-radius: 999px; background: var(--brand-soft); border: 1px solid var(--border-active); color: var(--brand-dark); font-size: 14px; font-weight: 600; text-align: center; cursor: pointer; }
+.tools-pill:hover { background: var(--surface-selected); border-color: var(--brand); }
+.tools-card > .list-row { padding: 10px 14px; border-top: 1px solid var(--border-row); }
+.tools-card > .list-row:first-child { border-top: 0; }
+/* Checked items and Cleanup notes in full-list mode: concise Reference card rows. */
+.checked-row { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 14px; border-top: 1px solid var(--border-row); font-size: 13px; color: var(--ink-secondary); }
+.checked-row .tick { flex-shrink: 0; width: 16px; text-align: center; color: var(--success); font-family: var(--font-sans); font-weight: 600; font-size: 13px; }
 .checked-row .undo-btn { flex-shrink: 0; width: 32px; height: 32px; color: var(--brand); }
 .checked-row .undo-btn svg { width: 17px; height: 17px; }
 .checked-row .grow { color: var(--ink); }
 .checked-row .link { color: var(--brand); font-weight: 500; }
+details.fold.cleanup > summary.list-row { padding: 10px 14px; }
+.cleanup .card { padding: 4px 14px 10px; background: var(--surface-open); }
 .cleanup .card > p { margin: 0; padding: 8px 0; font-size: 13px; line-height: 1.45; color: var(--ink-secondary); overflow-wrap: anywhere; }
 
 /* All client details: a hairline row under the checks and a button by the client's name open the drawer */
@@ -411,30 +446,34 @@ body:has(#settings:not([hidden])) .panel-head,
 .field.flagged :is(input, select, textarea) { border-color: var(--warning-line); background: var(--warning-soft); }
 .field.pulse :is(input, select, textarea) { outline: 3px solid color-mix(in srgb, var(--focus) 35%, transparent); }
 
-/* Steps 2 and 3: the raters to open, the unit pickers, the answers */
-.waiting { padding: 14px; }
+/* Steps 2 and 3: the raters to open, the unit pickers, grouped Review, focused Need, and All answers */
+.waiting { margin: 10px 12px 0; padding: 14px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
 .rater-logos { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; }
 .rater-logo { display: inline-flex; align-items: center; padding: 6px 8px; margin: -6px -8px; background: none; border: 0; border-radius: var(--radius-sm); cursor: pointer; }
 .rater-logo:hover { background: var(--surface-sunken); }
 .rater-logos img { height: 14px; width: auto; display: block; }
-.pickers { padding: 8px 14px 0; display: grid; gap: 6px; }
+.pickers { margin: 10px 12px 0; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); display: grid; gap: 8px; }
 .pickers:empty { display: none; }
 .picker { display: flex; align-items: center; gap: 8px; }
 .picker label { flex: 0 0 auto; min-width: 56px; font-size: 13px; font-weight: 600; color: var(--ink-secondary); }
 .picker select { flex: 1; min-width: 0; min-height: 34px; padding: 3px 8px; font-size: 13px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-control); border-radius: var(--radius-md); }
 .feed { margin-top: 8px; }
-.feed-head { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 6px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 36px; border-bottom: 1px solid var(--border-row); }
+.feed-head { position: sticky; top: 0; z-index: 2; background: var(--surface); padding: 8px 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 36px; border-bottom: 1px solid var(--border-card); }
+#feed[data-all="true"] { margin-top: 0; padding-bottom: 14px; }
+#feed[data-all="true"] .feed-head { margin: 10px 12px 0; border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); top: 6px; }
 .feed-title { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; }
 .feed-title .eyebrow { flex: 0 1 auto; min-width: 0; }
+.feed-title > #key-btn:not([hidden]) { margin-left: auto; }
+.feed-title:not(:has(> #key-btn:not([hidden]))) > .help-link { margin-left: auto; }
 /* The earlier pages of this tab: a quiet menu in the title, "This page" first */
 .page-menu { flex: 0 1 auto; min-width: 0; max-width: 100%; height: 28px; padding: 0 4px; border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--ink-strong); font-size: 13px; font-weight: 600; cursor: pointer; }
 .page-menu:hover { background: var(--surface-hover); }
-.key-btn { flex: 0 0 auto; min-width: 20px; height: 24px; padding: 0 2px; display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--brand); font: 600 13px/1 var(--font-sans); text-decoration: underline; text-underline-offset: 2px; }
-/* The '?' on each view, opening the agent's guide at its section (help-link.jsx): quiet text link. */
-.help-link { flex: 0 0 auto; min-width: 20px; height: 24px; padding: 0 2px; display: inline-grid; place-items: center; border: 0; border-radius: var(--radius-sm); color: var(--ink-muted); font-size: 13px; font-weight: 500; line-height: 1; text-decoration: underline; text-underline-offset: 2px; }
-.help-link:hover { background: var(--surface-hover); color: var(--ink-strong); }
-.key-btn:hover { background: var(--surface-hover); color: var(--brand-dark); }
-.key-btn[aria-expanded="true"] { background: var(--surface-hover); color: var(--ink-strong); text-decoration: none; }
+.key-btn { flex: 0 0 auto; min-width: 24px; height: 24px; padding: 0 6px; display: inline-grid; place-items: center; border: 1px solid var(--border-card); border-radius: 999px; background: var(--surface); color: var(--brand); font: 600 13px/1 var(--font-sans); text-decoration: none; }
+/* The '?' on each view, opening the agent's guide at its section (help-link.jsx): compact pill in corner. */
+.help-link { flex: 0 0 auto; min-width: 24px; height: 24px; padding: 0 7px; display: inline-grid; place-items: center; border: 1px solid var(--border-card); border-radius: 999px; background: var(--surface); color: var(--ink-muted); font-size: 13px; font-weight: 600; line-height: 1; text-decoration: none; }
+.help-link:hover { background: var(--surface-hover); color: var(--ink-strong); border-color: var(--border-control); }
+.key-btn:hover { background: var(--surface-hover); color: var(--brand-dark); border-color: var(--border-control); }
+.key-btn[aria-expanded="true"] { background: var(--brand-soft); color: var(--brand-dark); border-color: var(--border-active); }
 .past-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 14px 0; }
 /* An earlier page's answers are read-only: their sources and See in intake stay. */
 .past .change, .past .mark-done, .past .mark-done-note, .past .vin-fix, .past .show-on-page, .past .opts, .past .opt-select, .past .change-slot, .past .row-say,
@@ -446,19 +485,28 @@ body:has(#settings:not([hidden])) .panel-head,
 /* Need you and Filled take the amber/yellow and green their answers carry. */
 .filters button[data-filter="needs"] { color: var(--warning-ink); }
 .filters button[data-filter="done"] { color: var(--success-ink); }
-.report-age { padding: 6px 14px 0; font-size: 13px; color: var(--ink-muted); }
+.report-age { padding: 8px 14px 0; font-size: 13px; color: var(--ink-muted); }
 .report { display: grid; min-height: 1px; }
 
 /* Post-fill grouped Review and All answers header (review-view.jsx, canvas screens 10 and 11). */
-.review { padding: 14px 14px 4px; display: grid; gap: 18px; }
-.review-all-head { gap: 8px; padding-bottom: 6px; }
-.review .pane-head { display: grid; gap: 6px; }
-.review .pane-head h2 { margin: 0; font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; color: var(--ink-strong); }
+.review { padding: 10px 12px 0; display: grid; gap: 10px; }
+.review-all-head { gap: 6px; padding: 10px 12px 0; }
+.review.review-all-head .pane-head { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border-card); border-top: 3px solid var(--brand); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
+.review .pane-head { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border-card); border-top: 3px solid var(--brand); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); display: grid; gap: 4px; position: relative; }
+.review .pane-head h2 { margin: 0; padding-right: 36px; font-size: 21px; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; color: var(--ink-strong); }
 .review-back { justify-self: start; }
-.review-group { display: grid; gap: 2px; }
-.review-group-head { margin: 0 0 2px; font-size: 13px; font-weight: 600; color: var(--ink-secondary); }
-.review-rows { display: grid; border-top: 1px solid var(--border-row); }
-.review-row { width: 100%; min-height: 40px; padding: 10px 0; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border: 0; border-bottom: 1px solid var(--border-row); border-radius: 0; background: transparent; color: var(--ink-strong); text-align: left; cursor: pointer; }
+.review-group { background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; display: grid; gap: 0; }
+.primary-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; background: var(--amber-soft); border-bottom: 1px solid var(--warning-line); }
+.primary-card-head .review-group-head { margin: 0; color: var(--amber); }
+.card-count { font-size: 13px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--surface); color: var(--amber); border: 1px solid var(--warning-line); font-variant-numeric: tabular-nums; }
+.reference-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; background: #f8fafc; border-bottom: 1px solid var(--border-row); }
+.reference-head .review-group-head { margin: 0; color: var(--ink-secondary); }
+.reference-badge { font-size: 13px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--standard-soft); color: var(--standard-ink); white-space: nowrap; }
+.review-group-head { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink-secondary); }
+.review-rows { display: grid; border-top: 0; }
+.review-row { width: 100%; min-height: 40px; padding: 10px 14px; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; border: 0; border-bottom: 1px solid var(--border-row); border-radius: 0; background: transparent; color: var(--ink-strong); text-align: left; cursor: pointer; }
+.review-row:last-child { border-bottom: 0; }
+#review-worth .review-row { min-height: 36px; padding: 8px 14px; }
 .review-row:hover { background: var(--surface-hover); }
 .review-row-main { flex: 1 1 auto; min-width: 0; display: grid; gap: 2px; }
 .review-row-label { font-size: 14px; font-weight: 500; line-height: 1.35; color: var(--ink-strong); overflow-wrap: anywhere; }
@@ -467,30 +515,50 @@ body:has(#settings:not([hidden])) .panel-head,
 .review-row[data-tone="amber"] .review-row-sub { color: var(--amber); }
 .review-row[data-tone="ai"] .review-row-sub, .review-row[data-tone="ai"] .review-row-val { color: var(--ai); }
 .review-row-val { flex: 0 1 46%; min-width: 0; font-size: 13px; font-weight: 500; line-height: 1.35; color: var(--ink-strong); text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.review-see-all { justify-self: start; font-size: 13px; }
+/* Page & View Tools card across Grouped Review, Focus Need, and All answers */
+.review-tools { background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); padding: 10px 12px; display: grid; gap: 8px; }
+.review-see-all { width: 100%; min-height: 40px; padding: 6px 14px; border-radius: 999px; background: var(--brand-soft); border: 1px solid var(--border-active); color: var(--brand-dark); font-size: 14px; font-weight: 600; text-decoration: none; text-align: center; }
+.review-see-all:hover { background: var(--surface-selected); border-color: var(--brand); color: var(--brand-dark); }
+.feed-tools { margin: 10px 12px 14px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); padding: 4px 12px; display: grid; }
+.feed-tools:has(> #unmark[hidden]) { display: none; }
+.unmark { margin: 0; width: 100%; min-height: 38px; padding: 6px 10px; text-align: center; text-decoration: none; font-weight: 500; color: var(--ink-secondary); }
+.unmark:hover { color: var(--ink-strong); }
+/* Grouped Review: join .review-tools (top) and .feed-tools (bottom) when nothing visible in #feed sits between them */
+#page-view:not(:has(#feed[data-grouped="true"] .feed-head:has(#page-menu:not([hidden])))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .review-tools { border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
+#page-view:not(:has(#feed[data-grouped="true"] .feed-head:has(#page-menu:not([hidden])))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .feed-tools { margin: 0 12px 14px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
+#page-view:not(:has(.feed-tools > #unmark:not([hidden]))):not(:has(#report[data-focus="need"])) #review { padding-bottom: 14px; }
+/* R3 Bug 1 & Bug 2: hide duplicate .row.need under #review and empty .feed-head in grouped Review */
 #feed[data-grouped="true"] { margin-top: 0; }
 #feed[data-grouped="true"] :is(#feed-title, #key-btn, #filters, #answer-key, #feed-empty) { display: none; }
-#feed[data-grouped="true"] .feed-head:not(:has(#page-menu:not([hidden]))) { border-bottom: 0; min-height: 0; padding-top: 2px; padding-bottom: 2px; justify-content: flex-end; background: transparent; position: static; }
+#feed[data-grouped="true"] .feed-head .help-link { display: none; }
+#feed[data-grouped="true"] .feed-head:not(:has(#page-menu:not([hidden]))) { display: none; }
+#feed[data-grouped="true"] .feed-head { background: transparent; border-bottom: 0; padding: 6px 12px 0; position: static; }
 #feed[data-grouped="true"] .row:not(.need) { display: none; }
 #feed[data-grouped="true"] .rows:not(:has(> .row.need)) { border-top: 0; border-bottom: 0; }
+#feed[data-grouped="true"] #report:not([data-focus="need"]) > .rows { display: none; }
+#feed[data-grouped="true"] #report:not([data-focus="need"]):not(:has(> :not(.rows):not(:empty):not([hidden]))) { min-height: 0; }
 /* When a need is open in focus mode (Phase 7, canvas screens 12-16), put the focused need row
    above "See all N answers" and hide Review's grouped lists so only that need and the link show. */
 #page-view:has(#report[data-focus="need"]) { display: flex; flex-direction: column; }
 #page-view:has(#report[data-focus="need"]) > #feed-root { order: 2; }
 #page-view:has(#report[data-focus="need"]) > #review-root { order: 3; }
-#page-view:has(#report[data-focus="need"]) #review { padding-top: 4px; padding-bottom: 12px; }
+#page-view:has(#report[data-focus="need"]) #review { padding-top: 0; padding-bottom: 14px; }
 #page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }
+#page-view:has(#report[data-focus="need"]):not(:has(.feed-tools > #unmark:not([hidden]))) #review { padding-top: 10px; }
+#page-view:has(#report[data-focus="need"]):has(.feed-tools > #unmark:not([hidden])) .feed-tools { margin: 10px 12px 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
+#page-view:has(#report[data-focus="need"]):has(.feed-tools > #unmark:not([hidden])) .review-tools { border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
 /* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
 .report-head { display: contents; }
-.report > .issue, .report > .ai-holder, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 8px 14px 0; }
-.report > .rows { margin-top: 8px; }
+.report > .issue, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 10px 12px 0; }
+.report > .ai-holder { margin: 10px 12px 0; padding: 10px 12px; background: var(--ai-soft); border: 1px solid var(--ai-line); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
+.report > .rows { margin-top: 10px; }
 .report > .rows:first-child { margin-top: 0; }
+#feed[data-all="true"] .report > .rows { margin: 10px 12px 0; border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; }
 /* The feed's filters (setFilter): what needs the agent, or what is in. */
 .report[data-filter="needs"] .row:not(.need), .report[data-filter="needs"] .row.need.resolved { display: none; }
 .report[data-filter="done"] .row.need:not(.resolved) { display: none; }
 .note-line { font-size: 13px; color: var(--ink-secondary); text-wrap: pretty; }
 .feed-empty { padding: 22px 14px; text-align: center; font-size: 14px; color: var(--ink-muted); }
-.unmark { margin: 8px 14px 12px; }
 
 /* One hairline row per answer: what it is, its answer, where it came from; opens in place */
 .rows { display: grid; background: var(--surface); border-top: 1px solid var(--border-row); border-bottom: 1px solid var(--border-row); }
@@ -535,7 +603,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .tag.ai { color: var(--ai-ink); background: none; }
 .tag.you { color: var(--success-ink); background: none; }
 .tag.page, .tag.clicked { color: var(--ink-muted); background: none; font-weight: 500; }
-.answer-key { margin: 8px 14px 0; padding: 10px 0; display: grid; gap: 8px; background: none; border: 0; border-top: 1px solid var(--border-row); border-bottom: 1px solid var(--border-row); border-radius: 0; }
+.answer-key { margin: 10px 12px 0; padding: 12px 14px; display: grid; gap: 8px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
 .key-plain { font-size: 13px; color: var(--ink-secondary); }
 .key-line { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
 .key-title { font-size: 13px; color: var(--ink-muted); margin-right: 2px; }
@@ -574,28 +642,51 @@ body:has(#settings:not([hidden])) .panel-head,
 .need-note.bad { color: var(--signal-dark); }
 .need-where { font-size: 13px; color: var(--warning-ink); }
 .options { font-size: 13px; color: var(--ink-muted); overflow-wrap: anywhere; }
+.need-card-head { display: none; }
 .need-eyebrow { display: none; }
 .mark-done-note { margin: 0; font-size: 13px; line-height: 1.4; color: var(--ink-muted); text-wrap: pretty; }
 .row.need.resolved .row-icon { color: var(--success); background: none; border: 0; }
 .row.need.resolved .row-value { color: var(--ink-strong); }
 
-/* Focused NeedRow outside All answers (canvas screens 12-16): Needs you · k of n eyebrow, 22px
-   question title, vertical full-width 44px choices, and quiet violet AI note. */
-#report[data-focus="need"] > .rows { border-top: 0; border-bottom: 0; margin-top: 0; }
+/* Focused NeedRow outside All answers (V2 Primary Action Cockpit card): soft tinted header band with ? pill,
+   21px title + compact status badge, concise single-paragraph reason, side-by-side 44px actions, and recessed caveat strip. */
+#report[data-focus="need"] > .rows { background: transparent; border-top: 0; border-bottom: 0; margin-top: 0; }
 #report[data-focus="need"] .rows > .row:not(.need) { display: none; }
 /* Collapse closed need rows visually while keeping their row-head boxes addressable by keyboard
    and by the Luna harness's openRow() before it opens one. */
 #report[data-focus="need"] .rows > .row.need:not(.open) { max-height: 1px; min-height: 0; overflow: hidden; padding: 0; margin: 0; border: 0; opacity: 0; }
 #report[data-focus="need"] .rows > .row.need:not(.open) > .row-head { min-height: 1px; padding: 0; }
-#report[data-focus="need"] .row.need.open { background: var(--surface); border-top: 0; padding-top: 12px; padding-bottom: 4px; }
-#report[data-focus="need"] .row.need.open .need-eyebrow { display: block; padding: 0 14px 4px; }
-#report[data-focus="need"] .row.need.open .row-head { padding: 4px 14px 8px; align-items: flex-start; }
+#report[data-focus="need"] .row.need.open { margin: 10px 12px 0; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; padding: 0; }
+#report[data-focus="need"] .row.need.open .need-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; background: var(--amber-soft); border-bottom: 1px solid var(--warning-line); }
+#report[data-focus="need"] .row.need.open.failed:not(.resolved) .need-card-head { background: var(--signal-soft); border-bottom-color: var(--signal-line); }
+#report[data-focus="need"] .row.need.open.pending .need-card-head { background: var(--ai-soft); border-bottom-color: var(--ai-line); }
+#report[data-focus="need"] .row.need.open.resolved .need-card-head { background: var(--success-soft); border-bottom-color: var(--border-card); }
+#report[data-focus="need"] .row.need.open .need-eyebrow { display: block; padding: 0; margin: 0; }
+#report[data-focus="need"] .row.need.open.failed:not(.resolved) .need-eyebrow { color: var(--signal-dark); }
+#report[data-focus="need"] .row.need.open.pending .need-eyebrow { color: var(--ai-ink); }
+#report[data-focus="need"] .row.need.open.resolved .need-eyebrow { color: var(--success-ink); }
+#report[data-focus="need"] .row.need.open .row-head { padding: 12px 14px 6px; align-items: flex-start; }
 #report[data-focus="need"] .row.need.open .row-icon { display: none; }
-#report[data-focus="need"] .row.need.open .row-label { white-space: normal; overflow: visible; text-overflow: clip; font-size: 22px; font-weight: 600; line-height: 1.2; letter-spacing: -0.015em; color: var(--ink-strong); }
-#report[data-focus="need"] .row.need.open .row-value { font-size: 13px; font-weight: 500; color: var(--amber); }
-#report[data-focus="need"] .row.need.open .row-body { padding: 2px 14px 14px; gap: 10px; }
+#report[data-focus="need"] .row.need.open .row-text { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px; }
+#report[data-focus="need"] .row.need.open .row-label { flex: 1 1 auto; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; font-size: 21px; font-weight: 600; line-height: 1.25; letter-spacing: -0.015em; color: var(--ink-strong); }
+#report[data-focus="need"] .row.need.open .row-value { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; background: var(--warning-soft); color: var(--amber); font-size: 13px; font-weight: 600; white-space: nowrap; }
+#report[data-focus="need"] .row.need.open.failed:not(.resolved) .row-value { background: var(--signal-soft); color: var(--signal-dark); }
+#report[data-focus="need"] .row.need.open.resolved .row-value { background: var(--success-soft); color: var(--success-ink); }
+#report[data-focus="need"] .row.need.open[data-wait="Left for you"]:not(.resolved) .row-value { display: none; }
+#report[data-focus="need"] .row.need.open .row-body { padding: 4px 14px 0; gap: 10px; }
+#report[data-focus="need"] .row.need.open .row-body:not(:has(.mark-done-note:not([hidden]))) { padding-bottom: 14px; }
+#report[data-focus="need"] .row.need.open .why { font-size: 14px; line-height: 1.45; color: var(--ink-secondary); }
+#report[data-focus="need"] .row.need.open.failed:not(.resolved) .why { color: var(--signal-dark); }
+#report[data-focus="need"] .row.need.open .why:not(:empty) ~ .row-say { display: none; }
 #report[data-focus="need"] .row.need.open .opts { gap: 8px; }
 #report[data-focus="need"] .row.need.open .opt-btn { width: 100%; min-height: 44px; padding: 8px 14px; }
+#report[data-focus="need"] .row.need.open .row-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+#report[data-focus="need"] .row.need.open .row-actions button { min-height: 44px; padding: 8px 12px; font-size: 14px; font-weight: 600; text-align: center; white-space: normal; }
+#report[data-focus="need"] .row.need.open .row-actions .show-on-page { color: #ffffff; background: var(--brand); border-color: var(--brand); }
+#report[data-focus="need"] .row.need.open .row-actions .show-on-page:hover:not(:disabled) { background: var(--brand-dark); border-color: var(--brand-dark); }
+#report[data-focus="need"] .row.need.open .row-actions .mark-done { color: var(--ink-strong); background: var(--surface); border-color: var(--border-control); }
+#report[data-focus="need"] .row.need.open .row-actions :is(.vin-fix, button:only-child) { grid-column: 1 / -1; }
+#report[data-focus="need"] .row.need.open .mark-done-note { order: 5; margin: 4px -14px 0; padding: 10px 14px; background: var(--recessed); border-top: 1px solid var(--border-row); color: var(--ink-muted); }
 #report[data-focus="need"] .row.need.open .ai-slot > :is(.ai-box, .ai-done) { padding: 10px 12px; background: var(--ai-soft); border-top: 0; border-left: 3px solid var(--ai); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 
 /* The assistant, on its row and above the list */
@@ -861,7 +952,6 @@ body:has(#settings:not([hidden])) .panel-head,
   .top-right { padding-right: 10px; }
   .client-title { margin-left: 4px; }
   .carrier-line, .client-meta, .steps, .screen-head, .review, .feed-head, .dock-body, .foot-row { padding-left: 10px; padding-right: 10px; }
-  .view:not(:has(.notices:not(:empty):not([hidden]))) #home > .help-link { right: 10px; }
   .client-note { padding-left: 10px; padding-right: 10px; }
   .client-tools { padding-left: 8px; padding-right: 8px; gap: 1px; }
   .btn-group > button { padding: 0 9px; }
