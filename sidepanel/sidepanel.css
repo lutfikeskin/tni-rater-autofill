@@ -272,6 +272,7 @@ body:has(#settings:not([hidden])) .panel-head,
 .screen-head:has(#screen-eyebrow[data-tone="ai"]) { border-top-color: var(--ai); }
 .screen-head > .help-link { position: absolute; top: 12px; right: 12px; }
 .view:has(#owner-note:not([hidden])) #screen-head[data-screen="owner"] { position: absolute; top: 0; left: 0; width: 1px; height: 1px; padding: 0; margin: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; pointer-events: none; }
+.view:has(#owner-note:not([hidden])) #screen-head[data-screen="owner"] > .help-link { display: none; }
 .screen-eyebrow { padding-right: 36px; font: 600 13px/1.3 var(--font-sans); color: var(--ink-muted); }
 .screen-eyebrow[data-tone="blue"] { color: var(--brand); }
 .screen-eyebrow[data-tone="warn"] { color: var(--warning-ink); }
@@ -353,6 +354,7 @@ body:has(#settings:not([hidden])) .panel-head,
 #check-view > .pane-head { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border-card); border-top: 3px solid var(--warning-bar); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
 .checks { display: grid; gap: 0; }
 .checks:not(.checks-focus) { background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; }
+.checks:not(.checks-focus):empty { display: none; }
 .check { background: var(--surface); border: 0; border-top: 1px solid var(--border-row); border-radius: 0; padding: 12px 14px; display: grid; gap: 8px; }
 .checks:not(.checks-focus) > :first-child { border-top: 0; }
 .check .bang { background: none; color: var(--warning-ink); }
@@ -424,7 +426,7 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .section-body { display: grid; background: none; border: 0; border-radius: 0; overflow: hidden; }
 .item-title { margin: 0; padding: 8px 0 2px; color: var(--ink-muted); font: 600 13px/1.3 var(--font-sans); border-top: 1px solid var(--border-row); }
 /* Dense rows (label and box on one line, the box no taller than its text). */
-.field { scroll-margin-top: 12px; display: grid; grid-template-columns: 42% 1fr; gap: 8px; align-items: center; min-height: 30px; padding: 3px 0; border-top: 1px solid var(--border-row); }
+.field { scroll-margin-top: 12px; display: grid; grid-template-columns: 42% minmax(0, 1fr); gap: 8px; align-items: center; min-height: 30px; padding: 3px 0; border-top: 1px solid var(--border-row); }
 .section-body > .field:first-child, .item-title + .field { border-top: 0; }
 .field label { color: var(--ink-secondary); font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
 .field :is(input, select, textarea) { min-height: 28px; width: 100%; padding: 2px 8px; color: var(--ink-strong); background: var(--surface-sunken); border: 1px solid transparent; border-radius: var(--radius-sm); font-size: 13px; }
@@ -524,8 +526,8 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .unmark { margin: 0; width: 100%; min-height: 38px; padding: 6px 10px; text-align: center; text-decoration: none; font-weight: 500; color: var(--ink-secondary); }
 .unmark:hover { color: var(--ink-strong); }
 /* Grouped Review: join .review-tools (top) and .feed-tools (bottom) when nothing visible in #feed sits between them */
-#page-view:not(:has(#feed[data-grouped="true"] .feed-head:has(#page-menu:not([hidden])))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .review-tools { border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
-#page-view:not(:has(#feed[data-grouped="true"] .feed-head:has(#page-menu:not([hidden])))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .feed-tools { margin: 0 12px 14px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
+#page-view:has(#feed[data-grouped="true"]):has(.review-tools):not(:has(#feed[data-grouped="true"] .feed-head #page-menu:not([hidden]))):not(:has(#feed[data-grouped="true"] #report-age:not([hidden]))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .review-tools { border-radius: var(--radius-lg) var(--radius-lg) 0 0; border-bottom: 0; }
+#page-view:has(#feed[data-grouped="true"]):has(.review-tools):not(:has(#feed[data-grouped="true"] .feed-head #page-menu:not([hidden]))):not(:has(#feed[data-grouped="true"] #report-age:not([hidden]))):not(:has(#report > :is(.ai-holder:not(:empty), .report-head:not(:empty), .issue:not([hidden]), .note-line:not([hidden])))):has(.feed-tools > #unmark:not([hidden])):not(:has(#report[data-focus="need"])) .feed-tools { margin: 0 12px 14px; border-radius: 0 0 var(--radius-lg) var(--radius-lg); border-top: 1px solid var(--border-row); }
 #page-view:not(:has(.feed-tools > #unmark:not([hidden]))):not(:has(#report[data-focus="need"])) #review { padding-bottom: 14px; }
 /* R3 Bug 1 & Bug 2: hide duplicate .row.need under #review and empty .feed-head in grouped Review */
 #feed[data-grouped="true"] { margin-top: 0; }
@@ -550,7 +552,7 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 /* What a report says above its list (notes-view.jsx) is laid out as the report's own. */
 .report-head { display: contents; }
 .report > .issue, .report > .note-line, .report-head > .issue, .report-head > .note-line { margin: 10px 12px 0; }
-.report > .ai-holder { margin: 10px 12px 0; padding: 10px 12px; background: var(--ai-soft); border: 1px solid var(--ai-line); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
+.report > .ai-holder:not(:empty) { margin: 10px 12px 0; padding: 10px 12px; background: var(--ai-soft); border: 1px solid var(--ai-line); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); }
 .report > .rows { margin-top: 10px; }
 .report > .rows:first-child { margin-top: 0; }
 #feed[data-all="true"] .report > .rows { margin: 10px 12px 0; border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; }
@@ -669,7 +671,8 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 #report[data-focus="need"] .row.need.open .row-icon { display: none; }
 #report[data-focus="need"] .row.need.open .row-text { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px; }
 #report[data-focus="need"] .row.need.open .row-label { flex: 1 1 auto; min-width: 0; white-space: normal; overflow: visible; text-overflow: clip; font-size: 21px; font-weight: 600; line-height: 1.25; letter-spacing: -0.015em; color: var(--ink-strong); }
-#report[data-focus="need"] .row.need.open .row-value { flex: 0 0 auto; padding: 2px 8px; border-radius: 999px; background: var(--warning-soft); color: var(--amber); font-size: 13px; font-weight: 600; white-space: nowrap; }
+#report[data-focus="need"] .row.need.open .row-value { flex: 0 1 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; padding: 2px 8px; border-radius: 999px; background: var(--warning-soft); color: var(--amber); font-size: 13px; font-weight: 600; white-space: nowrap; }
+#report[data-focus="need"] .row.need.open.pending:not(.resolved) .row-value { background: var(--ai-soft); color: var(--ai-ink); }
 #report[data-focus="need"] .row.need.open.failed:not(.resolved) .row-value { background: var(--signal-soft); color: var(--signal-dark); }
 #report[data-focus="need"] .row.need.open.resolved .row-value { background: var(--success-soft); color: var(--success-ink); }
 #report[data-focus="need"] .row.need.open[data-wait="Left for you"]:not(.resolved) .row-value { display: none; }
@@ -826,7 +829,7 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .advanced .actions .ghost { padding: 0 10px; font-size: 13px; }
 
 /* The intake PDF, in a sheet over the panel */
-.sheet { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; background: rgba(23, 34, 43, 0.28); }
+.sheet { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; overflow: clip; background: rgba(23, 34, 43, 0.28); }
 .sheet-scrim { flex: 0 0 12px; }
 /* A column, not fixed grid rows: the hint row is there only for a marked item, and with grid rows
    the whole-PDF view (no hint) shifted every row up and the footer covered the page controls. The
@@ -836,7 +839,7 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .sheet-head { display: flex; align-items: center; gap: 8px; padding: 16px 18px 12px; border-bottom: 1px solid var(--border-row); }
 .sheet-head h2 { font-size: 22px; line-height: 1.2; letter-spacing: -0.015em; font-weight: 600; color: var(--ink-strong); overflow-wrap: anywhere; }
 .sheet-sub { font-size: 13px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sheet-head .icon-btn { width: 32px; height: 32px; color: var(--ink-secondary); }
+.sheet-head .icon-btn { flex-shrink: 0; width: 32px; height: 32px; color: var(--ink-secondary); }
 .sheet-head .icon-btn svg { width: 16px; height: 16px; }
 .pdf-hint { display: flex; align-items: center; gap: 8px; padding: 8px 14px; background: var(--warning-soft); border-bottom: 1px solid var(--warning-line); color: var(--warning-ink); font-size: 13px; }
 .pdf-hint.filled { background: var(--surface-selected); border-bottom-color: var(--border-active); color: var(--brand-dark); }
@@ -861,9 +864,9 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 .sheet-foot .ghost { flex: 0 0 auto; min-height: 44px; }
 
 /* All client details, in a drawer from the right over the panel */
-.drawer { position: absolute; inset: 0; z-index: 6; display: flex; background: rgba(23, 34, 43, 0.28); }
+.drawer { position: absolute; inset: 0; z-index: 6; display: flex; overflow: clip; background: rgba(23, 34, 43, 0.28); }
 .drawer-scrim { flex: 1 1 auto; min-width: 20px; }
-.drawer-panel { flex: 0 0 auto; width: min(94%, 520px); min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--surface); box-shadow: -8px 0 30px rgba(17, 24, 39, 0.18); animation: slide-in .18s ease-out; }
+.drawer-panel { flex: 0 0 auto; width: min(94%, calc(100% - 20px), 520px); min-width: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); background: var(--surface); box-shadow: -8px 0 30px rgba(17, 24, 39, 0.18); animation: slide-in .18s ease-out; }
 .drawer-panel .sheet-head { background: var(--surface); }
 .drawer-panel .sheet-head h2 { font-size: 22px; }
 .drawer-body { min-height: 0; overflow: auto; padding: 8px 14px 24px; display: grid; gap: 6px; align-content: start; }
@@ -959,11 +962,15 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
   .pane { padding-left: 10px; padding-right: 10px; }
   .row-head { padding-left: 10px; padding-right: 10px; }
   .row-body { padding-left: 36px; padding-right: 10px; }
-  #report[data-focus="need"] .row.need.open .need-eyebrow,
   #report[data-focus="need"] .row.need.open .row-head,
   #report[data-focus="need"] .row.need.open .row-body { padding-left: 10px; padding-right: 10px; }
   .defaults-pill { padding: 0 2px; }
   .defaults-pill > span { display: none; }
+}
+@media (max-width: 380px) {
+  .drawer-panel .sheet-head { flex-wrap: wrap; padding: 14px 14px 10px; }
+  .drawer-panel .sheet-head > .grow { flex: 1 1 0; min-width: 0; }
+  .drawer-panel .sheet-head > #details-empty { order: 4; flex: 0 0 100%; min-height: 28px; white-space: normal; text-align: left; }
 }
 /* Reduced motion: nothing slides, spins or fades, before and after content included; the panel's
    scrolling follows it too (scrollBehavior in coordinator.js). docs/panel-ui.md, "Motion". */

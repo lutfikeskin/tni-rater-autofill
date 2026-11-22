@@ -430,3 +430,21 @@ test('Quote done lists the summary sheet\'s four counts, with marked done on its
   act(() => { state.dock = null; state.intake = null; state.view = 'home'; });
   expect(container.querySelector('#done-facts')).toBeNull();
 });
+
+test('owner screen with cards.owner omits #screen-head .help-link while keeping #screen-title in DOM', () => {
+  act(() => {
+    state.intake = /** @type {any} */ ({});
+    state.view = 'page';
+    state.dock = { phase: 'hold', button: 'fill', title: 'Another client’s quote?', hidden: false };
+    state.cards = { owner: { title: 'Another client’s quote?' } };
+  });
+  const { container } = render(<Screen />);
+  const head = $(container, 'screen-head');
+  expect(head.dataset.screen).toBe('owner');
+  expect(head.hidden).toBe(false);
+  expect($(container, 'screen-title').textContent).toBe('Another client’s quote?');
+  expect(head.querySelector('.help-link')).toBeNull();
+
+  act(() => { state.cards = {}; });
+  expect(head.querySelector('.help-link')?.getAttribute('href')).toBe('guide.html#page');
+});

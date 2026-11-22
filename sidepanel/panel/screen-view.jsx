@@ -74,6 +74,7 @@ function Screen({ scrollBehavior, summary } = {}) {
   const shown = useStore(panelStore, headShown);
   const d = useStore(panelStore, (s) => s.dock);
   const fillingFor = useStore(panelStore, (s) => s.fillingFor);
+  const hasOwnerCard = useStore(panelStore, (/** @type {PanelState} */ s) => Boolean(s.cards?.owner));
   const { eyebrow, title, sub, tone } = screenSaid(screen, d, fillingFor);
   // Read once each time the dock is drawn on Quote done, not on every store change.
   const facts = useMemo(() => (screen === 'finished' && summary ? doneFacts(summary()) : []), [screen, d, summary]);
@@ -127,7 +128,7 @@ function Screen({ scrollBehavior, summary } = {}) {
 
   return (
     <div id="screen-head" className="screen-head" hidden={!shown} data-screen={screen}>
-      <HelpLink topic={screen === 'start' ? 'home' : 'page'} />
+      {screen === 'owner' && hasOwnerCard ? null : <HelpLink topic={screen === 'start' ? 'home' : 'page'} />}
       <span id="screen-eyebrow" className="screen-eyebrow" data-tone={tone || undefined} hidden={!eyebrow}>{eyebrow}</span>
       <h2 id="screen-title" ref={titleRef} tabIndex={-1}>{title}</h2>
       <p id="screen-lead" className="screen-lead" hidden={!sub}>{sub}</p>
