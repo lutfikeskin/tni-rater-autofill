@@ -6,7 +6,7 @@
 // client wrote it and gets a warning instead.
 
 import { stateCode } from './quote-state.js';
-import { STATES, otherNotes, noPriorInsurance, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
+import { otherNotes, noPriorInsurance, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
 import { set } from './shared/record-paths.js';
 import { ownerRow, ownerRowNameDiffers } from './answers/owner.js';
 import { clean, cleanMultiline, parseLicense, plainLicense, splitName, toDate, toInt, toMoney, toPhone, vinProblem, yesNo } from './shared/parse.js';
