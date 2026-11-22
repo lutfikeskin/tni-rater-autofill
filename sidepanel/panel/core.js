@@ -1041,7 +1041,7 @@ async function restoreReports(tabId) {
     const live = e.key === front ? await liveItems(tabId, carrier, [...reviewItems(e.frames), ...answerItems(e.frames)], plan) : null;
     // A fill, another tab or another intake since the page was read: not made again here.
     if (state.reports.has(e.key) || state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) continue;
-    renderReport(liveFrames(e.frames, live), { tabId, page: e.page, carrier, active, plan, stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
+    renderReport(liveFrames(e.frames, live), { tabId, page: e.page, carrier, active, plan, stopped: !!e.stopped, leftOut: !!e.leftOut, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
   }
   refreshAnswers();
 }

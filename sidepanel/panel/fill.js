@@ -157,11 +157,16 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
   } else {
     results = await exec;
   }
+  // A frame of the page this call left out (framesReady, or the top frame alone after a timeout):
+  // said on what it returns (`leftOut`), so a fill's report tells the agent that part of the page
+  // wasn't read or filled.
+  const leftOut = !frameIds && 'frameIds' in target;
+  const said = (list) => (leftOut ? Object.assign(list, { leftOut: true }) : list);
   const again = results.filter((r) => r.documentId && !ready.has(r.documentId) && r.result == null).map((r) => r.frameId);
-  if (!again.length) return results;
+  if (!again.length) return said(results);
   await timed(injectKit(tabId, carrier, again), 4000);
   const retried = await chrome.scripting.executeScript({ target: { tabId, frameIds: again }, world, func, args });
-  return results.map((r) => retried.find((x) => x.frameId === r.frameId) ?? r);
+  return said(results.map((r) => retried.find((x) => x.frameId === r.frameId) ?? r));
 }
 
 // The page whose opening fill a hold kept back (fillPage): the quote's defaults question (agent
@@ -363,7 +368,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
     // fill the rest.
-    renderReport(frames, { ...ctx, plan, retrying, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
+    renderReport(frames, { ...ctx, plan, retrying, leftOut: !!results.leftOut, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
     if (!fillCurrent(ctx)) return;
     recordLayout(page);
     assistFrames = frames;
@@ -1077,7 +1082,7 @@ function renderReport(frames, ctx = {}) {
   const key = ctx.keptKey ?? reportKey(tabId, page, carrier, ctx.active ?? state.active);
   // Kept for the panel opened again (keepReport); one made again from what was kept isn't, nor
   // one that says nothing while its page is filled again.
-  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped,
+  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped, ...(ctx.leftOut ? { leftOut: true } : {}),
     // What earlier passes on this page filled, for the report shown again (restoreReports).
     filledBefore: Object.fromEntries(frames.flatMap((fr) => fr.kept ?? []).filter((x) => maps.filled?.get?.(x.key)).map((x) => [x.key, maps.filled.get(x.key)])), frames }); };
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
@@ -1100,6 +1105,8 @@ function renderReport(frames, ctx = {}) {
       ? (ctx.stopped
         ? { notice: `${REPORT.youStopped.title}. ${REPORT.youStopped.text}` }
         : { error: `${halted.stepUnread || ctx.restoredAt ? '' : REPORT.paused}${halted.reason ?? REPORT.reviewFirst}` })
+      // A frame left out (runKit `leftOut`) may hold the page's questions: not said as done.
+      : ctx.leftOut ? { notice: `${REPORT.leftOut.title}. ${REPORT.leftOut.text}` }
       : frames.some((f) => f.notDrawn) && !judged ? { notice: REPORT.noQuestions }
         : { notice: REPORT.nothingToFill, empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null, unlisted: frames.some((f) => f.unlisted),
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
@@ -1184,6 +1191,8 @@ function renderReport(frames, ctx = {}) {
       ? issueSaid({ tone: 'quiet', ...REPORT.youStopped })
       : issueSaid({ ...REPORT.fillStopped(halted.reason), role: 'alert' }) } : null,
     pageChanged ? { card: issueSaid({ ...pageChanged, role: 'alert' }) } : null,
+    // A frame of the page that never loaded was left out (runKit `leftOut`): its questions weren't read.
+    ctx.leftOut ? { card: issueSaid({ tone: 'warn', ...REPORT.leftOut }) } : null,
     advanced ? { done: REPORT.continued(count, advanced) } : null,
   ].filter(Boolean);
   const nodes = [

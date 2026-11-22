@@ -521,15 +521,17 @@ async function autoFill(page) {
     const covered = frames.some((f) => f.covered || f.coveredHelpers?.length);
     // Stopped by the agent: said as a stop, not as an error (as fillPage does).
     const stopped = state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted);
+    // A frame of the page left out of the fill (runKit `leftOut`): said in the report, as `covered`.
+    const leftOut = !!results.leftOut;
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
     const step = carrier.layoutSteps ? stepOfResults(carrier, results) : null;
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
-    const rendered = current && (newStep || unseen || held || covered || state.autoPaused || hasWarnings || state.assistPage === page);
-    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped }); assistFrames = frames; }
-    if (current && (newStep || unseen || held || covered)) showFinish({ auto: true });
+    const rendered = current && (newStep || unseen || held || covered || leftOut || state.autoPaused || hasWarnings || state.assistPage === page);
+    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped, leftOut }); assistFrames = frames; }
+    if (current && (newStep || unseen || held || covered || leftOut)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
     const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);

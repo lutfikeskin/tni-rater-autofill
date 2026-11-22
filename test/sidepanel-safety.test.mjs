@@ -867,6 +867,25 @@ test('fill report says when the carrier seems to have changed the page', () => {
   assert.equal(alarmIn(), undefined);
 });
 
+// Review of #596: a frame the panel left out of a fill (framesReady, or the top frame alone after a
+// timeout) had its questions neither read nor filled, and only the usage log said so. The report
+// says it above its list, and a page that read as having nothing to fill isn't said done.
+test('fill report says a frame of the page was left out, and such a page is not said done', () => {
+  const { context, box } = reportHarness({ tab: { id: 1, url: 'AddVehicle' } }, { pageOf: () => 'AddVehicle' });
+  const frame = { fields: 2, filled: [{ label: 'VIN', shown: '1FTBR3X87MKA12345' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  context.renderReport([frame], { tabId: 1, page: 'AddVehicle', leftOut: true });
+  assert.deepEqual(plain(headCards(box)), [{ tone: 'warn', title: 'Part of this page wasn’t filled',
+    text: 'A part of the page hadn’t loaded, so its questions weren’t read or filled. Check the page, then fill again.', notes: [], compare: [], actions: [], role: 'status' }]);
+  context.renderReport([frame], { tabId: 1, page: 'AddVehicle' });
+  assert.deepEqual(headOf(box), [], 'every frame filled: nothing said');
+  const empty = { fields: 0, filled: [], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  context.renderReport([empty], { tabId: 1, page: 'AddVehicle', leftOut: true });
+  assert.equal(context.state.reportFor.empty, undefined, 'not offered as done');
+  assert.match(context.state.reportFor.notice, /^Part of this page wasn’t filled. /);
+  context.renderReport([empty], { tabId: 1, page: 'AddVehicle' });
+  assert.equal(context.state.reportFor.empty, true);
+});
+
 // React PR (notes and cards, 2026-11-01): a fill that stopped short is said above the report's list, in
 // red and at once when the page or the panel stopped it ("Filling stopped", with its reason: a review
 // signal), quietly when the agent pressed Stop; a page continued says it is done. Drawn by
@@ -948,7 +967,7 @@ test('fill report says Continue wasn\'t clicked when something was open over it'
   assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }]), ['Lookup VIN wasn’t clicked']);
   assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }, { ...frame, covered: true }]), ['Lookup VIN and Continue weren’t clicked']);
   // A follow-up fill shows its report for it, as for a page held for the agent's check.
-  assert.match(extractFunction('autoFill'), /const covered = frames\.some\(\(f\) => f\.covered \|\| f\.coveredHelpers\?\.length\);[\s\S]{0,1500}const rendered = current && \([^)]*\bcovered\b[^)]*\);[\s\S]{0,120}if \(current && \(newStep \|\| unseen \|\| held \|\| covered\)\) showFinish/);
+  assert.match(extractFunction('autoFill'), /const covered = frames\.some\(\(f\) => f\.covered \|\| f\.coveredHelpers\?\.length\);[\s\S]{0,1500}const rendered = current && \([^)]*\bcovered\b[^)]*\);[\s\S]{0,120}if \(current && \(newStep \|\| unseen \|\| held \|\| covered \|\| leftOut\)\) showFinish/);
 });
 
 test('each item left for the agent has a labelled Mark done bound to its field and page', () => {
@@ -10870,6 +10889,20 @@ test('runKit and ensureRecorder fall back to the top frame when allFrames hangs,
   assert.deepEqual(noted, [[4, 'kit check'], [4, 'stop']]);
   assert.ok(kitTargets.some((x) => x.target.allFrames === true) && kitTargets.some((x) => Array.isArray(x.target.frameIds) && x.target.frameIds[0] === 0));
   assert.equal(stopBtn.disabled, true);
+});
+
+// Review of #596: what runKit returns says when a frame was left out of the call, for the report.
+test('runKit says on its results when a frame of the page was left out', async () => {
+  let ready = null;
+  const context = { state: {}, worldFor: () => 'ISOLATED', kitIn: () => 'k', kitBuild: { now: 'k' }, injectKit: async () => [], framesReady: async () => ready,
+    noteFrameTimeout() {}, Promise, Symbol, setTimeout, clearTimeout,
+    chrome: { scripting: { executeScript: async ({ target }) => (target.frameIds ?? [0, 5]).map((id) => ({ frameId: id, documentId: `d${id}`, result: 'k' })) } } };
+  vm.runInNewContext(extractFunction('runKit'), context);
+  assert.equal((await context.runKit(1, { id: 'amwins' }, () => 1)).leftOut, undefined, 'every frame called');
+  ready = [0];
+  const results = await context.runKit(1, { id: 'amwins' }, () => 1);
+  assert.deepEqual([results.map((r) => r.frameId), results.leftOut], [[0], true]);
+  assert.equal((await context.runKit(1, { id: 'amwins' }, () => 1, [], [0])).leftOut, undefined, 'the caller named the frames');
 });
 
 // Real Chromium, 2026-11-22: a call made in every frame comes back only once each frame's document
