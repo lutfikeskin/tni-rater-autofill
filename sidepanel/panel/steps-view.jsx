@@ -1,41 +1,61 @@
-// The panel's two tabs (Intake, This page) and the dock in React, drawn from what the panel says of
-// them: the tabs' tone, note and which one is shown (state.steps, renderSteps in coordinator.js), and the dock's one
-// next thing to do and its button (state.dock, renderDock from dockFor). What their buttons do is the
-// panel's (`act`, wired in sidepanel.js).
+// The two view tabs in #steps and the dock in React, drawn from what the panel says of
+// them: each tab's tone and note and which view is shown (state.steps, renderSteps in
+// coordinator.js), and the dock's one next thing to do and its button (state.dock, renderDock from
+// dockFor; #dock-eyebrow and #dock-title stay in the DOM with aria-hidden while #screen-head is
+// shown, and lift sr-only when #screen-title scrolls out of #view).
+// What their buttons do is the panel's (`act`, wired in sidepanel.js).
 // One part of the panel; sidepanel.js mounts it (mountSteps, mountDock).
-import { useEffect, useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { useAnnounce } from './announce.js';
+import { CHECKS } from './messages.js';
+import { handleRovingKey } from './roving-focus.js';
+import { headShown } from './screen-view.jsx';
 
-// Two tabs: the intake, and the page in front (its fill, then what is left on it for the agent).
-// Not a wizard: the page tab is one view, and the header's "Stage n of m" is the quote's place (audit
-// 2026-11-07, UX-04: three numbered steps, two of them the same view, beside the header's "Step n
-// of m"). `prefix`: the id of its note (#check-summary, #fill-summary: the harnesses read them).
-const TABS = [
-  { id: 'check', prefix: 'check', label: 'Intake', controls: 'check-view' },
-  { id: 'fill', prefix: 'fill', label: 'This page', controls: 'page-view' },
-];
-
-// Each tab: its bar, name and note, toned by what it says ('done', 'active', 'warn', 'bad'); the
-// one shown is marked current. Before the panel has said anything, as the page loads, each is drawn
-// plain. The page tab, once its page is filled (`review`), asks the panel to read the page again
-// (act.confirm); before, it only shows the page (act.fill).
+// Both tabs always show in #steps (role="tablist"): #step-check ("Intake checks", its note
+// #check-summary "N to check" in amber while checks are open) and #step-fill ("This page", its note
+// #fill-summary); the tab in view wears aria-selected="true" and takes Tab (roving tabindex with
+// ArrowLeft/ArrowRight/Home/End). Once the page is filled (`review`), #step-fill asks the panel to
+// read the page again (act.confirm); before, it only shows the page (act.fill).
 function Steps({ act }) {
   const said = useStore(panelStore, (s) => s.steps);
-  return TABS.map(({ id, prefix, label, controls }) => {
-    const s = said?.[id] ?? {};
-    return (
-      <button key={id} type="button" id={`step-${id}`} className="step" aria-controls={controls} data-state={s.tone}
-        aria-current={s.current ? 'true' : undefined} onClick={() => act[s.review ? 'confirm' : id]()}>
-        <span className="step-bar" />
-        <span className="step-line"><span className="step-label">{label}</span></span>
-        <span id={`${prefix}-summary`} className="step-note">{s.note ?? ''}</span>
-      </button>
-    );
+  const checksOpen = useStore(panelStore, (s) => s.checks?.open);
+  const c = said?.check ?? {};
+  const f = said?.fill ?? {};
+  const onCheck = !!c.current;
+  const open = checksOpen ?? c.open ?? 0;
+  const activeId = onCheck ? 'step-check' : 'step-fill';
+  const [focusedId, setFocusedId] = useState(/** @type {string | null} */ (null));
+  useEffect(() => { setFocusedId(null); }, [activeId]);
+  const stopId = focusedId ?? activeId;
+  const onKeyDown = (e) => handleRovingKey(e, e.currentTarget.parentElement, '[role="tab"]', {
+    wrap: true,
+    onMove: (el) => setFocusedId(el.id),
   });
+  const onBlur = (e) => {
+    if (!e.currentTarget.parentElement?.contains(e.relatedTarget)) setFocusedId(null);
+  };
+  // Two tabs, both always shown, the one in view joined to the view under it (as a browser's tab).
+  // The intake's note counts what is left to check as the checks say it now.
+  return (
+    <>
+      <button type="button" id="step-check" className="step" role="tab" aria-controls="check-view" data-state={c.tone}
+        aria-selected={onCheck ? 'true' : 'false'} tabIndex={stopId === 'step-check' ? 0 : -1}
+        onKeyDown={onKeyDown} onBlur={onBlur} onFocus={() => setFocusedId('step-check')} onClick={() => act.check()}>
+        <span className="step-label">{CHECKS.stepAll}</span>
+        <span id="check-summary" className="step-note">{open > 0 ? CHECKS.stepLeft(open) : (c.note ?? '')}</span>
+      </button>
+      <button type="button" id="step-fill" className="step" role="tab" aria-controls="page-view" data-state={f.tone}
+        aria-selected={onCheck ? 'false' : 'true'} tabIndex={stopId === 'step-fill' ? 0 : -1}
+        onKeyDown={onKeyDown} onBlur={onBlur} onFocus={() => setFocusedId('step-fill')} onClick={() => act[f.review ? 'confirm' : 'fill']()}>
+        <span className="step-label">{CHECKS.stepBack}</span>
+        <span id="fill-summary" className="step-note">{f.note ?? ''}</span>
+      </button>
+    </>
+  );
 }
 
 // The dock's buttons: the one dockFor names shows (`button`), the others stay hidden, as the page
@@ -72,17 +92,33 @@ const BUSY = 'Wait for the answers going in to finish.';
 
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
 // #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
-// Hidden until the panel first says it, and while Settings is open.
+// Hidden until the panel first says it, and while Settings is open (unless Stop shows).
+// While #screen-head is shown (`headOn`), #dock-eyebrow and #dock-title stay `aria-hidden` so the
+// title appears once in the accessibility tree, and drop `sr-only` (with #dock-sub shown as
+// `aria-hidden`) only when #screen-title scrolls out of #view (#dock[data-head-out]); on check,
+// review and ai (`!headOn`), they show in the dock exposed to assistive tech.
 // Keyboard focus stays in the dock as its button changes (audit 2026-11-07, UX-08: Fill this page
 // hid as Stop showed, and focus fell to the page, at the moment Stop mattered most): when the button
 // that had it is hidden, or disabled, the button shown now takes it (its alternative when it has
 // none). Only when focus was in the dock: the dock never takes it from elsewhere.
 function Dock({ act }) {
   const d = useStore(panelStore, (s) => s.dock);
+  const headOn = useStore(panelStore, headShown);
+  const [headOut, setHeadOut] = useState(false);
   const dock = useRef(null);
   const focused = useRef(false);
   const pausedLine = useRef(null);
   useAnnounce(d?.paused, pausedLine);
+  useLayoutEffect(() => {
+    const root = dock.current;
+    if (!root) return undefined;
+    const sync = () => setHeadOut(root.hasAttribute('data-head-out'));
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(root, { attributes: true, attributeFilter: ['data-head-out'] });
+    return () => mo.disconnect();
+  }, []);
+  const inHead = headOn && !headOut;
   // Focus that went anywhere outside the dock (the agent's, after the browser dropped it from Stop
   // once pressed) is no longer the dock's (review of #390).
   useEffect(() => {
@@ -106,9 +142,9 @@ function Dock({ act }) {
         : <div id="fill-progress" className="progress" hidden={!d?.progress}><span /></div>}
       <div className="dock-body">
         <div className="dock-text">
-          <span id="dock-eyebrow" className="dock-eyebrow" data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
-          <span id="dock-title" className="dock-title">{d?.title}</span>
-          <span id="dock-sub" className="dock-sub" hidden={!d?.sub}>{d?.sub ?? ''}</span>
+          <span id="dock-eyebrow" className={`dock-eyebrow${inHead ? ' sr-only' : ''}`} aria-hidden={headOn ? 'true' : undefined} data-tone={d?.tone ?? ''}>{d?.eyebrow ?? ''}</span>
+          <span id="dock-title" className={`dock-title${inHead ? ' sr-only' : ''}`} aria-hidden={headOn ? 'true' : undefined}>{d?.title}</span>
+          <span id="dock-sub" className="dock-sub" hidden={!d?.sub || inHead} aria-hidden={headOn && headOut ? 'true' : undefined}>{d?.sub ?? ''}</span>
           {/* Automatic filling paused on this tab (renderDock's `paused`). */}
           <span id="dock-paused" ref={pausedLine} className="dock-paused" hidden={!d?.paused}>{d?.paused ?? ''}</span>
         </div>

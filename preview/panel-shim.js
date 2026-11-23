@@ -9,7 +9,21 @@
 // is blank), and the panel's fetch requests to any other origin are refused: fetch is how the panel
 // sends (uploads, AI providers); other request APIs are not guarded.
 (() => {
-  const host = window.parent !== window ? window.parent.__tniPreview : null;
+  // `?top`: the panel is the top page itself and the preview page's host runs here, its carrier
+  // page in a hidden frame (preview.js), for a browser's element tools that only see the top page.
+  // Its script is written in before the panel's own, and runs first; until then `host` keeps what
+  // is set on it.
+  const top = window.parent === window && new URLSearchParams(location.search).has('top');
+  if (top) {
+    window.__tniPreviewPending = {};
+    document.write('<script type="module" src="/preview/preview.js"></script>');
+  }
+  const host = top
+    ? new Proxy({}, {
+      get: (_, k) => (window.__tniPreview ?? window.__tniPreviewPending)[k],
+      set: (_, k, v) => { (window.__tniPreview ?? window.__tniPreviewPending)[k] = v; return true; },
+    })
+    : window.parent !== window ? window.parent.__tniPreview : null;
   if (!host) return;
 
   // Values cross between pages as Chrome sends them: JSON, rebuilt in the receiving page.
@@ -30,27 +44,28 @@
   };
 
   const area = (name) => {
-    const data = host.storage[name];
-    const read = (k) => JSON.parse(data.get(k));
+    // Read on each call: with `?top`, the host's storage is there only once preview.js ran.
+    const data = () => host.storage[name];
+    const read = (k) => JSON.parse(data().get(k));
     return {
       async get(keys) {
         const out = {};
         if (keys == null) {
-          for (const k of data.keys()) out[k] = read(k);
+          for (const k of data().keys()) out[k] = read(k);
         } else if (typeof keys === 'string' || Array.isArray(keys)) {
-          for (const k of [].concat(keys)) if (data.has(k)) out[k] = read(k);
+          for (const k of [].concat(keys)) if (data().has(k)) out[k] = read(k);
         } else {
-          for (const [k, fallback] of Object.entries(keys)) out[k] = data.has(k) ? read(k) : fallback;
+          for (const [k, fallback] of Object.entries(keys)) out[k] = data().has(k) ? read(k) : fallback;
         }
         return out;
       },
       async set(items) {
-        for (const [k, v] of Object.entries(items)) if (v !== undefined) data.set(k, JSON.stringify(v));
+        for (const [k, v] of Object.entries(items)) if (v !== undefined) data().set(k, JSON.stringify(v));
       },
       async remove(keys) {
-        for (const k of [].concat(keys)) data.delete(k);
+        for (const k of [].concat(keys)) data().delete(k);
       },
-      async clear() { data.clear(); },
+      async clear() { data().clear(); },
       async setAccessLevel() {},
       onChanged: event(),
     };
@@ -78,6 +93,8 @@
     sendMessage: async (tabId, msg, options) => clone(await host.toPage(clone(msg), options?.frameId)),
     onUpdated: event(),
     onActivated: event(),
+    onAttached: event(),
+    onDetached: event(),
     onCreated: event(),
     onRemoved: event(),
   };

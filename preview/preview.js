@@ -8,7 +8,11 @@
 // about a live carrier or the packaged extension: that is the verify-tni-rater skill's.
 
 // Fetched, not imported: this page runs without Vite's client (vite.config.js).
-const manifest = await (await fetch('/manifest.json')).json();
+// Read at once, not awaited, so in the panel's own page (`?top`) this runs before the panel does.
+const manifestRequest = new XMLHttpRequest();
+manifestRequest.open('GET', '/manifest.json', false);
+manifestRequest.send();
+const manifest = JSON.parse(manifestRequest.responseText);
 
 // The practice carrier pages the repository serves (src/carriers.js PRACTICE).
 const CARRIERS = {
@@ -20,8 +24,19 @@ const SAMPLE_INTAKE = '/test/fixtures/sample-intake.pdf';
 const TAB_ID = 1;
 
 const $ = (id) => document.getElementById(id);
+// `?top` (panel-shim.js): this runs in the panel's page, without the preview's controls; the
+// carrier page is a hidden frame of its own.
+const topMode = !$('panel');
+if (topMode && !$('carrier')) {
+  const frame = Object.assign(document.createElement('iframe'), { id: 'carrier', title: 'Practice carrier page' });
+  frame.setAttribute('aria-hidden', 'true');
+  frame.tabIndex = -1;
+  frame.style.cssText = 'position:fixed;left:-10000px;top:0;width:1000px;height:900px;border:0';
+  (document.body ?? document.documentElement).append(frame);
+}
 const carrierFrame = $('carrier');
 const panelFrame = $('panel');
+const panelWindow = () => (topMode ? window : panelFrame.contentWindow);
 const params = new URLSearchParams(location.search);
 
 // The panel's storage, as JSON strings: chrome.storage.local and session. Uploads start off.
@@ -136,6 +151,7 @@ const host = {
   toPage,
   open: (url) => window.open(url, '_blank', 'noopener'),
   panel: null,
+  ...window.__tniPreviewPending,
 };
 window.__tniPreview = host;
 
@@ -145,7 +161,7 @@ let lastUrl = '';
 const tabChanged = (change) => {
   lastUrl = tab()?.url ?? '';
   host.panel?.tabUpdated(change);
-  $('address').textContent = lastUrl ? new URL(lastUrl).pathname + new URL(lastUrl).search : '';
+  if ($('address')) $('address').textContent = lastUrl ? new URL(lastUrl).pathname + new URL(lastUrl).search : '';
 };
 carrierFrame.addEventListener('load', () => {
   carrierFrame.dataset.status = 'complete';
@@ -158,24 +174,25 @@ setInterval(() => {
 
 function openCarrier(id) {
   const carrier = CARRIERS[id] ?? CARRIERS.amwins;
-  $('carrier-pick').value = id in CARRIERS ? id : 'amwins';
+  if ($('carrier-pick')) $('carrier-pick').value = id in CARRIERS ? id : 'amwins';
   carrierFrame.dataset.status = 'loading';
   host.panel?.tabUpdated({ status: 'loading' });
   carrierFrame.src = carrier.url;
-  params.set('carrier', $('carrier-pick').value);
-  history.replaceState(null, '', `?${params}`);
+  params.set('carrier', id in CARRIERS ? id : 'amwins');
+  if (!topMode) history.replaceState(null, '', `?${params}`);
 }
 
 // The sample intake (scrubbed, committed) through the panel's own file input, as an agent picks one.
 async function loadSample() {
   const blob = await (await fetch(SAMPLE_INTAKE)).blob();
-  const doc = panelFrame.contentDocument;
-  const input = doc.getElementById('file');
-  const data = new panelFrame.contentWindow.DataTransfer();
-  data.items.add(new panelFrame.contentWindow.File([blob], 'sample-intake.pdf', { type: 'application/pdf' }));
+  const win = panelWindow();
+  const input = win.document.getElementById('file');
+  const data = new win.DataTransfer();
+  data.items.add(new win.File([blob], 'sample-intake.pdf', { type: 'application/pdf' }));
   input.files = data.files;
-  input.dispatchEvent(new panelFrame.contentWindow.Event('change', { bubbles: true }));
+  input.dispatchEvent(new win.Event('change', { bubbles: true }));
 }
+window.__tniLoadSample = () => loadSample().catch((e) => console.error(e));
 
 function setPanelWidth(px) {
   document.documentElement.style.setProperty('--panel-width', `${px}px`);
@@ -184,17 +201,24 @@ function setPanelWidth(px) {
   history.replaceState(null, '', `?${params}`);
 }
 
-for (const [id, c] of Object.entries(CARRIERS)) $('carrier-pick').append(new Option(c.name, id));
-$('carrier-pick').addEventListener('change', (e) => openCarrier(e.target.value));
-$('reload-carrier').addEventListener('click', () => openCarrier($('carrier-pick').value));
-$('sample').addEventListener('click', () => loadSample().catch((e) => console.error(e)));
-$('reset').addEventListener('click', () => {
-  resetStorage();
-  panelFrame.contentWindow.location.reload();
-  openCarrier($('carrier-pick').value);
-});
-$('panel-width').addEventListener('change', (e) => setPanelWidth(Number(e.target.value)));
+if (topMode) {
+  // The carrier page loads once the panel's page has its body.
+  const start = () => { openCarrier(params.get('carrier') ?? 'amwins'); if (params.has('sample')) setTimeout(() => window.__tniLoadSample(), 1500); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start, { once: true });
+  else start();
+} else {
+  for (const [id, c] of Object.entries(CARRIERS)) $('carrier-pick').append(new Option(c.name, id));
+  $('carrier-pick').addEventListener('change', (e) => openCarrier(e.target.value));
+  $('reload-carrier').addEventListener('click', () => openCarrier($('carrier-pick').value));
+  $('sample').addEventListener('click', () => loadSample().catch((e) => console.error(e)));
+  $('reset').addEventListener('click', () => {
+    resetStorage();
+    panelFrame.contentWindow.location.reload();
+    openCarrier($('carrier-pick').value);
+  });
+  $('panel-width').addEventListener('change', (e) => setPanelWidth(Number(e.target.value)));
 
-setPanelWidth(Number(params.get('width')) || 400);
-openCarrier(params.get('carrier') ?? 'amwins');
-panelFrame.src = '/sidepanel/sidepanel.html';
+  setPanelWidth(Number(params.get('width')) || 400);
+  openCarrier(params.get('carrier') ?? 'amwins');
+  panelFrame.src = '/sidepanel/sidepanel.html';
+}

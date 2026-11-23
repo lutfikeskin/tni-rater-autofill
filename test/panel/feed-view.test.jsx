@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
@@ -107,4 +108,116 @@ test('the answer key shows Your default only while the feature is on', () => {
   expect($(container, 'answer-key').textContent).not.toContain('Your default');
   act(() => { state.defaultsOn = true; });
   expect([...container.querySelectorAll('#answer-key .tag.own, #answer-key .mark.own')].length).toBe(2);
+});
+
+test('grouped Review marks #feed data-grouped without setting #report hidden; All answers switches to data-all', () => {
+  const { container } = render(<Feed act={acts().act} />);
+  const entry = { list: [{ type: 'answer' }] };
+  act(() => {
+    state.reportFor = entry;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+    state.filling = false;
+    state.feed = feed();
+  });
+  expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual(['true', undefined, false]);
+  act(() => {
+    state.allAnswers = true;
+    state.allAnswersFor = entry;
+  });
+  expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual([undefined, 'true', false]);
+  expect(container.querySelector('.filters-thumb')).toBeNull();
+});
+
+test('open need outside All answers marks #report data-focus="need" and clears it in All answers or once settled', () => {
+  const { container } = render(<Feed act={acts().act} />);
+  const need = { type: 'need', open: true, settled: '', pending: false, gone: false };
+  const entry = { list: [need] };
+  act(() => {
+    state.reportFor = entry;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+    state.filling = false;
+    state.rowsDrawn = 1;
+    state.feed = feed();
+  });
+  expect($(container, 'report').dataset.focus).toBe('need');
+
+  // Switching to All answers clears focus mode.
+  act(() => {
+    state.allAnswers = true;
+    state.allAnswersFor = entry;
+  });
+  expect($(container, 'report').dataset.focus).toBeUndefined();
+
+  // Back in grouped Review with an AI pending pick still open: focus mode returns.
+  act(() => {
+    need.settled = 'ai';
+    need.pending = true;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+    state.rowsDrawn = 2;
+  });
+  expect($(container, 'report').dataset.focus).toBe('need');
+
+  // Once approved/settled and no longer pending, focus mode ends.
+  act(() => {
+    need.pending = false;
+    state.rowsDrawn = 3;
+  });
+  expect($(container, 'report').dataset.focus).toBeUndefined();
+
+  // Focus-mode CSS hides only non-open rows and Review's grouped lists while keeping .report-head,
+  // .ai-holder, and #see-all-answers visible.
+  const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
+  expect(css).toContain('#page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }');
+  // Closed needs are out of view and out of the Tab order, not 1px boxes a keyboard user tabs onto
+  // (#595 review); the dock's Show the next one moves between needs.
+  expect(css).toContain('#report[data-focus="need"] .rows > .row.need:not(.open) { display: none; }');
+  expect(css).not.toMatch(/#report\[data-focus="need"\][^{]*\.(report-head|ai-holder)/);
+});
+
+const findNestedHas = (source) => {
+  const nested = [];
+  const stack = [];
+  let inComment = false;
+  let quote = '';
+  for (let i = 0; i < source.length; i += 1) {
+    const ch = source[i];
+    if (inComment) {
+      if (ch === '*' && source[i + 1] === '/') { inComment = false; i += 1; }
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') { i += 1; continue; }
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') { inComment = true; i += 1; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (source.startsWith(':has(', i)) {
+      if (stack.some((entry) => entry.isHas)) {
+        nested.push(source.slice(Math.max(0, i - 40), i + 40));
+      }
+      stack.push({ isHas: true });
+      i += 4;
+      continue;
+    }
+    if (ch === '(') {
+      stack.push({ isHas: false });
+    } else if (ch === ')' && stack.length > 0) {
+      stack.pop();
+    }
+  }
+  return nested;
+};
+
+test('grouped Review CSS avoids nested :has(), uses #feed-root display:contents, and fuses portaled bottom tools', () => {
+  const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
+  expect(findNestedHas('.a:has(> .b:not(:has(.c))) {}')).toHaveLength(1);
+  expect(findNestedHas(css)).toEqual([]);
+  expect(css).toContain('#feed-root { display: contents; }');
+  expect(css).toContain('#feed-tools-root:not(:has(> :not([hidden]))) { display: none; }');
+  expect(css).toContain('#page-view:has(#see-all-answers:not([hidden])):has(#feed-tools-root > .feed-tools:not([hidden])):has(#report:not([data-focus="need"]))');
+  expect(css).not.toContain('#page-view:has(#report[data-focus="need"]) > #feed-root { order:');
 });

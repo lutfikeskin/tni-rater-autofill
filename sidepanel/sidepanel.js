@@ -7,11 +7,11 @@ import { canRecord } from '../src/recording.js';
 import { inExtension, popped } from './panel/env.js';
 import { $, FILLS_HELD_NOTE, fillsHeld, migrateStoredData, restoreAiPending, state, storageSaid, store, forgetKeptWork, keptWorkCleared, forgetJournals, whenFrameLate } from './panel/core.js';
 import { loadFile, logProfile, logSettings, markTestRun, save } from './panel/intake.js';
-import { closeSettings, firstView, openSettings, pickUnit, render, setFilter, setView, showEmpty } from './panel/record.js';
+import { closeSettings, firstView, jumpTo, openSettings, pickUnit, render, setAllAnswers, setChecksAll, setFilter, setView, showEmpty } from './panel/record.js';
 import { onTabUpdated, refreshTab } from './panel/tab.js';
 import { ensureRecorder, flushPendingTextChanges, onRecorderMessage, pageOf } from './panel/usage.js';
-import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, showPast, stopFill } from './panel/coordinator.js';
-import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, showNextNeed } from './panel/fill.js';
+import { dismissState, dropReports, holdLayouts, inheritQuoteState, renderSteps, scrollBehavior, showPast, stopFill } from './panel/coordinator.js';
+import { captureFromShortcut, capturePage, checkItems, clearMarks, fillPage, lookRight, noteLiveItems, refreshAnswers, resumeHeldFill, rowActs, showNextNeed, toggleRow } from './panel/fill.js';
 import { discardUnfinished, noteCaptured, noteRecording, onTraceMessage, recordedTabRemoved, recordedTabUpdated, recoverRecording, renderUnfinished, startRecording, stopRecording, toggleRecording } from './panel/dev-recording.js';
 import { aiActs, renderAiSettings, reviewIntake } from './panel/assistant.js';
 import { renderUsage, settingsActs, uploadNow, wireUsage } from './panel/usage-panel.js';
@@ -19,16 +19,20 @@ import { PDF_FOCUS_ZOOM, PDF_ZOOMS, askFile, clearClient, clientNote, closeDetai
 import { announceCopy, dock, keepPlace, onPanelMessage, popOut } from './panel/window.js';
 import { mountLive } from './panel/live-view.jsx';
 import { mountDock, mountSteps } from './panel/steps-view.jsx';
+import { mountScreen } from './panel/screen-view.jsx';
 import { mountFeed } from './panel/feed-view.jsx';
+import { mountReview } from './panel/review-view.jsx';
+import { setJumpToPath } from './panel/report-view.jsx';
 import { mountCards } from './panel/cards-view.jsx';
 import { mountChecks, mountPickers } from './panel/checks-view.jsx';
 import { mountClient } from './panel/client-view.jsx';
 import { mountDetails } from './panel/details-view.jsx';
 import { mountPdf } from './panel/pdf-sheet-view.jsx';
 import { mountSummary } from './panel/summary-view.jsx';
-import { closeSummary, openSummary, saveSummary } from './panel/quote-summary.js';
+import { closeSummary, openSummary, saveSummary, summaryNow } from './panel/quote-summary.js';
 import { mountLoadError, mountNote } from './panel/notes-view.jsx';
 import { mountSiteTrack } from './panel/site-view.jsx';
+import { mountSiteRule } from './panel/rule-view.jsx';
 import { mountSetup } from './panel/home-view.jsx';
 import { mountRecordingLine, mountSettings } from './panel/settings-view.jsx';
 import { answerDefaults, defaultsActs, loadDefaults, onDefaultsAnswer, setDefaultsShown } from './panel/agent-defaults/store.js';
@@ -49,9 +53,10 @@ function wire() {
   $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) closeSettings(); else openSettings(); });
   $('pop-out').addEventListener('click', popOut);
   $('dock-back').addEventListener('click', dock);
-  // The header's strip of the quote's steps; the usage log that can't be saved, a Pop out or Dock
-  // that didn't work, and a PDF that couldn't be read.
+  // The header's strip of the quote's steps and 2px progress rule; the usage log that can't be
+  // saved, a Pop out or Dock that didn't work, and a PDF that couldn't be read.
   mountSiteTrack($('site-track'));
+  mountSiteRule($('site-rule'));
   mountNote($('notices'), 'usage');
   mountNote($('storage-note'), 'storage');
   mountNote($('whats-new'), 'whatsNew');
@@ -90,6 +95,8 @@ function wire() {
   // answers go in is refused (file-drop.js). Clear, and New quote: always asked first.
   const replacing = fileReplacer({ state, load: (file) => loadFile(file), pick: () => $('file').click(), ask: (text, yes) => askFile('replace', text, yes),
     note: (text) => clientNote(text), work: workSaid });
+  // The file popover's Cancel (its button, a click outside it, and Escape in overlayKey's list below).
+  const cancelAskFile = () => { state.fileConfirm = null; replacing.answered(false); render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); };
   mountClient($('client-root'), {
     details: () => (state.detailsOpen ? closeDetails() : openDetails()),
     pdf: () => openPdf(),
@@ -97,13 +104,13 @@ function wire() {
     replace: () => replacing.replace(),
     newQuote: () => {
       if (state.filling) return;
-      askFile('new-quote', 'Start another quote with this intake? This quote’s fills, marks and clicks are forgotten; the intake, your corrections and checks stay. The carrier’s site isn’t changed.', 'New quote');
+      askFile('new-quote', 'Start another quote with this intake? This quote\u2019s fills, marks and clicks are forgotten; the intake, your corrections and checks stay. The carrier\u2019s site isn\u2019t changed.', 'New quote');
     },
     clear: () => {
       const name = state.intake?.record.applicant.name || state.intake?.record.applicant.owner1 || 'this client';
       askFile('clear', `Clear ${name}? Your corrections, checks and reports go. The carrier's site isn't changed.`, 'Clear this client');
     },
-    cancel: () => { state.fileConfirm = null; replacing.answered(false); render(); $(state.fileConfirmFrom ?? 'replace')?.focus(); },
+    cancel: cancelAskFile,
     yes: () => {
       const what = state.fileConfirm;
       state.fileConfirm = null;
@@ -113,8 +120,12 @@ function wire() {
       if (what === 'new-quote') newQuote().catch(storageSaid);
     },
   });
-  // Step 1's checks and their All client details row.
-  mountChecks($('check-view'), { openDetails: () => openDetails() });
+  // Step 1's checks, its focus/list mode switch, and its All client details row.
+  mountChecks($('check-view'), {
+    openDetails: () => openDetails(),
+    showAll: () => setChecksAll(true),
+    showOne: () => setChecksAll(false),
+  });
   // Client details: Close, the scrim, and the empty fields shown or hidden.
   mountDetails($('details-view'), { close: () => closeDetails(), showEmpty: () => showEmpty() });
   // The quote summary (read only): Back, Close and the scrim; Save summary.
@@ -125,6 +136,39 @@ function wire() {
   // by itself (quote-owner.js openPortal).
   mountCards($('cards-root'), { portal: (url) => { if (inExtension) openPortal(url); } });
   mountPickers($('pickers'), { pick: (list, i) => pickUnit(list, i) });
+  setJumpToPath((path) => jumpTo(path));
+  mountReview($('review-root'), {
+    openRow: (rec) => {
+      const openNeed = rec.type === 'need' && (!rec.settled || rec.pending);
+      flushSync(() => {
+        state.pastKey = null;
+        setFilter('all');
+        if (openNeed) {
+          for (const r of state.reportFor?.list ?? []) {
+            if (r !== rec && r.type === 'need' && r.open) toggleRow(r, false);
+          }
+          setAllAnswers(false);
+        } else {
+          setAllAnswers(true);
+        }
+        renderSteps();
+        toggleRow(rec, true);
+      });
+      const openEl = $('report')?.querySelector('.rows > .row.open');
+      if (!openEl) return;
+      openEl.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
+      (openEl.querySelector('.row-body button:not([hidden]):not(:disabled), .row-head') ?? openEl).focus?.({ preventScroll: true });
+    },
+    toggleWorth: (rec) => { toggleRow(rec); },
+    rowActs,
+    showAll: () => { setFilter('all'); setAllAnswers(true); },
+    showReview: () => {
+      for (const r of state.reportFor?.list ?? []) {
+        if (r.type === 'need' && r.open) toggleRow(r, false);
+      }
+      setAllAnswers(false);
+    },
+  });
   mountFeed($('feed-root'), {
     setFilter: (filter) => setFilter(filter),
     showPast: (key) => showPast(key),
@@ -150,12 +194,14 @@ function wire() {
     if (w !== width && state.pdf && width) drawPdf();
     width = w;
   }).observe($('pdf-scroll'));
-  // Escape closes the PDF sheet, the quote summary, the client details drawer, then Settings; the
+  // Escape closes the PDF sheet, the quote summary, the client details drawer, the file popover
+  // (while it shows: Settings hides it), then Settings; the
   // sheet or the drawer keeps keyboard focus while it's open (overlay-keys.js).
   document.addEventListener('keydown', (e) => overlayKey(e, [
     { el: $('pdf-view'), open: !!state.pdf, close: closePdf, modal: true },
     { el: $('summary-view'), open: !!state.summary, close: closeSummary, modal: true },
     { el: $('details-view'), open: !!state.detailsOpen, close: closeDetails, modal: true },
+    { el: $('file-confirm'), open: !!state.fileConfirm && !$('file-confirm')?.closest('[hidden]'), close: cancelAskFile },
     { el: $('settings'), open: !!state.settingsOpen, close: closeSettings },
   ]));
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
@@ -166,7 +212,8 @@ function wire() {
     t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) replacing.replace(e.dataTransfer.files[0]); });
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
-  // The dock: its one button and its alternative.
+  // The dock: its one button and its alternative. Mounted before #screen-root so Dock's focus-keep
+  // runs before Screen's focus-on-screen-change.
   mountDock($('dock-root'), {
     fill: (go) => fillPage({ continuing: go === 'continue' }),
     stop: () => stopFill(),
@@ -182,6 +229,7 @@ function wire() {
       fillPage();
     },
   });
+  mountScreen($('screen-root'), { scrollBehavior, summary: () => (state.intake ? summaryNow() : null) });
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   // During a developer recording it is also a note naming the capture's file (REC-17); Alt+Shift+R
   // starts or stops one (unpacked builds only).
@@ -195,7 +243,7 @@ function wire() {
   if (recordable) {
     chrome.runtime.onMessage.addListener(onTraceMessage);
     // The recorded tab, whatever tab the panel follows: its new documents get the trace, and its
-    // closing saves the recording (REC-04).
+    // closing saves the recording (REC-17).
     chrome.tabs.onUpdated.addListener(recordedTabUpdated);
     chrome.tabs.onRemoved.addListener(recordedTabRemoved);
     renderUnfinished();

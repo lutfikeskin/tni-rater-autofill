@@ -1266,9 +1266,9 @@ function renderSteps() {
   const notice = filling || error ? null : report?.notice ?? null;
   const left = filled ? report.left ?? 0 : 0;
   const steps = {};
-  const step = (id, { tone = '', note, current, review = false }) => { steps[id] = { tone, note, current: !!current, review: !!review }; };
+  const step = (id, { tone = '', note, open: count = undefined, current, review = false }) => { steps[id] = { tone, note, ...(count !== undefined ? { open: count } : {}), current: !!current, review: !!review }; };
   // The Intake tab.
-  step('check', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', current: state.view === 'check' });
+  step('check', { tone: open ? 'warn' : 'done', note: open ? `${open} to check` : 'All checked', open, current: state.view === 'check' });
   // The page tab: the page in front's fill, then what's left on it for the agent, and Continue;
   // "Quote done" where the quote ends (quoteFinished). Once filled, opening it reads the page again
   // (`review`: the panel's confirm).
@@ -1849,7 +1849,7 @@ function showStateNote() {
     actions: [
       // The page's opening fill it held goes on (resumeHeldFill); the dock's Fill anyway fills it as the agent's.
       { label: `${picked} is right`, className: 'tinted', onClick: () => { dismissState(); resumeHeldFill(); } },
-      pdf ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, className: 'ghost', onClick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) } : null,
+      pdf ? { label: `See intake${pdfPageSaid(place.page, ' · p')}`, className: 'ghost intake-action', onClick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) } : null,
     ] }) };
 }
 

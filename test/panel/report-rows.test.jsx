@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import { act, cleanup, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { drawRow } from '../../sidepanel/panel/fill.js';
-import { ReportRows, mountRows } from '../../sidepanel/panel/report-view.jsx';
+import { ReportRows, mountRows, setJumpToPath } from '../../sidepanel/panel/report-view.jsx';
 import { answerRecord, needRecord, reopenRow, setHead, settleRow, showLive } from '../../sidepanel/panel/report-rows.js';
 
 // The report's rows in React (React PR 4b, 2026-11-01): the panel changes a row's record and drawRow
@@ -14,7 +14,7 @@ import { answerRecord, needRecord, reopenRow, setHead, settleRow, showLive } fro
 // do (rowActs in fill.js: the safety tests check markRow, showRow and seeRow).
 
 beforeEach(() => { storeState({ rowsDrawn: 0 }); });
-afterEach(cleanup);
+afterEach(() => { setJumpToPath(null); cleanup(); });
 
 const ctx = { tabId: 1, page: 'Quote', carrier: { id: 'progressive' } };
 const radio = { key: 'k1', label: 'Hauls hazardous materials', controlKind: 'radio', options: ['Yes', 'No'], current: 'Yes', why: 'Not on the intake.' };
@@ -283,4 +283,53 @@ test('a row change draws only the list of its own report', () => {
   act(() => drawRow(needRecord({ ...radio, key: 'k3' }, ctx.carrier, ctx.page, true)));
   expect(draws).toEqual({ a: 1, b: 2 });
   expect(state.rowsAll).toBe(1);
+});
+
+test('focused NeedRow shows Needs you · k of n eyebrow, visible non-"answered" Mark done note, and VinHold client-details jump', () => {
+  const jumped = [];
+  setJumpToPath((path) => jumped.push(path));
+  const vinVeh = needRecord({ key: 'vin1', label: 'VIN', path: 'vehicles[0].vin', controlKind: 'text', why: 'VIN check digit failed.' }, ctx.carrier, ctx.page, true);
+  const vinTrl = needRecord({ key: 'vin2', label: 'Trailer VIN', path: 'trailers[1].vin', controlKind: 'text', why: 'Incomplete VIN.' }, ctx.carrier, ctx.page, false);
+  const actionNeed = needRecord({ key: null, action: 'ntlRates', label: 'Non-trucking liability', path: 'applicant.name', why: 'Add it on the page.' }, ctx.carrier, ctx.page, false);
+  const ans = answerRecord({ label: 'DOT number', value: '1234567', answer: true, key: 'dot', path: 'vehicles[0].vin' });
+  const { node } = draw([ans, vinVeh, vinTrl, actionNeed]);
+
+  // Eyebrows count only non-gone need rows (1 of 3, 2 of 3, 3 of 3).
+  expect([vinVeh, vinTrl, actionNeed].map((r) => node(r).querySelector('.need-eyebrow')?.textContent)).toEqual([
+    'Needs you · 1 of 3',
+    'Needs you · 2 of 3',
+    'Needs you · 3 of 3',
+  ]);
+  vinTrl.gone = true;
+  redraw(vinTrl);
+  expect([vinVeh, actionNeed].map((r) => node(r).querySelector('.need-eyebrow')?.textContent)).toEqual([
+    'Needs you · 1 of 2',
+    'Needs you · 2 of 2',
+  ]);
+  vinTrl.gone = false;
+  redraw(vinTrl);
+
+  // VinHold offers "Correct it in client details" only on vehicles[n].vin and trailers[n].vin needs.
+  const vehBtn = node(vinVeh).querySelector('.vin-fix');
+  const trlBtn = node(vinTrl).querySelector('.vin-fix');
+  expect(vehBtn?.textContent).toBe('Correct it in client details');
+  expect(trlBtn?.textContent).toBe('Correct it in client details');
+  expect(node(actionNeed).querySelector('.vin-fix')).toBeNull();
+  expect(node(ans).querySelector('.vin-fix')).toBeNull();
+  vehBtn.click();
+  trlBtn.click();
+  expect(jumped).toEqual(['vehicles[0].vin', 'trailers[1].vin']);
+
+  // Visible Mark done note is linked via aria-describedby, never says "answered", and hides once marked done.
+  const markBtn = node(vinVeh).querySelector('.mark-done');
+  const markNote = node(vinVeh).querySelector('.mark-done-note');
+  const actionMarkNote = node(actionNeed).querySelector('.mark-done-note');
+  expect(markNote?.hidden).toBe(false);
+  expect(markBtn?.getAttribute('aria-describedby')).toBe(markNote?.id);
+  expect(markNote?.textContent?.toLowerCase()).not.toContain('answered');
+  expect(actionMarkNote?.textContent?.toLowerCase()).not.toContain('answered');
+  settleRow(vinVeh, 'marked');
+  redraw(vinVeh);
+  expect(markNote?.hidden).toBe(true);
+  expect(markBtn?.hasAttribute('aria-describedby')).toBe(false);
 });

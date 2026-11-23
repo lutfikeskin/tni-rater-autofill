@@ -66,7 +66,7 @@ test('the dock, the report head, the checks\' title and the source tags take the
   }
   assert.deepEqual(said, []);
   // Every message is used by the code it names (none left behind once a word is changed there).
-  const panel = ['coordinator', 'fill', 'record'].map((f) => fs.readFileSync(`sidepanel/panel/${f}.js`, 'utf8')).join('\n');
+  const panel = ['coordinator.js', 'fill.js', 'record.js', 'screen-view.jsx', 'checks-view.jsx', 'steps-view.jsx', 'review-view.jsx', 'feed-view.jsx', 'report-view.jsx', 'settings-summary.js'].map((f) => fs.readFileSync(`sidepanel/panel/${f}`, 'utf8')).join('\n');
   const unused = Object.entries(MESSAGES).flatMap(([group, words]) => Object.keys(words).filter((id) => !new RegExp(`\\b${group}\\.${id}\\b|\\b(words|open)\\.${id}\\b|\\{[^}]*\\b${id}\\b[^}]*\\} = ${group}\\b`).test(panel)).map((id) => `${group}.${id}`));
   assert.deepEqual(unused, []);
 });
@@ -1294,7 +1294,8 @@ test('Clear always asks first, and Change file asks once the agent has done work
   // with the panel's own picker, question, note and loadFile; Yes and Cancel answer it.
   assert.match(wire, /const replacing = fileReplacer\(\{ state, load: \(file\) => loadFile\(file\), pick: \(\) => \$\('file'\)\.click\(\), ask: \(text, yes\) => askFile\('replace', text, yes\),\s+note: \(text\) => clientNote\(text\), work: workSaid \}\);/);
   assert.match(wire, /\n    replace: \(\) => replacing\.replace\(\),/);
-  assert.match(wire, /\n    cancel: \(\) => \{ state\.fileConfirm = null; replacing\.answered\(false\);/);
+  assert.match(wire, /\n  const cancelAskFile = \(\) => \{ state\.fileConfirm = null; replacing\.answered\(false\);/);
+  assert.match(wire, /\n    cancel: cancelAskFile,/);
   assert.match(wire, /if \(what === 'replace'\) replacing\.answered\(true\);/);
   // Audit 2026-11-07, UX-01: a PDF dropped anywhere on the panel was loaded at once, even while
   // answers went in and over the agent's corrections and checks.
@@ -7061,6 +7062,31 @@ test('a follow-up fill lists its answers with their sources and groups, as the r
   assert.match(extractFunction('renderReport'), /answerSources\(ctx\.plan\)[\s\S]{0,40}const doneRows = groupRows\(\[/);
 });
 
+test('answerSource quotes the real intake fields for edited derived rows instead of synthetic carrier paths', () => {
+  const context = {
+    state: { intake: { record: { applicant: { dot: '1234567' }, drivers: [{ dob: '04/29/1971' }] } } },
+    SOURCE: MESSAGES.SOURCE,
+    fieldInfo,
+    get: (obj, path) => path.replace(/\[(\d+)\]/g, '.$1').split('.').reduce((a, k) => (a == null ? undefined : a[k]), obj),
+    pdfAvailable: () => false,
+    sourcePlace: () => null,
+    pdfPageSaid: () => null,
+  };
+  vm.runInNewContext(extractFunction('answerSource'), context);
+
+  const editedDerived = context.answerSource({ kind: 'edited', path: 'amwins.q15', from: ['drivers[0].dob'], value: '04/29/1971' });
+  assert.equal(editedDerived.title, MESSAGES.SOURCE.open.edited);
+  assert.equal(editedDerived.quote, `${fieldInfo('drivers[0].dob').label}: 04/29/1971`);
+  assert.doesNotMatch(editedDerived.quote, /amwins\.q15|not on the intake/);
+
+  const editedDirect = context.answerSource({ kind: 'edited', path: 'applicant.dot', value: '1234567' });
+  assert.equal(editedDirect.quote, `${fieldInfo('applicant.dot').label}: 1234567`);
+
+  const syntheticOnly = context.answerSource({ kind: 'edited', path: 'amwins.q15', value: '04/29/1971' });
+  assert.equal(syntheticOnly.quote, MESSAGES.SOURCE.answer('04/29/1971'));
+  assert.doesNotMatch(syntheticOnly.quote, /amwins\.q15|not on the intake/);
+});
+
 // Audit 2026-10-10: Stop while the panel still prepared (recorder, AI retirement) was lost and the
 // fill ran. The kit isn't asked to fill, the pause holds, and the report says so.
 test('Stop pressed before the kit is asked to fill means no fill at all', async () => {
@@ -7118,7 +7144,7 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   // Items left: nothing to approve yet; the dock shows the next one, and says Looks right comes after.
   const left = said({ left: 2, filled: 5 });
   assert.deepEqual([left.phase, left.title, left.button, left.label], ['needs', 'Answer 2 questions', 'dock-next', 'Show the next one']);
-  assert.equal(left.sub, 'Then check the answers and click Looks right. Never Bind or Submit.');
+  assert.equal(left.sub, 'Then check the answers and click Looks right.');
   const settled = said({ settled: true });
   assert.deepEqual([settled.phase, settled.button, settled.label], ['check', 'look-right', 'Looks right, continue']);
   const advanced = said({ advanced: 'Continue', held: null });
@@ -7133,6 +7159,8 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   // Nothing left and the page not moved on: the main button continues, replacing nothing (W43-40).
   const nothing = said({});
   assert.deepEqual([nothing.phase, nothing.button, nothing.label, nothing.go, nothing.alt, nothing.altLabel], ['ready-continue', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
+  // Where the panel's own Continue is next, it says once that nothing is bound or submitted.
+  assert.equal(nothing.sub, 'Nothing is bound or submitted.');
 });
 
 // Coordinator on the v5 dock: a word that can tell the agent to "Fill this page again to continue"
@@ -7141,12 +7169,12 @@ test('Continue\'s word offers Fill this page again wherever it may tell the agen
   const { said, ui } = continueHarness({ 'auto-followups': { checked: false } });
   const needs = said({ left: 1, filled: 3 });
   assert.deepEqual([needs.phase, needs.title, needs.button, needs.alt, needs.altLabel], ['needs', 'Answer the last question', 'dock-next', 'fill-again', 'Fill this page again']);
-  assert.equal(needs.sub, 'Then Fill this page again to continue. Never Bind or Submit.');
+  assert.equal(needs.sub, 'Then Fill this page again to continue.');
   // Only buttons left: the main button is the fill that clicks them in turn (nothing clicks them by
   // itself; it read "The fill clicks the rest in turn" with no button: the maintainer, 2026-10-23).
   const waiting = said({ waiting: 2, filled: 3 });
   assert.deepEqual([waiting.phase, waiting.title, waiting.button, waiting.label, waiting.go, waiting.alt, waiting.altLabel], ['waiting', 'Buttons left to click', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
-  assert.equal(waiting.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
+  assert.equal(waiting.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left.');
   // Where the panel may not click Continue, the button only clicks the buttons.
   ui['auto-advance'].checked = false;
   const own = said({ waiting: 2, filled: 3 });
@@ -7154,7 +7182,7 @@ test('Continue\'s word offers Fill this page again wherever it may tell the agen
   ui['auto-advance'].checked = true;
   // With follow-ups on, the panel continues by itself; the alternative stays.
   ui['auto-followups'].checked = true;
-  assert.equal(said({ left: 1 }).sub, 'Then the panel continues to the next page. Never Bind or Submit.');
+  assert.equal(said({ left: 1 }).sub, 'Then the panel continues to the next page.');
   assert.equal(said({ waiting: 1 }).alt, 'fill-again');
 });
 
@@ -7164,15 +7192,14 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
   const { said, ui, state } = continueHarness();
   const pageOff = said({}, { advance: { text: 'Continue', exceptPages: ['Quote'] } });
   assert.deepEqual([pageOff.phase, pageOff.button, pageOff.alt], ['ready-continue', null, 'fill-again']);
-  assert.equal(pageOff.sub, 'Click Continue on this page yourself. Never Binds or Submits.');
+  assert.equal(pageOff.sub, 'Click Continue on this page yourself.');
   assert.equal(said({ left: 1 }, { advance: { text: 'Continue', exceptPages: ['Quote'] } }).sub, 'Then click Continue on this page yourself. Nothing is submitted or bound.');
   // GEICO's Quote & Coverages: its Next is never clicked (advance `steps`).
   const geico = { layoutSteps: ['Vehicles', 'Quote & Coverages'], advance: { text: 'Next', steps: ['Vehicles'] } };
   state.tabSteps.set(7, 'Quote & Coverages');
   const off = said({}, geico);
   assert.deepEqual([off.phase, off.title, off.button, off.alt], ['yours', 'Moving on is yours', null, 'fill-again']);
-  // Where moving on is the agent's, the panel still says nothing is bound or submitted.
-  assert.equal(off.sub, 'Nothing here is clicked for you. Never Binds or Submits.');
+  assert.equal(off.sub, 'Nothing here is clicked for you.');
   assert.equal(said({ left: 2 }, geico).sub, 'Then moving on is yours: nothing on this step is clicked for you.');
   assert.equal(said({ settled: true }, geico).button, null, 'not even once all is settled');
   state.tabSteps.set(7, 'Vehicles');
@@ -7199,7 +7226,7 @@ test('Continue\'s word on a page the carrier doesn\'t list: the agent clicks Con
   for (const entry of [{ page: 'PaymentDetails' }, { page: 'Quote', unlisted: true }, { page: 'PaymentDetails', settled: true }]) {
     const d = said(entry, listed);
     assert.deepEqual([d.phase, d.title, d.button, d.alt], ['yours', 'Click Continue yourself', null, 'fill-again'], JSON.stringify(entry));
-    assert.equal(d.sub, 'This page isn’t one the extension continues on. Never Binds or Submits.');
+    assert.equal(d.sub, 'This page isn’t one the extension continues on.');
   }
   assert.equal(said({ page: 'PaymentDetails', left: 1 }, listed).sub, 'Then click Continue yourself: this page isn’t one the extension continues on.');
   // An advance that lists no page or step continues nowhere (advanceFor).
@@ -11333,6 +11360,9 @@ test('the PDF sheet: what openPdf and drawPdf say, the page copied onto the shee
   assert.match(wire, /mountPdf\(\$\('pdf-view'\), \{\s+close: \(\) => closePdf\(\),\s+tab: \(\) => openPdfInTab\(\),\s+focus: \(\) => pdfZoom\(Math\.max\(state\.pdf\?\.zoom \?\? 1, PDF_FOCUS_ZOOM\), \{ focus: true \}\),\s+page: \(step\) => pdfPage\(step\),\s+zoomIn: \(\) => pdfZoom\(PDF_ZOOMS\.find\(\(z\) => z > state\.pdf\?\.zoom\)\),\s+zoomOut: \(\) => pdfZoom\(PDF_ZOOMS\.findLast\(\(z\) => z < state\.pdf\?\.zoom\)\),\s+fit: \(\) => pdfZoom\(1\),\s+\}\);\s+pdfPan\(\$\('pdf-scroll'\)\);/);
   // The sheet keeps focus and Escape closes it, as before: #pdf-view stays the page's host.
   assert.match(wire, /document\.addEventListener\('keydown', \(e\) => overlayKey\(e, \[\n\s+\{ el: \$\('pdf-view'\), open: !!state\.pdf, close: closePdf, modal: true \},/);
+  // The file popover is a layer too, after the sheets and before Settings, counted only while it shows.
+  assert.match(wire, /\{ el: \$\('details-view'\), open: !!state\.detailsOpen, close: closeDetails, modal: true \},\n\s+\{ el: \$\('file-confirm'\), open: !!state\.fileConfirm && !\$\('file-confirm'\)\?\.closest\('\[hidden\]'\), close: cancelAskFile \},\n\s+\{ el: \$\('settings'\),/);
+  assert.match(wire, /cancel: cancelAskFile,/);
 });
 
 // The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three
@@ -11346,7 +11376,7 @@ test('the client strip: the name opens client details, and Change file, New quot
   const view = fs.readFileSync(new URL('../sidepanel/panel/client-view.jsx', import.meta.url), 'utf8');
   assert.match(html, /<section id="quote" class="client" hidden>\s+(<!--[\s\S]*?-->\s+)?<div id="client-root"><\/div>/);
   assert.match(view, /<button type="button" id="client-card" className="client-title" aria-controls="details-view" aria-expanded=\{detailsOpen\}/);
-  assert.match(view, /<span id="client-name" className="client-name"[^>]*>\{client\?\.name \?\? ''\}<\/span>\s+<span id="client-meta" className="client-meta">\{client\?\.meta \?\? ''\}<\/span>\s+<\/button>/, 'phrasing content in the button, not a heading');
+  assert.match(view, /<span id="client-name" className="client-name"[^>]*>\{client\?\.name \?\? ''\}<\/span>\s+<\/button>\s+<p id="client-meta" className="client-meta" hidden=\{onRater \|\| !client\?\.meta\}>[\s\S]*?\(client\?\.meta \?\? ''\)\}\s+<\/p>/, 'name in the top-bar button, intake meta on the context line (its counts with icons, else its words)');
   const toolsAt = view.indexOf('<div className="client-tools">');
   const tools = view.slice(toolsAt, view.indexOf('</div>', toolsAt));
   for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);
@@ -11355,14 +11385,14 @@ test('the client strip: the name opens client details, and Change file, New quot
   // Both openers say whether client details are open, from the same state: the name (client-view.jsx)
   // and the checks' All client details row (test/panel/checks-view.test.jsx).
   assert.match(view, /const detailsOpen = useStore\(panelStore, \(s\) => !!s\.detailsOpen\);/);
-  assert.match(extractFunction('wire'), /mountChecks\(\$\('check-view'\), \{ openDetails: \(\) => openDetails\(\) \}\);/, 'the checks\' row opens client details');
+  assert.match(extractFunction('wire'), /mountChecks\(\$\('check-view'\), \{\s+openDetails: \(\) => openDetails\(\),\s+showAll: \(\) => setChecksAll\(true\),\s+showOne: \(\) => setChecksAll\(false\),\s+\}\);/, 'the checks view opens client details and toggles focus/list mode through act');
   assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
   // New quote is off while answers go in: renderSteps says it, the header draws it.
   assert.match(extractFunction('renderSteps'), /state\.newQuoteOff = !!state\.filling;/);
   assert.match(view, /disabled=\{newQuoteOff\} onClick=\{\(\) => act\.newQuote\(\)\}/);
   // The two tabs under the strip: drawn by steps-view.jsx (their labels and order:
   // test/panel/steps-view.test.jsx).
-  assert.match(html, /<nav id="steps" class="steps" aria-label="Intake or this page"><\/nav>\s+<\/section>/);
+  assert.match(html, /<div id="steps" class="steps" role="tablist" aria-label="Intake or this page"><\/div>\s+<\/section>/);
   assert.match(SIDEPANEL, /mountSteps\(\$\('steps'\), \{\s+check: \(\) => setView\('check'\),\s+fill: \(\) => setView\('page'\),\s+confirm: \(\) => \{ setView\('page'\); refreshAnswers\(\); checkItems\(\); \},\s+\}\);/);
 });
 
@@ -11711,11 +11741,11 @@ test('Buttons left to click says Looks right comes after with Let me look on, an
   const { said, ui } = continueHarness({ 'check-continue': { checked: true } });
   const held = said({ waiting: 2, filled: 3 });
   assert.deepEqual([held.phase, held.title, held.button, held.label, held.go, held.alt], ['waiting', 'Buttons left to click', 'fill', 'Click them for me', 'continue', 'fill-again']);
-  assert.equal(held.sub, 'Then check the answers and click Looks right. Never Bind or Submit.');
+  assert.equal(held.sub, 'Then check the answers and click Looks right.');
   ui['check-continue'].checked = false;
   const goes = said({ waiting: 2, filled: 3 });
   assert.deepEqual([goes.button, goes.label, goes.go], ['fill', 'Continue', 'continue']);
-  assert.equal(goes.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
+  assert.equal(goes.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left.');
 });
 
 // Review of #454 (CodeRabbit): a fill that read fields and stopped short with nothing left gave This
@@ -13532,6 +13562,7 @@ test('wire() connects tabs.onRemoved, pagehide and visibilitychange to flushPend
     captureFromShortcut: noop, noteCaptured: noop, toggleRecording: noop, onTraceMessage: noop,
     recordedTabUpdated: noop, recordedTabRemoved: noop, renderUnfinished: noop, wireUsage: noop, noteStep: noop,
     onRecorderMessage: noop, noteLiveItems: noop, onPanelMessage: noop, refreshTab: noop, onTabUpdated: noop, whenFrameLate: noop, ensureRecorder: noop,
+    mountSiteRule: noop, setJumpToPath: noop, mountReview: noop, mountScreen: noop, flushSync: (fn) => fn(), jumpTo: noop, scrollBehavior: noop, setAllAnswers: noop, setChecksAll: noop, summaryNow: noop, toggleRow: noop, rowActs: {},
     startRecording: noop, noteRecording: noop, stopRecording: noop, recoverRecording: noop, discardUnfinished: noop,
   };
   vm.runInNewContext(`${extractFunction('wire')}\nwire();`, wireCtx);
