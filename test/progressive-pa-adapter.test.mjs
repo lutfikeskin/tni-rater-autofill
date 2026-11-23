@@ -5,8 +5,11 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 import { progressivePa } from '../src/carriers/progressive-pa.js';
-import { carrierRuleFiles } from '../src/usage.js';
-import { pageAt, pageBusy } from '../src/kit/adapter.js';
+import { carrierRuleFiles, fieldChangeEvent, knownStep, redactor } from '../src/usage.js';
+import { carrierRefusal } from '../scripts/lib/carrier-reports.mjs';
+import { currentPage, pageAt, pageBusy } from '../src/kit/adapter.js';
+import { stepKey } from '../src/kit/dom.js';
+import { capture } from '../src/kit/capture.js';
 import { findAdvanceButton, findButton } from '../src/kit/actions.js';
 
 const ADAPTER_SRC = fs.readFileSync(new URL('../src/content/carriers/progressive-pa.js', import.meta.url), 'utf8');
@@ -75,15 +78,15 @@ function loadPage(html, { url = 'https://www.foragentsonly.com/Quote/Index/' } =
 }
 
 /**
- * Temporarily binds a jsdom page onto globalThis so src/kit/ modules (`pageAt`, `pageBusy`,
- * `findAdvanceButton`, `findButton`) run directly against its DOM and adapter.
+ * Temporarily binds a jsdom page onto globalThis so src/kit/ modules (`stepKey`, `currentPage`,
+ * `pageAt`, `pageBusy`, `capture`, `findAdvanceButton`, `findButton`) run directly against its DOM and adapter.
  * @template T
  * @param {ReturnType<typeof loadPage>} page
  * @param {() => T} fn
  * @returns {T}
  */
 function withKitGlobals(page, fn) {
-  const keys = ['document', 'location', 'getComputedStyle', 'Node', 'NodeFilter', 'window', '__raterAdapter', '__raterFieldKey'];
+  const keys = ['document', 'location', 'getComputedStyle', 'Node', 'NodeFilter', 'CSS', 'window', '__raterAdapter', '__raterFieldKey'];
   const prev = new Map(keys.map((k) => [k, Object.getOwnPropertyDescriptor(globalThis, k)]));
   const next = {
     document: page.document,
@@ -91,6 +94,7 @@ function withKitGlobals(page, fn) {
     getComputedStyle: page.window.getComputedStyle.bind(page.window),
     Node: page.window.Node,
     NodeFilter: page.window.NodeFilter,
+    CSS: { escape: (/** @type {unknown} */ v) => String(v).replace(/[^a-z0-9_-]/gi, '\\$&') },
     window: page.window,
     __raterAdapter: page.adapter,
     __raterFieldKey: page.fieldKey,
@@ -106,12 +110,21 @@ function withKitGlobals(page, fn) {
   }
 }
 
-test('progressive-pa carrier config wires its own adapter, stopPages, and carrierRuleFiles without rules or display', () => {
+test('progressive-pa carrier config wires its own adapter, layoutSteps, stopSteps, and carrierRuleFiles without stopPages, rules or display', () => {
   assert.equal(progressivePa.pageAdapter, 'src/content/carriers/progressive-pa.js');
-  assert.deepEqual(progressivePa.stopPages, {
+  assert.deepEqual(progressivePa.layoutSteps, [
+    'Named Insured', 'Products', 'Household Members', 'Additional Details',
+    'Coverages/Bill Plans', 'Portfolio', 'Point of Sale', 'Final Sale',
+  ]);
+  assert.equal('stopPages' in progressivePa, false);
+  assert.deepEqual(progressivePa.stopSteps, {
     'Point of Sale': 'This step is yours: nothing is filled or clicked. The quote stops at Portfolio.',
     'Final Sale': 'This step is yours: nothing is filled or clicked. The quote stops at Portfolio.',
   });
+  assert.equal(knownStep(progressivePa, 'Point of Sale'), 'Point of Sale');
+  assert.equal(knownStep(progressivePa, 'Coverages/Bill Plans'), 'Coverages/Bill Plans');
+  assert.equal(carrierRefusal('progressive-pa', 'stop: Point of Sale'), false);
+  assert.equal(carrierRefusal('progressive-pa', 'stop: Final Sale'), false);
   assert.deepEqual(progressivePa.rules, []);
   assert.equal(progressivePa.useGenericRules, false);
   assert.equal('display' in progressivePa, false);
@@ -120,11 +133,14 @@ test('progressive-pa carrier config wires its own adapter, stopPages, and carrie
   assert.ok(!carrierRuleFiles('progressive-pa').includes('src/content/carriers/progressive.js'));
 });
 
-test('adapter shape: registers carrier progressive-pa with shared hooks only (no create)', () => {
+test('adapter shape: registers carrier progressive-pa with shared hooks only (no page, no create)', () => {
   const page = loadPage(readFixture('named-insured.html'));
   try {
     assert.equal(page.adapter.carrier, 'progressive-pa');
     assert.equal(page.adapter.create, undefined);
+    assert.equal(page.adapter.shared.page, undefined);
+    assert.equal(typeof page.adapter.shared.step, 'function');
+    assert.equal(typeof page.adapter.shared.date, 'function');
     assert.deepEqual([...page.adapter.shared.selectors.stepLinks], ['a.navigation-link']);
     assert.deepEqual([...page.adapter.shared.selectors.busy], ['.ui-blocker-spinner-outer-wrapper']);
   } finally {
@@ -132,7 +148,7 @@ test('adapter shape: registers carrier progressive-pa with shared hooks only (no
   }
 });
 
-test('recorder logs clean question captions across all fixtures, never helper/sr-only/entity noise, and preserves checkbox labels', () => {
+test('recorder logs clean question captions across all fixtures, never helper/sr-only/entity noise, and handles radios and checkboxes', () => {
   const NOISE = [/\bHelp Text\b/i, /\bDiscount tag\b/i, /\bClear\b/i, /\bRemove\b/i, /\bFormat\b/i, /\bCost of coverage\b/i, /\bfor\b/i];
 
   /** @type {Record<string, Record<string, string>>} */
@@ -144,6 +160,7 @@ test('recorder logs clean question captions across all fixtures, never helper/sr
       'mat-input-21': 'Date of Birth',
     },
     'products.html': {
+      'mat-input-21': 'Policy Effective Date',
       ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y: 'Named Non-Owner Policy',
       ProductsAA_Vehicles_List_0_Embedded_Questions_List_TypeCode: 'Vehicle Type',
       ProductsAA_Vehicles_List_1_Embedded_Questions_List_TypeCode: 'Vehicle Type',
@@ -189,7 +206,6 @@ test('recorder logs clean question captions across all fixtures, never helper/sr
         for (const bad of NOISE) assert.doesNotMatch(desc.label, bad, `${file} #${id} caption leaked noise: "${desc.label}"`);
       }
 
-      // Check every visible control on the page (except non-question checkboxes like product_tab_AA) has no noise in its caption.
       for (const el of page.document.querySelectorAll('input, select, textarea')) {
         const desc = page.recorder.read.describe(el);
         for (const bad of NOISE) assert.doesNotMatch(desc.label, bad, `${file} #${el.id} leaked noise: "${desc.label}"`);
@@ -199,53 +215,108 @@ test('recorder logs clean question captions across all fixtures, never helper/sr
     }
   }
 
-  // Also verify real recorder poll emits the clean caption on a change event (checkbox + select).
-  const page = loadPage(readFixture('additional-details.html'));
+  // Real recorder poll emits the clean caption on change events (checkbox + select) and marks pickerInput as date.
+  const details = loadPage(readFixture('additional-details.html'));
   try {
-    const boat = /** @type {HTMLInputElement} */ (page.document.getElementById('AdditionalDetails_Embedded_Questions_List_Boat'));
-    const paperless = /** @type {HTMLSelectElement} */ (page.document.getElementById('AdditionalDetails_Embedded_Questions_List_PaperlessPreference'));
-    assert.equal(page.adapter.shared.caption(boat), '', 'checkbox caption hook returns empty so own <label> wins');
+    const boat = /** @type {HTMLInputElement} */ (details.document.getElementById('AdditionalDetails_Embedded_Questions_List_Boat'));
+    const paperless = /** @type {HTMLSelectElement} */ (details.document.getElementById('AdditionalDetails_Embedded_Questions_List_PaperlessPreference'));
+    assert.equal(details.adapter.shared.caption(boat), '', 'checkbox with own <label> text returns empty so own label wins');
     boat.checked = true;
     paperless.value = 'N';
-    page.recorder.poll();
-    const changes = page.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+    details.recorder.poll();
+    const changes = details.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
     assert.equal(changes.find((c) => c.key === 'ref:AdditionalDetails.Boat')?.label, 'Boat');
     assert.equal(changes.find((c) => c.key === 'ref:AdditionalDetails.PaperlessPreference')?.label,
       'Apply Paperless and accept documents and bills delivered through email?');
   } finally {
-    page.close();
+    details.close();
+  }
+
+  const prod = loadPage(readFixture('products.html'));
+  try {
+    const picker = /** @type {HTMLInputElement} */ (prod.document.getElementById('mat-input-21'));
+    assert.equal(prod.adapter.shared.date(picker), true);
+    picker.value = '12/01/2026';
+    prod.recorder.poll();
+    const changes = prod.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+    const change = changes.find((c) => c.key === 'picker:PolicyEffectiveDate');
+    assert.equal(change?.date, true);
+    assert.equal(change?.label, 'Policy Effective Date');
+  } finally {
+    prod.close();
   }
 });
 
-test('caption fallbacks: aria-labelledby *_Label, label[for], trailing */: stripping, and empty when missing', () => {
+test('caption edge cases: radio skips label[for], checkbox without own label uses <question> label, and fallbacks strip */:', () => {
   const html = `<!doctype html><html><body>
     <h3 id="entitydetails0">2020 Example Sedan</h3>
-    <label id="Fallback_Label">Standalone Label : * </label>
+    <label id="Fallback_Label">Standalone<span aria-hidden="true">*</span>Label : * </label>
     <select id="s1" aria-labelledby="Fallback_Label entitydetails0"></select>
+    <select id="s2" aria-labelledby="entitydetails0 Fallback_Label"></select>
     <label for="t1">For Label * : <span class="visually-hidden">Discount tag, for</span><help-icon><span>Help Text, for</span></help-icon></label>
     <input type="text" id="t1">
     <input type="text" id="orphan" aria-labelledby="entitydetails0">
+
+    <span>Prior Lapse Question</span>
+    <div role="radiogroup">
+      <input type="radio" id="ProductsAA_Embedded_Questions_List_PriorLapse_Y" name="ProductsAA_Embedded_Questions_List_PriorLapse" value="Y">
+      <label for="ProductsAA_Embedded_Questions_List_PriorLapse_Y">Yes</label>
+    </div>
+
+    <question property="PaperlessBox" class="box-row question">
+      <div class="left">
+        <div class="question-label">
+          <label id="PaperlessBox_Label">Enroll in Paperless? <span aria-hidden="true">*</span></label>
+        </div>
+      </div>
+      <div class="right">
+        <input type="checkbox" id="AdditionalDetails_Embedded_Questions_List_PaperlessBox" aria-labelledby="entitydetails0">
+      </div>
+    </question>
   </body></html>`;
   const page = loadPage(html);
   try {
     const cap = page.adapter.shared.caption;
     assert.equal(cap(page.document.getElementById('s1')), 'Standalone Label');
+    assert.equal(cap(page.document.getElementById('s2')), 'Standalone Label');
     assert.equal(cap(page.document.getElementById('t1')), 'For Label');
     assert.equal(cap(page.document.getElementById('orphan')), '');
+
+    // Radio with <label for="…_Y">Yes</label> and no <question> gives '' from caption() and never logs "Yes".
+    const radio = page.document.getElementById('ProductsAA_Embedded_Questions_List_PriorLapse_Y');
+    assert.equal(cap(radio), '');
+    assert.notEqual(page.recorder.read.describe(radio).label, 'Yes');
+    assert.equal(page.recorder.read.describe(radio).label, 'Prior Lapse Question');
+
+    // Checkbox with no own label inside <question> uses the question's words, never the entity heading.
+    const box = page.document.getElementById('AdditionalDetails_Embedded_Questions_List_PaperlessBox');
+    assert.equal(cap(box), 'Enroll in Paperless?');
+    assert.equal(page.recorder.read.describe(box).label, 'Enroll in Paperless?');
   } finally {
     page.close();
   }
 });
 
-test('page() names each step on /Quote/Index/, agrees with kit pageAt and recorder pageKey, and returns null otherwise', () => {
+test('step() names each step on /Quote/Index/ for kit and recorder while page stays /Quote/Index/ and never falls back to headings', () => {
   for (const { file, step } of FIXTURES) {
     const page = loadPage(readFixture(file), { url: 'https://www.foragentsonly.com/Quote/Index/' });
     try {
-      assert.equal(page.adapter.shared.page(page.window.location), step, `${file}: shared.page`);
-      assert.equal(page.recorder.read.pageKey(), step, `${file}: recorder.pageKey`);
-      assert.equal(withKitGlobals(page, () => pageAt(page.window.location)), step, `${file}: kit.pageAt`);
+      assert.equal(page.adapter.shared.step(), step, `${file}: shared.step`);
+      assert.equal(page.recorder.read.stepKey(), step, `${file}: recorder.stepKey`);
+      assert.equal(page.recorder.read.pageKey(), '/Quote/Index/', `${file}: recorder.pageKey`);
       const pageView = page.sent.find((m) => m.event === 'page_view');
-      assert.equal(pageView?.page, step, `${file}: initial page_view`);
+      assert.equal(pageView?.page, '/Quote/Index/', `${file}: initial page_view page`);
+      assert.equal(pageView?.step, step, `${file}: initial page_view step`);
+
+      withKitGlobals(page, () => {
+        assert.equal(stepKey(), step, `${file}: kit.stepKey`);
+        assert.equal(currentPage(), '/Quote/Index/', `${file}: kit.currentPage`);
+        assert.equal(pageAt(page.window.location), '/Quote/Index/', `${file}: kit.pageAt`);
+        const cap = capture();
+        assert.equal(cap.isTopFrame, true, `${file}: capture.isTopFrame`);
+        assert.equal(cap.page, '/Quote/Index/', `${file}: capture.page`);
+        assert.equal(cap.step, step, `${file}: capture.step`);
+      });
     } finally {
       page.close();
     }
@@ -258,52 +329,66 @@ test('page() names each step on /Quote/Index/, agrees with kit pageAt and record
     </body></html>`;
     const page = loadPage(html, { url: 'https://www.foragentsonly.com/quote/index' });
     try {
-      assert.equal(page.adapter.shared.page(page.window.location), want);
-      assert.equal(page.recorder.read.pageKey(), want);
-      assert.equal(withKitGlobals(page, () => pageAt(page.window.location)), want);
+      assert.equal(page.adapter.shared.step(), want);
+      assert.equal(page.recorder.read.stepKey(), want);
+      assert.equal(page.recorder.read.pageKey(), '/quote/index');
+      withKitGlobals(page, () => {
+        assert.equal(stepKey(), want);
+        assert.equal(pageAt(page.window.location), '/quote/index');
+      });
     } finally {
       page.close();
     }
   }
 
-  // Wrong path, another document's pathname, no aria-current, multiple aria-current, and unknown text all return null (never document.title).
+  // Wrong path: step returns null (kit '' / recorder undefined), page is the URL path.
   const wrongPath = loadPage(readFixture('coverages.html'), { url: 'https://www.foragentsonly.com/Home/Dashboard' });
   try {
-    assert.equal(wrongPath.adapter.shared.page(wrongPath.window.location), null);
+    assert.equal(wrongPath.adapter.shared.step(), null);
+    assert.equal(wrongPath.recorder.read.stepKey(), undefined);
     assert.equal(wrongPath.recorder.read.pageKey(), '/Home/Dashboard');
-    assert.equal(withKitGlobals(wrongPath, () => pageAt(wrongPath.window.location)), '/Home/Dashboard');
+    withKitGlobals(wrongPath, () => {
+      assert.equal(stepKey(), '');
+      assert.equal(pageAt(wrongPath.window.location), '/Home/Dashboard');
+    });
   } finally {
     wrongPath.close();
   }
 
-  const sameDoc = loadPage(readFixture('coverages.html'), { url: 'https://www.foragentsonly.com/Quote/Index/' });
+  // No nav link current + visible h1/h2 holding "Test Person": kit returns '', recorder undefined (never headings).
+  const noCurrentHtml = readFixture('coverages.html')
+    .replace(' aria-current="step"', '')
+    .replace('<main>', '<main><h1>Test Person</h1><h2>Test Person</h2>');
+  const noCurrent = loadPage(noCurrentHtml, { url: 'https://www.foragentsonly.com/Quote/Index/' });
   try {
-    // Another document's Location whose pathname differs from this document's location.pathname.
-    assert.equal(sameDoc.adapter.shared.page(/** @type {any} */ ({ pathname: '/Quote/Index' })), null);
+    assert.equal(noCurrent.adapter.shared.step(), null);
+    assert.equal(noCurrent.recorder.read.stepKey(), undefined);
+    assert.equal(noCurrent.recorder.read.pageKey(), '/Quote/Index/');
+    withKitGlobals(noCurrent, () => {
+      assert.equal(stepKey(), '');
+      assert.equal(currentPage(), '/Quote/Index/');
+    });
 
-    // No current nav item -> null, falls back to pathname (never document.title).
-    const active = sameDoc.document.querySelector('a.navigation-link[aria-current]');
-    active?.removeAttribute('aria-current');
-    assert.equal(sameDoc.adapter.shared.page(sameDoc.window.location), null);
-    assert.equal(sameDoc.recorder.read.pageKey(), '/Quote/Index/');
-    assert.equal(withKitGlobals(sameDoc, () => pageAt(sameDoc.window.location)), '/Quote/Index/');
-
-    // Two current nav items -> null.
-    const links = sameDoc.document.querySelectorAll('a.navigation-link');
+    // Two current nav items -> null (kit '' / recorder undefined).
+    const links = noCurrent.document.querySelectorAll('a.navigation-link');
     links[0].setAttribute('aria-current', 'step');
     links[1].setAttribute('aria-current', 'step');
-    assert.equal(sameDoc.adapter.shared.page(sameDoc.window.location), null);
+    assert.equal(noCurrent.adapter.shared.step(), null);
+    assert.equal(noCurrent.recorder.read.stepKey(), undefined);
+    withKitGlobals(noCurrent, () => assert.equal(stepKey(), ''));
 
-    // Unknown step label -> null.
+    // Unknown step text -> null (never document.title or headings).
     links[1].removeAttribute('aria-current');
     links[0].textContent = 'UNLISTED STEP';
-    assert.equal(sameDoc.adapter.shared.page(sameDoc.window.location), null);
+    assert.equal(noCurrent.adapter.shared.step(), null);
+    assert.equal(noCurrent.recorder.read.stepKey(), undefined);
+    withKitGlobals(noCurrent, () => assert.equal(stepKey(), ''));
   } finally {
-    sameDoc.close();
+    noCurrent.close();
   }
 });
 
-test('field keys match the decided ref and row mapping across fixtures and edge cases', () => {
+test('field keys match the decided ref, row, and picker:special mapping across fixtures and edge cases', () => {
   const page = loadPage(readFixture('coverages.html'));
   try {
     /** @param {{ tag?: string, id?: string, name?: string, type?: string }} spec */
@@ -335,7 +420,8 @@ test('field keys match the decided ref and row mapping across fixtures and edge 
       [{ type: 'radio', id: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y', name: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator' }, 'ProductsAA.NamedOperatorIndicator', null, 'ref:ProductsAA.NamedOperatorIndicator'],
       [{ type: 'radio', id: 'People_Drivers_List_1_Embedded_Questions_List_StateFiling_N', name: 'People_Drivers_List_1_Embedded_Questions_List_StateFiling' }, 'People.Drivers.StateFiling', '2', 'ref:People.Drivers.StateFiling@2'],
       [{ type: 'tel', id: 'mat-input-21', name: 'pickerInput' }, null, null, 'pickerInput'],
-      [{ type: 'checkbox', id: 'product_tab_AA', name: 'product_tab_AA' }, null, null, 'product_tab_AA'],
+      [{ type: 'text', id: 'mat-input-99' }, null, null, 'mat-input-99'],
+      [{ tag: 'button', id: 'product_tab_AA' }, null, null, 'product_tab_AA'],
     ];
 
     for (const [spec, wantRef, wantRow, wantKey] of cases) {
@@ -348,7 +434,17 @@ test('field keys match the decided ref and row mapping across fixtures and edge 
     page.close();
   }
 
-  // Also check actual DOM elements inside fixtures produce the exact decided keys.
+  // Actual DOM elements inside fixtures produce the exact decided keys (including picker:PolicyEffectiveDate).
+  const prod = loadPage(readFixture('products.html'));
+  try {
+    const picker = prod.document.getElementById('mat-input-21');
+    assert.equal(prod.adapter.shared.keys.ref(picker), null);
+    assert.equal(prod.adapter.shared.keys.special(picker), 'picker:PolicyEffectiveDate');
+    assert.equal(prod.fieldKey(picker), 'picker:PolicyEffectiveDate');
+  } finally {
+    prod.close();
+  }
+
   const hh = loadPage(readFixture('household-members.html'));
   try {
     assert.equal(hh.fieldKey(hh.document.getElementById('People_Drivers_List_1_Embedded_Questions_List_StateFiling_Y')), 'ref:People.Drivers.StateFiling@2');
@@ -371,10 +467,18 @@ test('field keys match the decided ref and row mapping across fixtures and edge 
   const ni = loadPage(readFixture('named-insured.html'));
   try {
     const key = ni.fieldKey(ni.document.getElementById('mat-input-21'));
+    assert.equal(key, 'picker:DateOfBirth');
     assert.ok(!key.startsWith('ref:'), `mat-input-21 must not get a ref: key, got "${key}"`);
   } finally {
     ni.close();
   }
+
+  // Nested row keys (`@<row>.<sub-row>`) pass DATA_MODEL_KEY in src/usage.js without redaction or hashing.
+  const nestedChange = fieldChangeEvent(
+    { key: 'ref:People.Drivers.Violations.Code@1.2', q: null, label: 'Incident Description', kind: 'select', before: '', after: 'Speeding', agent: true },
+    { record: /** @type {any} */ ({}), filled: new Map(), redact: redactor(['Code', 'Drivers']), keySalt: 'salt-1' },
+  );
+  assert.equal(nestedChange.key, 'ref:People.Drivers.Violations.Code@1.2');
 });
 
 test('step links, Portfolio btnNextId, Remove, and Clear are never chosen as Continue or allowed helpers, and idle spinner is not busy', () => {

@@ -35,11 +35,14 @@
     return input?.type?.toLowerCase() === 'radio' ? String(input.name ?? '') : String(el?.id ?? '');
   };
 
+  /** @param {Element | null | undefined} el */
+  const isPickerInput = (el) => el?.getAttribute?.('name') === 'pickerInput';
+
   /** @param {Element | null} label */
   function labelText(label) {
     if (!label || label.closest?.(SKIP_CAPTION)) return '';
     const clone = /** @type {Element} */ (label.cloneNode(true));
-    for (const skip of clone.querySelectorAll(SKIP_CAPTION)) skip.remove();
+    for (const skip of clone.querySelectorAll(SKIP_CAPTION)) skip.replaceWith(' ');
     return squash(clone.textContent).replace(/[\s*:]+$/, '').trim();
   }
 
@@ -52,10 +55,10 @@
       // Step navigation links have no href and must never be clicked as a Continue or helper.
       stepLinks: ['a.navigation-link'],
     },
-    // Every step of the quote shares /Quote/Index/. Read the active step from the navigation bar
-    // only for this document's own pathname; never read another document's step or document.title.
-    page: (loc) => {
-      if (!loc?.pathname || !QUOTE_PATH.test(loc.pathname) || typeof location === 'undefined' || loc.pathname !== location.pathname) return null;
+    // Every step of the quote shares /Quote/Index/. Keep the page as the URL path so the panel's
+    // pageOf(url) agrees, and read the active step from the navigation bar (never document.title).
+    step: () => {
+      if (typeof location === 'undefined' || !QUOTE_PATH.test(location.pathname)) return null;
       const current = document.querySelectorAll('a.navigation-link[aria-current]:not([aria-current="false"])');
       if (current.length !== 1) return null;
       return STEPS[squash(current[0].textContent).toUpperCase()] ?? null;
@@ -79,23 +82,42 @@
         while (parts.length > 1 && parts.at(-1) === 1) parts.pop();
         return parts.join('.');
       },
+      // Angular Material date pickers have an auto-incremented `mat-input-<n>` id and share
+      // `name="pickerInput"`; key them by their enclosing `<question property="…">` name.
+      special: (el) => {
+        if (!isPickerInput(el)) return null;
+        const property = el.closest?.('question')?.getAttribute?.('property');
+        return property ? `picker:${property}` : null;
+      },
     },
     // Recorder caption: the question's own words only, never a vehicle/person entity heading,
-    // help-icon sr-only text, or coverage cost text. Checkboxes return '' so their own <label> wins.
+    // help-icon sr-only text, or coverage cost text.
     caption: (el) => {
-      if (!el || /** @type {HTMLInputElement} */ (el).type?.toLowerCase() === 'checkbox') return '';
+      if (!el) return '';
+      const input = /** @type {HTMLInputElement} */ (el);
+      const type = input.type?.toLowerCase();
+      // Checkboxes keep their own <label> when it has text (e.g. "Boat"); otherwise read the
+      // enclosing question's label so they never fall back to an entity heading.
+      if (type === 'checkbox') {
+        const own = squash([...(input.labels ?? [])].map((l) => l.textContent).join(' '));
+        if (own) return '';
+        return labelText(el.closest?.('question')?.querySelector?.('.question-label label') ?? null);
+      }
       const doc = el.ownerDocument ?? document;
       let label = el.closest?.('question')?.querySelector?.('.question-label label') ?? null;
       if (!label) {
-        const firstId = squash(el.getAttribute?.('aria-labelledby')).split(' ')[0];
-        if (firstId && firstId.endsWith('_Label')) label = doc.getElementById?.(firstId) ?? null;
+        const labelId = squash(el.getAttribute?.('aria-labelledby')).split(/\s+/).find((id) => id.endsWith('_Label'));
+        if (labelId) label = doc.getElementById?.(labelId) ?? null;
       }
-      if (!label && el.id) {
+      // Radios skip `label[for]` because it names the option ("Yes"/"No"), not the question.
+      if (!label && type !== 'radio' && el.id) {
         const escaped = String(el.id).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
         label = doc.querySelector?.(`label[for="${escaped}"]`) ?? null;
       }
       return labelText(label);
     },
+    // Angular Material calendar inputs are typed dates; flag them so the recorder logs each change.
+    date: (el) => isPickerInput(el),
   };
 
   globalThis.__raterAdapter = { carrier: 'progressive-pa', shared };

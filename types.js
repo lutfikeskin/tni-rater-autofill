@@ -1263,6 +1263,7 @@
  * @typedef {object} PageAdapterShared
  * @property {PageAdapterSelectors} [selectors]
  * @property {(loc: Location) => string | null} [page]  the page's name, where the carrier names its pages itself (Progressive's ?pageName=)
+ * @property {() => string | null} [step]  the step on screen, where the carrier marks it itself in the page (Progressive Personal Auto's navigation bar, aria-current): its name, or null while none is marked
  * @property {string[]} [changeAttributes]
  * @property {string | null} [components]
  * @property {PageAdapterKeys} [keys]  how its fields are named and keyed (field-key.js)
@@ -1313,6 +1314,7 @@
  * @property {PageAdapterSelectors} selectors  the carrier's own elements, by role, added to the engine's own selectors
  * @property {string[]} changeAttributes  attributes whose change is the page changing (GEICO's radio group `active-index`), besides `checked`
  * @property {(loc: Location) => string | null} page  the page's name, where the carrier names its pages itself (Progressive's ?pageName=); null for the path or #/route
+ * @property {(() => string | null) | undefined} [step]  the step on screen, where the carrier marks it itself in the page (Progressive Personal Auto's navigation bar, aria-current): its name, or null while none is marked
  * @property {(page: string, step: FieldStep) => string[]} rearm  the helpers (action ids) an answer on this page makes due again (Progressive's Rates: Recalculate and Print)
  * @property {() => boolean} serverBacked  the page sends its server each answer: a fill waits between answers
  * @property {(fn: () => void) => void} onRequest  count the page's requests (per-answer timing)

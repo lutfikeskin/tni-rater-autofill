@@ -425,7 +425,11 @@
   // "Dashboard" on every step) names the step by the one part under way (0 < value < 100), as
   // pagekit's stepKey reads it, only while the page title names it too: mid-redraw, the bar and the
   // form can be different steps', and then no step is named.
+  // An adapter's own `step` hook (Progressive Personal Auto's navigation bar) takes precedence and
+  // never falls back to headings, returning undefined when no step is marked.
   const stepKey = () => {
+    const ownStep = shared().step;
+    if (typeof ownStep === 'function') return ownStep() || undefined;
     // The bar's parts are the adapter's `stepBar` (GEICO's <gds-progress-bar>).
     const bars = own('stepBar').length ? [...(document.querySelectorAll?.(own('stepBar').join(', ')) ?? [])] : [];
     if (bars.length) {

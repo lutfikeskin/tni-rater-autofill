@@ -523,6 +523,8 @@ export function barStep() {
  * @returns {string}
  */
 export function stepKey() {
+  const own = adapter().step;
+  if (typeof own === 'function') return own() || '';
   if (stepBars().length) {
     const bar = barStep();
     return squash(bar) && squash(document.title).includes(squash(bar)) ? bar : '';
