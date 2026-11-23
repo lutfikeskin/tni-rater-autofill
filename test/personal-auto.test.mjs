@@ -103,6 +103,19 @@ test('the first version\'s shared boxes are split, each split said for the agent
   assert.deepEqual(readFrom['vehicles[0].lienholder.city'], ['text_77ijpl']);
 });
 
+test("the first version's damage box: No is every vehicle's No, N/A is no answer", () => {
+  const damageOf = (said) => ok(readIntake({ ...first.raw, text_78imnp: said }, { today }));
+  assert.deepEqual(damageOf('No').record.vehicles.map((v) => v.damage), [false, false]);
+  assert.deepEqual(damageOf('None.').record.vehicles.map((v) => v.damage), [false, false]);
+  for (const said of ['N/A', 'n/a.', 'NA']) {
+    const r = damageOf(said);
+    assert.deepEqual(r.record.vehicles.map((v) => v.damage), [null, null], said);
+    assert.equal(r.readFrom['vehicles[0].damage'], undefined, said);
+  }
+  // Written but not plainly No (two vehicles): the agent's, quoted.
+  assert.ok(damageOf('n/a.').warnings.some((w) => w.code === 'vehicles.vehicle-damage-one-box' && w.level === 'check'));
+});
+
 test('a name and date of birth in one box, and a license and its state', () => {
   assert.deepEqual(splitNameAndBirth('Jane Q Example DOB: 3/4/1990'), { first: 'Jane', last: 'Q Example', dob: '03/04/1990', date: '3/4/1990' });
   assert.deepEqual(splitNameAndBirth('Example, Jane'), { first: 'Jane', last: 'Example', dob: null, date: null });

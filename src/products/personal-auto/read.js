@@ -238,7 +238,9 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
       return ['lienholder.street', 'lienholder.city', 'lienholder.state', 'lienholder.zip'];
     }, financed.length ? financed : vehicles.map((_, i) => i));
     const damage = txt('vehicle_damage');
-    if (damage && /^(no|none|n\/a)\.?$/i.test(damage)) vehicles.forEach((v, i) => { v.damage = false; readFrom[`vehicles[${i}].damage`] = [pdfName('vehicle_damage')]; });
+    // No or None is the client's No for every vehicle; N/A is not (clean already reads N/A and a bare
+    // None as blank: unanswered), and anything else is that vehicle's, or the agent's.
+    if (damage && /^(no|none)\.?$/i.test(damage)) vehicles.forEach((v, i) => { v.damage = false; readFrom[`vehicles[${i}].damage`] = [pdfName('vehicle_damage')]; });
     else once('vehicle_damage', 'Damage', (v, s) => { v.damage = yesNo(s); return ['damage']; });
   }
 
@@ -276,7 +278,7 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
   if (first) {
     for (const [key, field, label] of [['mature_driver_course', 'matureCourse', 'Mature driving course'], ['good_students', 'goodStudent', 'Good student'], ['distant_students', 'distantStudent', 'Distant student']]) {
       const said = txt(key);
-      if (!said || /^(no|none|n\/a)\.?$/i.test(said)) continue;
+      if (!said || /^(no|none)\.?$/i.test(said)) continue;
       const words = said.toLowerCase().split(/[^a-z']+/).filter(Boolean);
       const named = drivers.map((d, i) => ((d.first && words.includes(d.first.toLowerCase())) || (d.last && words.includes(d.last.toLowerCase())) ? i : -1)).filter((i) => i >= 0);
       if (named.length) {
