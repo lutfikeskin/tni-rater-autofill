@@ -94,7 +94,7 @@ export const CONTINUE = {
   check: { eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: '' },
   offSteps: { eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you.' },
   offList: { eyebrow: 'All answered', title: 'Click Continue yourself', sub: 'This page isn\u2019t one the extension continues on.' },
-  ready: { eyebrow: 'All answered', title: 'Ready for Continue', sub: '', label: 'Continue',
+  ready: { eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Nothing is bound or submitted.', label: 'Continue',
     continueHere: 'Click Continue on this page yourself.', manual: 'Click Continue, then fill the next page.' },
 };
 
