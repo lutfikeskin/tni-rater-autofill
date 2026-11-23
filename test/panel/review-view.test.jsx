@@ -105,6 +105,27 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+test('Review says nothing needs you only when the dock agrees: buttons left, a changed page or a look before Continue (#595 review)', () => {
+  state.reportFor = { key: '1|/Rates||Rates', step: 'Rates', filled: 3, list: [mkAnswer('intake', 'DOT number', '1234567')], drawn: 0 };
+  mountScreen(/** @type {HTMLElement} */ (document.getElementById('screen-root')), { scrollBehavior: () => 'auto' });
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), { showAll: () => {}, showReview: () => {} });
+  const lead = () => document.getElementById('review-lead')?.textContent;
+  for (const dock of [
+    { phase: 'waiting', tone: 'blue', title: 'Buttons left to click' },
+    { phase: 'check', tone: 'warn', title: 'Check the answers again' },
+    { phase: 'check', tone: 'good', title: 'Look over the answers, then continue' },
+    { phase: 'needs', tone: 'warn', title: 'Close what is open over the button' },
+  ]) {
+    act(() => { state.dock = dock; });
+    expect(lead(), dock.title).toBe('3 answers are in.');
+    act(() => setAllAnswers(true));
+    expect(lead(), `All answers: ${dock.title}`).toBe('Check the page before you continue.');
+    act(() => setAllAnswers(false));
+  }
+  act(() => { state.dock = { phase: 'ready-continue', tone: 'good', title: 'Ready for Continue' }; });
+  expect(lead()).toBe('3 answers are in and nothing needs you.');
+});
+
 test('Review groups Needs you uncapped, pending AI picks, Q1 Worth a look, Marked done, and See all N answers', () => {
   const needs = Array.from({ length: 6 }, (_, i) => mkNeed(`Missing question ${i + 1}`));
   const aiPending = mkAnswer('intake', 'Business entity', 'LLC', { pending: true });

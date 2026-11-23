@@ -209,10 +209,13 @@ export const REVIEW = {
   fallbackPage: 'This page',
   unitWord: { v: 'Vehicle', tr: 'Trailer', d: 'Driver' },
   title: (page) => `${page || 'This page'} is filled`,
-  lead: (filled, needs) => {
+  // `clear`: the dock agrees nothing is left before Continue (not buttons left, a changed page, a
+  // look before Continue or something open over the button), so the lead may say nothing needs you.
+  lead: (filled, needs, clear = true) => {
     if (needs > 0) {
       return `${filled} ${plural(filled, 'answer')} ${filled === 1 ? 'is' : 'are'} in. ${needs} ${needs === 1 ? 'needs' : 'need'} you before you continue.`;
     }
+    if (!clear) return filled > 0 ? `${filled} ${plural(filled, 'answer')} ${filled === 1 ? 'is' : 'are'} in.` : 'Check the page before you continue.';
     if (filled > 0) {
       return `${filled} ${plural(filled, 'answer')} ${filled === 1 ? 'is' : 'are'} in and nothing needs you.`;
     }
@@ -226,9 +229,9 @@ export const REVIEW = {
     ? `See all ${total} ${plural(total, 'answer')} (${intakeCount} straight from the intake)`
     : `See all ${total} ${plural(total, 'answer')}`),
   allTitle: (total) => `All ${total} ${plural(total, 'answer')}`,
-  allLead: (needs) => (needs > 0
+  allLead: (needs, clear = true) => (needs > 0
     ? `${needs} ${plural(needs, 'answer')} on this page ${needs === 1 ? 'needs' : 'need'} you.`
-    : 'Nothing on this page needs you.'),
+    : clear ? 'Nothing on this page needs you.' : 'Check the page before you continue.'),
   backToReview: '\u2039 Back to summary',
   fallbackLabel: 'Question',
   aiPickSub: 'The AI assistant\u2019s pick, waiting for you',

@@ -180,6 +180,8 @@ function Review({ act = {}, host } = {}) {
   const rowCtx = entry.ctx ?? { tabId: tab?.id ?? null, page: entry.page ?? '', carrier: tab?.carrier ?? null };
   const ownHead = !dock || screen === 'review' || screen === 'ai';
   const filled = typeof entry.filled === 'number' ? entry.filled : 0;
+  // The dock's phases that leave nothing before Continue (continueSaid in coordinator.js).
+  const clear = !dock || ['ready-continue', 'yours', 'finished', 'done'].includes(dock.phase);
 
   const showAll = () => {
     focusNextRef.current = 'back-to-review';
@@ -199,7 +201,7 @@ function Review({ act = {}, host } = {}) {
         {ownHead ? (
           <div className="pane-head">
             <h2 id="review-title" tabIndex={-1}>{REVIEW.allTitle(all.length)}</h2>
-            <p id="review-lead" className="pane-sub">{REVIEW.allLead(needs.length)}</p>
+            <p id="review-lead" className="pane-sub">{REVIEW.allLead(needs.length, clear)}</p>
           </div>
         ) : null}
       </div>
@@ -216,7 +218,7 @@ function Review({ act = {}, host } = {}) {
         <div className="pane-head">
           <HelpLink topic="page" />
           <h2 id="review-title" tabIndex={-1}>{REVIEW.title(pageName(entry))}</h2>
-          <p id="review-lead" className="pane-sub">{REVIEW.lead(filled, needs.length)}</p>
+          <p id="review-lead" className="pane-sub">{REVIEW.lead(filled, needs.length, clear)}</p>
         </div>
       ) : null}
       {needs.length > 0 ? (
