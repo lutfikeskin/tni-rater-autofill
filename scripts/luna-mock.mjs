@@ -277,10 +277,21 @@ try {
       throw new Error(`The fill did not finish: ${said}; panel errors: ${errors.join(' | ') || 'none'}`, { cause: error });
     });
   // A question's row in the page's list, opened (its suggestion, choices and buttons are inside).
+  // Opens a need the way the agent does: its row when the list shows it (All answers), its Needs you
+  // row in the grouped Review, or, while another need is the one on screen (closed needs are hidden
+  // then), the dock's Show the next one, else closing the open one.
   const openRow = async (label) => {
     const row = panel.locator('#report .row.need', { hasText: label }).first();
+    await row.waitFor({ state: 'attached', timeout: 30000 });
+    for (let i = 0; i < 20 && !await row.evaluate((n) => n.classList.contains('open')); i++) {
+      if (await row.isVisible()) { await row.locator('.row-head').click(); break; }
+      const reviewRow = panel.locator('#review-needs .review-row', { hasText: label }).first();
+      if (await reviewRow.isVisible()) { await reviewRow.click(); continue; }
+      const next = panel.locator('#dock-next');
+      if (await next.isVisible()) await next.click();
+      else await panel.locator('#report .row.need.open .row-head').first().click();
+    }
     await row.waitFor({ timeout: 30000 });
-    if (!await row.evaluate((n) => n.classList.contains('open'))) await row.locator('.row-head').click();
     return row;
   };
   const savedSettings = () => panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings);

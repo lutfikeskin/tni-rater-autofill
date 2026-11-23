@@ -673,10 +673,9 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
    21px title + compact status badge, concise single-paragraph reason, side-by-side 44px actions, and recessed caveat strip. */
 #report[data-focus="need"] > .rows { background: transparent; border-top: 0; border-bottom: 0; margin-top: 0; }
 #report[data-focus="need"] .rows > .row:not(.need) { display: none; }
-/* Collapse closed need rows visually while keeping their row-head boxes addressable by keyboard
-   and by the Luna harness's openRow() before it opens one. */
-#report[data-focus="need"] .rows > .row.need:not(.open) { max-height: 1px; min-height: 0; overflow: hidden; padding: 0; margin: 0; border: 0; opacity: 0; }
-#report[data-focus="need"] .rows > .row.need:not(.open) > .row-head { min-height: 1px; padding: 0; }
+/* Closed needs are out of view and out of the Tab order (a hidden button a keyboard user could tab
+   onto unseen); the dock's Show the next one moves to the next. */
+#report[data-focus="need"] .rows > .row.need:not(.open) { display: none; }
 #report[data-focus="need"] .row.need.open { margin: 10px 12px 0; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); overflow: hidden; padding: 0; }
 #report[data-focus="need"] .row.need.open .need-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 14px; background: var(--amber-soft); border-bottom: 1px solid var(--warning-line); }
 #report[data-focus="need"] .row.need.open.failed:not(.resolved) .need-card-head { background: var(--signal-soft); border-bottom-color: var(--signal-line); }

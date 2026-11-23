@@ -171,7 +171,9 @@ test('open need outside All answers marks #report data-focus="need" and clears i
   // .ai-holder, and #see-all-answers visible.
   const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
   expect(css).toContain('#page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }');
-  expect(css).toContain('#report[data-focus="need"] .rows > .row.need:not(.open)');
+  // Closed needs are out of view and out of the Tab order, not 1px boxes a keyboard user tabs onto
+  // (#595 review); the dock's Show the next one moves between needs.
+  expect(css).toContain('#report[data-focus="need"] .rows > .row.need:not(.open) { display: none; }');
   expect(css).not.toMatch(/#report\[data-focus="need"\][^{]*\.(report-head|ai-holder)/);
 });
 
