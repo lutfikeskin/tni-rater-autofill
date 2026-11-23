@@ -176,6 +176,8 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
   // --- Vehicles ------------------------------------------------------------------------------------
   /** @type {any[]} */
   const vehicles = [];
+  /** @type {string[]} */
+  const named = [];
   for (const n of VEHICLE_ROWS) {
     const at = (f) => txt(`veh_${f}_${n}`);
     if (!['year', 'make', 'model', 'vin', 'value'].some((f) => at(f))) continue;
@@ -197,7 +199,7 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
       commuteMiles: toInt(at('commute_miles')) != null && /^\d+$/.test(at('commute_miles') ?? '') ? toInt(at('commute_miles')) : at('commute_miles'),
       commuteDays: toInt(at('commute_days')),
       damage: at('damage') == null ? null : /^no$/i.test(at('damage') ?? '') ? false : /^yes\b/i.test(at('damage') ?? '') ? true : null,
-      lienholder: { name: txt(`lien_name_${n}`), street: txt(`lien_street_${n}`), city: txt(`lien_city_${n}`), state: txt(`lien_state_${n}`), zip: txt(`lien_zip_${n}`) },
+      lienholder: { name: null, street: null, city: null, state: null, zip: null },
     };
     if (v.year == null && at('year')) check('vehicle-year.invalid', p('year'), `${what}: "${at('year')}" isn't a year.`);
     else if (v.year != null && (v.year < 1950 || v.year > year + 1)) check('vehicle-year.invalid', p('year'), `${what}: model year ${v.year}?`);
@@ -206,11 +208,15 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
       if (problem) check('vin.invalid', p('vin'), `${what}: VIN ${vin} ${problem}.`);
     } else check('vin.missing', p('vin'), `${what}: no VIN.`);
     if (typeof v.value === 'string') check('vehicle-value.invalid', p('value'), `${what}: value "${v.value}" isn't an amount.`);
-    if (/^(financed|leased)$/i.test(v.ownership ?? '') && !v.lienholder.name && !first) check('lienholder.missing', p('lienholder.name'), `${what} is ${v.ownership.toLowerCase()}: no lienholder.`);
     vehicles.push(v);
+    named.push(what);
     rows.vehicles.push(n);
   }
   if (!vehicles.length) check('vehicles.none', 'vehicles', 'No vehicles on the form.');
+  const financed = vehicles.map((v, i) => (/^(financed|leased)$/i.test(v.ownership ?? '') ? i : -1)).filter((i) => i >= 0);
+  // The lienholder is asked once, for the financed or leased vehicle: with one such vehicle it is
+  // that vehicle's; with none, the only vehicle's, said so; otherwise the agent's, quoted.
+  const lienholderFor = financed.length ? financed : vehicles.map((_, i) => i);
 
   // The first version asks once for every vehicle: the commute, the lienholder and any damage. With
   // one vehicle (or one financed or leased, for the lienholder) the answer is that vehicle's, said
@@ -228,20 +234,37 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
     };
     once('commute_miles', 'Commute miles', (v, s) => { v.commuteMiles = toInt(s) ?? s; return ['commuteMiles']; });
     once('commute_days', 'Commute days a week', (v, s) => { v.commuteDays = toInt(s); return ['commuteDays']; });
-    const financed = vehicles.map((v, i) => (/^(financed|leased)$/i.test(v.ownership ?? '') ? i : -1)).filter((i) => i >= 0);
-    once('lienholder_name', 'Lienholder', (v, s) => { v.lienholder.name = s; return ['lienholder.name']; }, financed.length ? financed : vehicles.map((_, i) => i));
+    once('lienholder_name', 'Lienholder', (v, s) => { v.lienholder.name = s; return ['lienholder.name']; }, lienholderFor);
     once('lienholder_address', 'Lienholder address', (v, s) => {
       // Split as the garaging address is; what doesn't split stays whole in the street.
       const a = parseAddress(s);
       if (!a?.state || !a.city) { v.lienholder.street = s; return ['lienholder.street']; }
       Object.assign(v.lienholder, { street: [a.street, a.unit].filter(Boolean).join(' '), city: a.city, state: a.state, zip: a.zip });
       return ['lienholder.street', 'lienholder.city', 'lienholder.state', 'lienholder.zip'];
-    }, financed.length ? financed : vehicles.map((_, i) => i));
+    }, lienholderFor);
     const damage = txt('vehicle_damage');
     // No or None is the client's No for every vehicle; N/A is not (clean already reads N/A and a bare
     // None as blank: unanswered), and anything else is that vehicle's, or the agent's.
     if (damage && /^(no|none)\.?$/i.test(damage)) vehicles.forEach((v, i) => { v.damage = false; readFrom[`vehicles[${i}].damage`] = [pdfName('vehicle_damage')]; });
     else once('vehicle_damage', 'Damage', (v, s) => { v.damage = yesNo(s); return ['damage']; });
+  } else {
+    // The form TNI shares has one lienholder row, in boxes of its own.
+    const lien = { name: txt('lien_name'), street: txt('lien_street'), city: txt('lien_city'), state: txt('lien_state'), zip: txt('lien_zip') };
+    const said = Object.values(lien).filter(Boolean).join(', ');
+    if (said && lienholderFor.length === 1) {
+      const [i] = lienholderFor;
+      Object.assign(vehicles[i].lienholder, lien);
+      for (const f of Object.keys(lien)) readFrom[`vehicles[${i}].lienholder.${f}`] = [`lien_${f}`];
+      if (!financed.length) info('lienholder.not-financed', `vehicles[${i}].lienholder.name`, `Lienholder "${said}" with no vehicle marked financed or leased: read as ${named[i]}'s.`);
+    } else if (said && lienholderFor.length) {
+      check('lienholder.whose', 'vehicles', `Lienholder "${said}": ${financed.length ? `${financed.length} vehicles are financed or leased` : 'no vehicle is marked financed or leased'}. Whose is it?`);
+    }
+    // A financed or leased vehicle with no lienholder, unless the one given is waiting on the agent.
+    if (!(said && lienholderFor.length > 1)) {
+      for (const i of financed) {
+        if (!vehicles[i].lienholder.name) check('lienholder.missing', `vehicles[${i}].lienholder.name`, `${named[i]} is ${vehicles[i].ownership.toLowerCase()}: no lienholder.`);
+      }
+    }
   }
 
   // --- Residence -----------------------------------------------------------------------------------

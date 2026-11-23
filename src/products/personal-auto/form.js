@@ -15,12 +15,12 @@ export const FIELDS = new Set([
   'date_of_application', 'phone_number', 'email', 'garaging_address', 'time_at_address', 'prior_address', 'home_own_rent',
   'currently_insured', 'prior_carrier', 'prior_bi_limit', 'prior_insured_for', 'prior_expiration',
   'liability_limit', 'comp_deductible', 'coll_deductible', 'additional_notes',
+  // One lienholder for the quote: the financed or leased vehicle's (read.js gives it to that vehicle).
+  'lien_name', 'lien_street', 'lien_city', 'lien_state', 'lien_zip',
   ...DRIVER_ROWS.flatMap((n) => ['first', 'last', 'dob', 'gender', 'marital', 'relation', 'lic', 'state', 'year_licensed', 'occupation',
     'education', 'mature_course', 'good_student', 'distant_student'].map((f) => `drv_${f}_${n}`)),
-  ...VEHICLE_ROWS.flatMap((n) => [
-    ...['year', 'make', 'model', 'vin', 'use', 'ownership', 'value', 'owned_for', 'annual_miles', 'commute_miles', 'commute_days', 'damage'].map((f) => `veh_${f}_${n}`),
-    ...['name', 'street', 'city', 'state', 'zip'].map((f) => `lien_${f}_${n}`),
-  ]),
+  ...VEHICLE_ROWS.flatMap((n) => ['year', 'make', 'model', 'vin', 'use', 'ownership', 'value', 'owned_for', 'annual_miles', 'commute_miles',
+    'commute_days', 'damage'].map((f) => `veh_${f}_${n}`)),
 ]);
 
 /**
