@@ -7,6 +7,7 @@
 
 (() => {
   const EMBEDDED = /^(.+?)_Embedded_Questions_List_(.+)$/;
+  const VIEW_MODEL = /^viewModel/i;
   const QUOTE_PATH = /^\/Quote\/Index\/?$/i;
   const SKIP_CAPTION = '[aria-hidden="true"], .sr-only, .visually-hidden, help-icon';
 
@@ -33,14 +34,15 @@
 
   // Match the data-model path from `id` for every control (radios included: on live pages Angular
   // may render a radio group's `name` as a positional `viewModel_..._<n>` path while `id` stays
-  // stable). Fall back to `name` only when `id` does not match and `name` does not start with
-  // `viewModel`.
+  // stable). Fall back to `name` only for radios when `id` does not match and `name` does not
+  // start with `viewModel` (case-insensitive).
   /** @param {Element | null | undefined} el */
   const matchEmbedded = (el) => {
     const idMatch = String(el?.id ?? '').match(EMBEDDED);
     if (idMatch) return { match: idMatch, fromId: true };
+    if (!isRadio(el)) return null;
     const name = String(/** @type {HTMLInputElement | null | undefined} */ (el)?.name ?? '');
-    if (!name || name.startsWith('viewModel')) return null;
+    if (!name || VIEW_MODEL.test(name)) return null;
     const nameMatch = name.match(EMBEDDED);
     return nameMatch ? { match: nameMatch, fromId: false } : null;
   };
@@ -56,8 +58,11 @@
     let question = raw;
     if (hit.fromId && isRadio(el)) {
       const prop = el?.closest?.('question')?.getAttribute?.('property');
-      if (prop && raw.startsWith(`${prop}_`)) {
+      const val = el?.getAttribute?.('value') ?? '';
+      if (prop && (raw === prop || raw.startsWith(`${prop}_`))) {
         question = prop;
+      } else if (val && raw.length > val.length + 1 && raw.endsWith(`_${val}`)) {
+        question = raw.slice(0, -(val.length + 1));
       } else {
         const cut = raw.lastIndexOf('_');
         if (cut > 0) question = raw.slice(0, cut);

@@ -487,6 +487,8 @@ test('field keys match the decided ref, row, and picker:special mapping across f
       [{ type: 'radio', id: 'ProductsAA_Embedded_Questions_List_SingleWord', name: 'viewModel_Embedded_Questions_List_9' }, 'ProductsAA.SingleWord', null, 'ref:ProductsAA.SingleWord'],
       [{ type: 'radio', id: 'mat-radio-1', name: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator' }, 'ProductsAA.NamedOperatorIndicator', null, 'ref:ProductsAA.NamedOperatorIndicator'],
       [{ type: 'radio', id: 'mat-radio-2', name: 'viewModel_Embedded_Questions_List_1' }, null, null, 'viewModel_Embedded_Questions_List_1'],
+      [{ type: 'radio', id: 'mat-radio-3', name: 'ViewModel_Embedded_Questions_List_1' }, null, null, 'ViewModel_Embedded_Questions_List_1'],
+      [{ type: 'checkbox', id: 'opt-1', name: 'ProductsAA_Embedded_Questions_List_Foo' }, null, null, 'ProductsAA_Embedded_Questions_List_Foo'],
       [{ type: 'tel', id: 'mat-input-21', name: 'pickerInput' }, null, null, 'pickerInput'],
       [{ type: 'text', id: 'mat-input-99' }, null, null, 'mat-input-99'],
       [{ tag: 'button', id: 'product_tab_AA' }, null, null, 'product_tab_AA'],
@@ -609,6 +611,62 @@ test('field keys match the decided ref, row, and picker:special mapping across f
     assert.ok(!radioShapes.fieldKey(unk).startsWith('ref:'), `viewModel fallback must not produce a ref: key, got "${radioShapes.fieldKey(unk)}"`);
   } finally {
     radioShapes.close();
+  }
+
+  // Hardening edge cases: suffix-less radio id matching <question property>, non-radio checkbox ignoring name fallback,
+  // and multi-segment radio option values stripped by `_${value}` without a <question> wrapper (grouped by collectControls).
+  const radioHardeningHtml = `<!doctype html><html><body>
+    <input type="checkbox" id="opt-1" name="ProductsAA_Embedded_Questions_List_Foo">
+    <question property="veh_liab" class="box-row question">
+      <div class="left"><div class="question-label"><label>Liability *</label></div></div>
+      <div class="right">
+        <label><input type="radio" id="CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab" name="viewModel_Vehicles_List_0_Embedded_Questions_List_0" value="Y">Yes</label>
+      </div>
+    </question>
+    <div role="radiogroup">
+      <label><input type="radio" id="CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab_25_50" name="viewModel_Vehicles_List_0_Embedded_Questions_List_1" value="25_50">25/50</label>
+      <label><input type="radio" id="CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab_50_100" name="viewModel_Vehicles_List_0_Embedded_Questions_List_1" value="50_100" checked>50/100</label>
+    </div>
+    <div role="radiogroup">
+      <label><input type="radio" id="CoveragesAA_Vehicles_List_1_Embedded_Questions_List_veh_liab_Y" name="viewModel_Vehicles_List_1_Embedded_Questions_List_2" value="Y">Yes</label>
+      <label><input type="radio" id="CoveragesAA_Vehicles_List_1_Embedded_Questions_List_veh_liab_Not_Sure" name="viewModel_Vehicles_List_1_Embedded_Questions_List_2" value="Not_Sure" checked>Not Sure</label>
+    </div>
+  </body></html>`;
+  const radioHardening = loadPage(radioHardeningHtml);
+  try {
+    const cb = radioHardening.document.getElementById('opt-1');
+    assert.equal(radioHardening.adapter.shared.keys.ref(cb), null);
+    assert.equal(radioHardening.adapter.shared.keys.row(cb), null);
+    assert.ok(!radioHardening.fieldKey(cb).startsWith('ref:'), `checkbox must not use name fallback for ref:, got "${radioHardening.fieldKey(cb)}"`);
+
+    const exactProp = radioHardening.document.getElementById('CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab');
+    assert.equal(radioHardening.adapter.shared.keys.ref(exactProp), 'CoveragesAA.Vehicles.veh_liab');
+    assert.equal(radioHardening.fieldKey(exactProp), 'ref:CoveragesAA.Vehicles.veh_liab');
+
+    const limA = radioHardening.document.getElementById('CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab_25_50');
+    const limB = radioHardening.document.getElementById('CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab_50_100');
+    assert.equal(radioHardening.fieldKey(limA), 'ref:CoveragesAA.Vehicles.veh_liab');
+    assert.equal(radioHardening.fieldKey(limB), 'ref:CoveragesAA.Vehicles.veh_liab');
+
+    const nsA = radioHardening.document.getElementById('CoveragesAA_Vehicles_List_1_Embedded_Questions_List_veh_liab_Y');
+    const nsB = radioHardening.document.getElementById('CoveragesAA_Vehicles_List_1_Embedded_Questions_List_veh_liab_Not_Sure');
+    assert.equal(radioHardening.fieldKey(nsA), 'ref:CoveragesAA.Vehicles.veh_liab@2');
+    assert.equal(radioHardening.fieldKey(nsB), 'ref:CoveragesAA.Vehicles.veh_liab@2');
+
+    withKitGlobals(radioHardening, () => {
+      const radioGroups = collectControls().filter((c) => c.kind === 'radio');
+      const pair1 = radioGroups.filter((g) => g.el.getAttribute('name') === 'viewModel_Vehicles_List_0_Embedded_Questions_List_1');
+      assert.equal(pair1.length, 1);
+      assert.equal(pair1[0].radios?.length, 2);
+      assert.equal(pair1[0].ref, 'CoveragesAA.Vehicles.veh_liab');
+
+      const pair2 = radioGroups.filter((g) => g.el.getAttribute('name') === 'viewModel_Vehicles_List_1_Embedded_Questions_List_2');
+      assert.equal(pair2.length, 1);
+      assert.equal(pair2[0].radios?.length, 2);
+      assert.equal(pair2[0].ref, 'CoveragesAA.Vehicles.veh_liab');
+    });
+  } finally {
+    radioHardening.close();
   }
 
   // Repeated entity date pickers get distinct keys via their sibling Embedded control (`picker:<ref>@<row>`),
