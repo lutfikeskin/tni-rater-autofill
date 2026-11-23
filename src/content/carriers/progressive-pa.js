@@ -75,8 +75,13 @@
     },
     // Every step of the quote shares /Quote/Index/. Keep the page as the URL path so the panel's
     // pageOf(url) agrees, and read the active step from the navigation bar (never document.title).
+    // Returns undefined when this document draws no step navigation (child frame, cross-origin
+    // top, non-quote path, or no nav links), null when the nav is present with no single current
+    // step, and the mapped step name otherwise.
     step: () => {
-      if (typeof location === 'undefined' || !QUOTE_PATH.test(location.pathname)) return null;
+      try { if (typeof window === 'undefined' || window !== window.top) return undefined; } catch { return undefined; }
+      if (typeof location === 'undefined' || !QUOTE_PATH.test(location.pathname)) return undefined;
+      if (!document.querySelector('a.navigation-link')) return undefined;
       const current = document.querySelectorAll('a.navigation-link[aria-current]:not([aria-current="false"])');
       if (current.length !== 1) return null;
       return STEPS[squash(current[0].textContent).toUpperCase()] ?? null;

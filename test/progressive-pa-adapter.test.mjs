@@ -114,6 +114,8 @@ test('progressive-pa carrier config wires its own adapter, layoutUrl, layoutStep
   assert.equal(progressivePa.pageAdapter, 'src/content/carriers/progressive-pa.js');
   assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/Quote/Index/'), true);
   assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/home/'), false);
+  assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/login?ReturnUrl=/Quote/Index/'), false);
+  assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/Something/Quote/Index/'), false);
   assert.equal('autoFillUrl' in progressivePa, false);
   assert.deepEqual(progressivePa.layoutSteps, [
     'Named Insured', 'Products', 'Household Members', 'Additional Details',
@@ -367,10 +369,10 @@ test('step() names each step on /Quote/Index/ for kit and recorder while page st
     }
   }
 
-  // Wrong path: step returns null (kit '' / recorder undefined), page is the URL path.
+  // Wrong path: step returns undefined (kit '' / recorder undefined), page is the URL path.
   const wrongPath = loadPage(readFixture('coverages.html'), { url: 'https://www.foragentsonly.com/Home/Dashboard' });
   try {
-    assert.equal(wrongPath.adapter.shared.step(), null);
+    assert.equal(wrongPath.adapter.shared.step(), undefined);
     assert.equal(wrongPath.recorder.read.stepKey(), undefined);
     assert.equal(wrongPath.recorder.read.pageKey(), '/Home/Dashboard');
     withKitGlobals(wrongPath, () => {
@@ -381,7 +383,36 @@ test('step() names each step on /Quote/Index/ for kit and recorder while page st
     wrongPath.close();
   }
 
-  // No nav link current + visible h1/h2 holding "Test Person": kit returns '', recorder undefined (never headings).
+  // Child frame (window !== window.top) and cross-origin top both return undefined, even on /Quote/Index/ with nav.
+  const framePage = loadPage(readFixture('coverages.html'), { url: 'https://www.foragentsonly.com/Quote/Index/' });
+  try {
+    /** @type {any} */
+    const childCtx = { document: framePage.document, location: framePage.window.location, top: {} };
+    childCtx.window = childCtx;
+    vm.runInNewContext(ADAPTER_SRC, childCtx, { filename: 'src/content/carriers/progressive-pa.js' });
+    assert.equal(childCtx.__raterAdapter.shared.step(), undefined, 'child frame returns undefined');
+
+    /** @type {any} */
+    const crossOriginCtx = { document: framePage.document, location: framePage.window.location };
+    crossOriginCtx.window = crossOriginCtx;
+    Object.defineProperty(crossOriginCtx, 'top', { get() { throw new Error('SecurityError'); } });
+    vm.runInNewContext(ADAPTER_SRC, crossOriginCtx, { filename: 'src/content/carriers/progressive-pa.js' });
+    assert.equal(crossOriginCtx.__raterAdapter.shared.step(), undefined, 'cross-origin top returns undefined');
+  } finally {
+    framePage.close();
+  }
+
+  // Quote path with no a.navigation-link at all returns undefined.
+  const noNav = loadPage('<!doctype html><html><body><main><h1>Test Person</h1></main></body></html>', { url: 'https://www.foragentsonly.com/Quote/Index/' });
+  try {
+    assert.equal(noNav.adapter.shared.step(), undefined);
+    assert.equal(noNav.recorder.read.stepKey(), undefined);
+    withKitGlobals(noNav, () => assert.equal(stepKey(), ''));
+  } finally {
+    noNav.close();
+  }
+
+  // Nav present with no current item + visible h1/h2 holding "Test Person": step() returns null (kit '', recorder undefined, never headings).
   const noCurrentHtml = readFixture('coverages.html')
     .replace(' aria-current="step"', '')
     .replace('<main>', '<main><h1>Test Person</h1><h2>Test Person</h2>');
@@ -535,12 +566,18 @@ test('field keys match the decided ref, row, and picker:special mapping across f
     ni.close();
   }
 
-  // Nested row keys (`@<row>.<sub-row>`) pass DATA_MODEL_KEY in src/usage.js without redaction or hashing.
+  // Nested row keys (`@<row>.<sub-row>`) and `picker:` keys pass DATA_MODEL_KEY in src/usage.js without redaction or hashing.
   const nestedChange = fieldChangeEvent(
     { key: 'ref:People.Drivers.Violations.Code@1.2', q: null, label: 'Incident Description', kind: 'select', before: '', after: 'Speeding', agent: true },
     { record: /** @type {any} */ ({}), filled: new Map(), redact: redactor(['Code', 'Drivers']), keySalt: 'salt-1' },
   );
   assert.equal(nestedChange.key, 'ref:People.Drivers.Violations.Code@1.2');
+
+  const pickerChange = fieldChangeEvent(
+    { key: 'picker:People.Drivers.DateOfBirth@2', q: null, label: 'Date of Birth', kind: 'text', before: '', after: '01/02/1990', agent: true },
+    { record: /** @type {any} */ ({}), filled: new Map(), redact: redactor(['Drivers']), keySalt: 'salt-1' },
+  );
+  assert.equal(pickerChange.key, 'picker:People.Drivers.DateOfBirth@2');
 });
 
 test('step links, Portfolio btnNextId, Remove, and Clear are never chosen as Continue or allowed helpers, and idle spinner is not busy', () => {

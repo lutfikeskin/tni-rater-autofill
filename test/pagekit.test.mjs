@@ -8569,6 +8569,14 @@ test('an adapter step hook (progressive-pa): a fill starting with no step marked
   namedInsured.setAttribute('aria-current', 'step');
   const filled = await h.kit.fill(plan, { maxRounds: 4 });
   assert.deepEqual(plain([filled.halted, filled.stepUnread, filled.stepKey, city.value]), [false, false, 'Named Insured', 'Knoxville']);
+
+  // On a document with no step navigation (portal page or helper iframe), step() returns undefined
+  // so hasSteps() is false and a stepped-plan fill does not halt with stepUnread.
+  const portal = harness({ adapter: 'progressive-pa', pathname: '/home/' });
+  const portalCity = new InputNode({ id: 'NamedInsured_Embedded_Questions_List_City', ariaLabel: 'City' });
+  portal.document.body.append(portalCity);
+  const onPortal = await portal.kit.fill(plan, { maxRounds: 4 });
+  assert.deepEqual(plain([onPortal.halted, onPortal.stepUnread, onPortal.stepKey]), [false, false, '']);
 });
 
 test('on a step that is the agent\'s (stopSteps) nothing is typed or clicked, also when the agent moves there during the fill', async () => {

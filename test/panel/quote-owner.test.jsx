@@ -223,12 +223,14 @@ test('a tab a rater\'s logo opened fills nothing by itself until the agent opens
 test('progressive-pa layoutUrl treats /home/ as outside the quote and /Quote/Index/ as a quote page', () => {
   const PA_QUOTE = 'https://www.foragentsonly.com/Quote/Index/';
   state.intake = { ...intake('PA-1'), record: { product: 'personal-auto', drivers: [], vehicles: [], trailers: [] } };
-  // Home page is not a quote page: noteQuoteTab records tab 10 as entering and quoteOwnerIssue stays null.
-  noteQuoteTab(10, HOME);
-  state.tab = { id: 10, url: HOME, carrier: carrierForUrl(HOME, { product: 'personal-auto' }), background: false, windowId: 1 };
-  expect(state.quoteEntries.has(10)).toBe(true);
-  expect(state.quoteOwners.has(10)).toBe(false);
-  expect(quoteOwnerIssue(10)).toBeNull();
+  // Home page, login redirects, and non-root paths are outside the quote.
+  for (const nonQuote of [HOME, 'https://www.foragentsonly.com/login?ReturnUrl=/Quote/Index/', 'https://www.foragentsonly.com/Something/Quote/Index/']) {
+    noteQuoteTab(10, nonQuote);
+    state.tab = { id: 10, url: nonQuote, carrier: carrierForUrl(nonQuote, { product: 'personal-auto' }), background: false, windowId: 1 };
+    expect(state.quoteEntries.has(10)).toBe(true);
+    expect(state.quoteOwners.has(10)).toBe(false);
+    expect(quoteOwnerIssue(10)).toBeNull();
+  }
   // Moving from /home/ into /Quote/Index/ starts the quote with this intake.
   noteQuoteTab(10, PA_QUOTE);
   state.tab = { id: 10, url: PA_QUOTE, carrier: carrierForUrl(PA_QUOTE, { product: 'personal-auto' }), background: false, windowId: 1 };

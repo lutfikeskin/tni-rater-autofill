@@ -299,15 +299,16 @@ export function clientErrorEvent(err, { where, redact = (x) => x } = {}) {
 
 // The control, not only its question: a question repeated per vehicle row (`<q>@<row>`, or nested
 // `@<row>.<sub-row>`) or a field without a question id keeps its own key, the same one in fill and
-// change events. A data-model name (`ref:<name>`, Duck Creek's) is the carrier's, never the client's, and is kept as
-// it is: redacting a name word inside it turned HasContinuousCoverage into "HasContinuousCo[client]ge"
-// and split the question (maintainer, 2026-10-13: log quality over redaction). Other keys are
+// change events. A data-model name (`ref:<name>`, or `picker:<name>` for carrier date pickers) is
+// the carrier's, never the client's, and is kept as it is: redacting a name word inside it turned
+// HasContinuousCoverage into "HasContinuousCo[client]ge" and split the question (maintainer,
+// 2026-10-13: log quality over redaction). Other keys are
 // element ids and names, redacted like prose: a client term only as a whole word (owner_Ann), a
 // number or multi-word term wherever it appears; a name word run into an id (driverAnn1) stays. A
 // redacted key gets a digest under the quote's secret salt, so `owner_<one name>` and
 // `owner_<another>` stay two controls and a guessed name can't be checked; without a salt it's
 // left out rather than merged with others.
-const DATA_MODEL_KEY = /^ref:[\w.]+(?:@\d+(?:\.\d+)*)?$/;
+const DATA_MODEL_KEY = /^(?:ref|picker):[\w.]+(?:@\d+(?:\.\d+)*)?$/;
 function fieldKeyOf(key, redact, salt) {
   if (!key) return null;
   const raw = String(key);

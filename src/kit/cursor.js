@@ -563,8 +563,9 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     return fill(givenPlan, { ...arguments[1], restarted: true, deadline: ends });
   }
   // The step on screen as the fill begins, on a page with a step progress bar or an adapter `step`
-  // hook (null elsewhere: AmWINS' headings change with its dialogs). Read once the page has settled.
-  const hasSteps = () => stepBars().length > 0 || typeof adapter().step === 'function';
+  // hook whose document draws step navigation (null elsewhere: AmWINS' headings change with its
+  // dialogs, and child frames or portal pages draw no step nav). Read once the page has settled.
+  const hasSteps = () => stepBars().length > 0 || (typeof adapter().step === 'function' && adapter().step() !== undefined);
   const startStep = hasSteps() ? stepKey() : null;
   const stepChanged = () => startStep !== null && stepKey() !== startStep;
   // A stop step the fill found on screen after it started: it does nothing more, and reads nothing
