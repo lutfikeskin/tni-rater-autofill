@@ -219,3 +219,22 @@ test('a tab a rater\'s logo opened fills nothing by itself until the agent opens
     state.portalTabs.clear();
   }
 });
+
+test('progressive-pa layoutUrl treats /home/ as outside the quote and /Quote/Index/ as a quote page', () => {
+  const PA_QUOTE = 'https://www.foragentsonly.com/Quote/Index/';
+  state.intake = { ...intake('PA-1'), record: { product: 'personal-auto', drivers: [], vehicles: [], trailers: [] } };
+  // Home page is not a quote page: noteQuoteTab records tab 10 as entering and quoteOwnerIssue stays null.
+  noteQuoteTab(10, HOME);
+  state.tab = { id: 10, url: HOME, carrier: carrierForUrl(HOME, { product: 'personal-auto' }), background: false, windowId: 1 };
+  expect(state.quoteEntries.has(10)).toBe(true);
+  expect(state.quoteOwners.has(10)).toBe(false);
+  expect(quoteOwnerIssue(10)).toBeNull();
+  // Moving from /home/ into /Quote/Index/ starts the quote with this intake.
+  noteQuoteTab(10, PA_QUOTE);
+  state.tab = { id: 10, url: PA_QUOTE, carrier: carrierForUrl(PA_QUOTE, { product: 'personal-auto' }), background: false, windowId: 1 };
+  expect(state.quoteOwners.get(10)).toBe('PA-1');
+  expect(quoteOwnerIssue(10)).toBeNull();
+  // An unstarted tab already on /Quote/Index/ is flagged as an unowned quote page.
+  state.tab = { id: 11, url: PA_QUOTE, carrier: carrierForUrl(PA_QUOTE, { product: 'personal-auto' }), background: false, windowId: 1 };
+  expect(quoteOwnerIssue(11)).toEqual({ owner: null, intakeId: 'PA-1' });
+});

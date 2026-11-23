@@ -8421,7 +8421,7 @@ test('a stop is the carrier\'s stop page or, on a one-address application, a ste
   assert.equal(context.stopNoteFor(geico, '/quote', 'Payment Information'), geico.stopSteps['Payment Information']);
   assert.equal(context.stopNoteFor(geico, '/quote', 'Quote & Coverages'), null);
   assert.equal(context.stopNoteFor(progressivePa, '/Quote/Index/', 'Point of Sale'), progressivePa.stopSteps['Point of Sale']);
-  assert.equal(context.stopNoteFor(progressivePa, '/Quote/Index/', 'Coverages/Bill Plans'), null);
+  assert.equal(context.stopNoteFor(progressivePa, '/Quote/Index/', 'Coverages'), null);
   state.tabSteps.set(3, 'Vehicles');
   assert.equal(context.stopNoteFor(geico, '/quote'), null);
   state.tabSteps.delete(3);

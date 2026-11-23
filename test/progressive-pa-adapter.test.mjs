@@ -21,7 +21,7 @@ const FIXTURES = [
   { file: 'products.html', step: 'Products' },
   { file: 'household-members.html', step: 'Household Members' },
   { file: 'additional-details.html', step: 'Additional Details' },
-  { file: 'coverages.html', step: 'Coverages/Bill Plans' },
+  { file: 'coverages.html', step: 'Coverages' },
   { file: 'portfolio.html', step: 'Portfolio' },
 ];
 
@@ -110,11 +110,14 @@ function withKitGlobals(page, fn) {
   }
 }
 
-test('progressive-pa carrier config wires its own adapter, layoutSteps, stopSteps, and carrierRuleFiles without stopPages, rules or display', () => {
+test('progressive-pa carrier config wires its own adapter, layoutUrl, layoutSteps, stopSteps, and carrierRuleFiles without stopPages, autoFillUrl, rules or display', () => {
   assert.equal(progressivePa.pageAdapter, 'src/content/carriers/progressive-pa.js');
+  assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/Quote/Index/'), true);
+  assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/home/'), false);
+  assert.equal('autoFillUrl' in progressivePa, false);
   assert.deepEqual(progressivePa.layoutSteps, [
     'Named Insured', 'Products', 'Household Members', 'Additional Details',
-    'Coverages/Bill Plans', 'Portfolio', 'Point of Sale', 'Final Sale',
+    'Coverages', 'Portfolio', 'Point of Sale', 'Final Sale',
   ]);
   assert.equal('stopPages' in progressivePa, false);
   assert.deepEqual(progressivePa.stopSteps, {
@@ -122,7 +125,14 @@ test('progressive-pa carrier config wires its own adapter, layoutSteps, stopStep
     'Final Sale': 'This step is yours: nothing is filled or clicked. The quote stops at Portfolio.',
   });
   assert.equal(knownStep(progressivePa, 'Point of Sale'), 'Point of Sale');
-  assert.equal(knownStep(progressivePa, 'Coverages/Bill Plans'), 'Coverages/Bill Plans');
+  assert.equal(knownStep(progressivePa, 'Coverages'), 'Coverages');
+  // Redacting a client named "Bill Sample" keeps the step name "Coverages" intact.
+  const billRedact = redactor(['Bill', 'Sample']);
+  const covEvent = fieldChangeEvent(
+    { key: 'ref:CoveragesAA.Vehicles.COMP', q: null, label: 'Comprehensive Deductible', kind: 'select', before: '', after: '$500', agent: true },
+    { record: /** @type {any} */ ({}), filled: new Map(), redact: billRedact, step: knownStep(progressivePa, 'Coverages') },
+  );
+  assert.equal(covEvent.step, 'Coverages');
   assert.equal(carrierRefusal('progressive-pa', 'stop: Point of Sale'), false);
   assert.equal(carrierRefusal('progressive-pa', 'stop: Final Sale'), false);
   assert.deepEqual(progressivePa.rules, []);
@@ -239,7 +249,7 @@ test('recorder logs clean question captions across all fixtures, never helper/sr
     picker.value = '12/01/2026';
     prod.recorder.poll();
     const changes = prod.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
-    const change = changes.find((c) => c.key === 'picker:PolicyEffectiveDate');
+    const change = changes.find((c) => c.key === 'picker:ProductsAA.PolicyEffectiveDate');
     assert.equal(change?.date, true);
     assert.equal(change?.label, 'Policy Effective Date');
   } finally {
@@ -273,6 +283,17 @@ test('caption edge cases: radio skips label[for], checkbox without own label use
         <input type="checkbox" id="AdditionalDetails_Embedded_Questions_List_PaperlessBox" aria-labelledby="entitydetails0">
       </div>
     </question>
+
+    <question property="SrOnlyBox" class="box-row question">
+      <div class="left">
+        <div class="question-label">
+          <label id="SrOnlyBox_Label">Roadside Assistance <span aria-hidden="true">*</span></label>
+        </div>
+      </div>
+      <div class="right">
+        <label><input type="checkbox" id="AdditionalDetails_Embedded_Questions_List_SrOnlyBox"><span class="sr-only">Select</span></label>
+      </div>
+    </question>
   </body></html>`;
   const page = loadPage(html);
   try {
@@ -292,6 +313,11 @@ test('caption edge cases: radio skips label[for], checkbox without own label use
     const box = page.document.getElementById('AdditionalDetails_Embedded_Questions_List_PaperlessBox');
     assert.equal(cap(box), 'Enroll in Paperless?');
     assert.equal(page.recorder.read.describe(box).label, 'Enroll in Paperless?');
+
+    // Checkbox whose own label holds only sr-only text inside <question> gets the question's words.
+    const srBox = page.document.getElementById('AdditionalDetails_Embedded_Questions_List_SrOnlyBox');
+    assert.equal(cap(srBox), 'Roadside Assistance');
+    assert.equal(page.recorder.read.describe(srBox).label, 'Roadside Assistance');
   } finally {
     page.close();
   }
@@ -434,15 +460,51 @@ test('field keys match the decided ref, row, and picker:special mapping across f
     page.close();
   }
 
-  // Actual DOM elements inside fixtures produce the exact decided keys (including picker:PolicyEffectiveDate).
+  // Actual DOM elements inside fixtures produce the exact decided keys (including picker:ProductsAA.PolicyEffectiveDate).
   const prod = loadPage(readFixture('products.html'));
   try {
     const picker = prod.document.getElementById('mat-input-21');
     assert.equal(prod.adapter.shared.keys.ref(picker), null);
-    assert.equal(prod.adapter.shared.keys.special(picker), 'picker:PolicyEffectiveDate');
-    assert.equal(prod.fieldKey(picker), 'picker:PolicyEffectiveDate');
+    assert.equal(prod.adapter.shared.keys.special(picker), 'picker:ProductsAA.PolicyEffectiveDate');
+    assert.equal(prod.fieldKey(picker), 'picker:ProductsAA.PolicyEffectiveDate');
   } finally {
     prod.close();
+  }
+
+  // Repeated entity date pickers get distinct keys via their sibling Embedded control (`picker:<ref>@<row>`),
+  // and the real recorder reports an edit on driver 1's picker under driver 1's key.
+  const driversHtml = `<!doctype html><html><body>
+    <question property="DateOfBirth" class="box-row question">
+      <div class="left"><div class="question-label"><label>Date of Birth *</label></div></div>
+      <div class="right">
+        <input type="tel" id="mat-input-10" name="pickerInput" value="">
+        <input type="text" id="People_Drivers_List_0_Embedded_Questions_List_DateOfBirth" value="">
+      </div>
+    </question>
+    <question property="DateOfBirth" class="box-row question">
+      <div class="left"><div class="question-label"><label>Date of Birth *</label></div></div>
+      <div class="right">
+        <input type="tel" id="mat-input-11" name="pickerInput" value="">
+        <input type="text" id="People_Drivers_List_1_Embedded_Questions_List_DateOfBirth" value="">
+      </div>
+    </question>
+  </body></html>`;
+  const drivers = loadPage(driversHtml);
+  try {
+    const p1 = /** @type {HTMLInputElement} */ (drivers.document.getElementById('mat-input-10'));
+    const p2 = /** @type {HTMLInputElement} */ (drivers.document.getElementById('mat-input-11'));
+    assert.equal(drivers.fieldKey(p1), 'picker:People.Drivers.DateOfBirth');
+    assert.equal(drivers.fieldKey(p2), 'picker:People.Drivers.DateOfBirth@2');
+    assert.notEqual(drivers.fieldKey(p1), drivers.fieldKey(p2));
+    p1.value = '01/02/1990';
+    drivers.recorder.poll();
+    const changes = drivers.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+    const edit = changes.find((c) => c.key === 'picker:People.Drivers.DateOfBirth');
+    assert.ok(edit, 'recorder reported driver 1 picker edit under driver 1 key');
+    assert.equal(edit.date, true);
+    assert.equal(edit.label, 'Date of Birth');
+  } finally {
+    drivers.close();
   }
 
   const hh = loadPage(readFixture('household-members.html'));
@@ -539,5 +601,26 @@ test('step links, Portfolio btnNextId, Remove, and Clear are never chosen as Con
     });
   } finally {
     pf.close();
+  }
+});
+
+test('recorder emits exactly one step_shown and no page_view when aria-current moves without changing URL', () => {
+  const page = loadPage(readFixture('named-insured.html'), { url: 'https://www.foragentsonly.com/Quote/Index/' });
+  try {
+    assert.equal(page.recorder.version, 16);
+    // Clear initial page_view from startup, then move aria-current from NAMED INSURED to PRODUCTS.
+    page.sent.length = 0;
+    const links = [...page.document.querySelectorAll('a.navigation-link')];
+    links[0].removeAttribute('aria-current');
+    links[1].setAttribute('aria-current', 'step');
+    page.recorder.poll();
+    const stepShown = page.sent.filter((m) => m.event === 'step_shown');
+    const pageViews = page.sent.filter((m) => m.event === 'page_view');
+    assert.deepEqual(stepShown.map((m) => ({ event: m.event, page: m.page, step: m.step })), [
+      { event: 'step_shown', page: '/Quote/Index/', step: 'Products' },
+    ]);
+    assert.equal(pageViews.length, 0);
+  } finally {
+    page.close();
   }
 });

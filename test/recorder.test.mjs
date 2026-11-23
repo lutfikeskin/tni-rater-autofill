@@ -494,7 +494,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 15);
+  assert.equal(h.context.__raterRecorder.version, 16);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -596,7 +596,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 15);
+  assert.equal(h.context.__raterRecorder.version, 16);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {

@@ -26,7 +26,7 @@ const CURSOR_SOURCE = fs.readFileSync(new URL('../src/kit/cursor.js', import.met
 const MARKS_SOURCE = fs.readFileSync(new URL('../src/kit/marks.js', import.meta.url), 'utf8');
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
 // A carrier's page adapter, loaded before the kit as the panel does it (harness `adapter`).
-const ADAPTERS = Object.fromEntries(['progressive', 'geico', 'amwins'].map((id) => [id, fs.readFileSync(new URL(`../src/content/carriers/${id}.js`, import.meta.url), 'utf8')]));
+const ADAPTERS = Object.fromEntries(['progressive', 'geico', 'amwins', 'progressive-pa'].map((id) => [id, fs.readFileSync(new URL(`../src/content/carriers/${id}.js`, import.meta.url), 'utf8')]));
 const RECORDER = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
 
 // A virtual clock for the fill engine's waits (sleep, settle, the retry loops that read Date.now()).
@@ -8548,6 +8548,27 @@ test('a GEICO step that can\'t be read (its bar and title disagree): a plan kept
   const settled = await h.kit.fill(plan, { maxRounds: 6 });
   assert.deepEqual([settled.halted, settled.stepKey, zip.value, settled.stepUnread], [false, 'Quote & Coverages', '68102', false]);
   assert.equal(settled.unknown.length, 6);
+});
+
+test('an adapter step hook (progressive-pa): a fill starting with no step marked halts with stepUnread, and fills once marked', async () => {
+  const plan = [
+    { id: 'city', field: 'NamedInsured.City', steps: ['Named Insured'], path: 'garaging.city', name: 'City', kind: 'text', value: 'Knoxville' },
+  ];
+  const h = harness({ adapter: 'progressive-pa', pathname: '/Quote/Index/' });
+  const nav = new FakeNode('nav');
+  const namedInsured = new FakeNode('a', { className: 'navigation-link', textContent: 'NAMED INSURED' });
+  const products = new FakeNode('a', { className: 'navigation-link', textContent: 'PRODUCTS' });
+  nav.append(namedInsured, products);
+  const city = new InputNode({ id: 'NamedInsured_Embedded_Questions_List_City', ariaLabel: 'City' });
+  h.document.body.append(nav, city);
+  // No nav link has aria-current yet: stepKey() is '' and the fill halts with stepUnread.
+  const unread = await h.kit.fill(plan, { maxRounds: 4 });
+  assert.deepEqual(plain([unread.halted, unread.stepUnread, unread.stepKey, city.value]), [true, true, '', '']);
+  assert.deepEqual(plain([...unread.filled, ...unread.unknown, ...unread.leftRequired]), []);
+  // Once NAMED INSURED carries aria-current="step", the fill runs normally.
+  namedInsured.setAttribute('aria-current', 'step');
+  const filled = await h.kit.fill(plan, { maxRounds: 4 });
+  assert.deepEqual(plain([filled.halted, filled.stepUnread, filled.stepKey, city.value]), [false, false, 'Named Insured', 'Knoxville']);
 });
 
 test('on a step that is the agent\'s (stopSteps) nothing is typed or clicked, also when the agent moves there during the fill', async () => {

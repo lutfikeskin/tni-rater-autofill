@@ -562,9 +562,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (running === thisFill) running = null;
     return fill(givenPlan, { ...arguments[1], restarted: true, deadline: ends });
   }
-  // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
-  // AmWINS' headings change with its dialogs). Read once the page has settled.
-  const startStep = stepBars().length ? stepKey() : null;
+  // The step on screen as the fill begins, on a page with a step progress bar or an adapter `step`
+  // hook (null elsewhere: AmWINS' headings change with its dialogs). Read once the page has settled.
+  const hasSteps = () => stepBars().length > 0 || typeof adapter().step === 'function';
+  const startStep = hasSteps() ? stepKey() : null;
   const stepChanged = () => startStep !== null && stepKey() !== startStep;
   // A stop step the fill found on screen after it started: it does nothing more, and reads nothing
   // there for its report.
@@ -670,7 +671,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     if (currentPage() !== startPage) { delete state.report.premium; state.report.navigatedTo = currentPage(); break; }
     // The step can't be read, and the fill began there (a step it began on that turns unreadable
     // is the agent's Next mid-redraw: the step changed, above). Nothing is done or read here.
-    if (steppedPlan && stepBars().length && stepKey() === '') {
+    if (steppedPlan && hasSteps() && stepKey() === '') {
       delete state.report.premium;
       state.unreadStep = true;
       // Only this halt: the panel tries an automatic fill once more rather than pausing them all.

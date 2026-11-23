@@ -17,7 +17,9 @@ export const progressivePa = {
   product: 'personal-auto',
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   pageAdapter: 'src/content/carriers/progressive-pa.js',
-  layoutSteps: ['Named Insured', 'Products', 'Household Members', 'Additional Details', 'Coverages/Bill Plans', 'Portfolio', 'Point of Sale', 'Final Sale'],
+  // Automatic layouts and quote-tab ownership apply only to the quote itself, not /home/.
+  layoutUrl: /\/Quote\/Index(?:\/|[?#]|$)/i,
+  layoutSteps: ['Named Insured', 'Products', 'Household Members', 'Additional Details', 'Coverages', 'Portfolio', 'Point of Sale', 'Final Sale'],
   stopSteps: {
     'Point of Sale': 'This step is yours: nothing is filled or clicked. The quote stops at Portfolio.',
     'Final Sale': 'This step is yours: nothing is filled or clicked. The quote stops at Portfolio.',
