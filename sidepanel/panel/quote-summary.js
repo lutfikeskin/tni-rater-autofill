@@ -265,4 +265,4 @@ function saveSummary() {
   state.summary = { ...open, saved: said };
 }
 
-export { SOURCES, closeSummary, openSummary, saveSummary, summaryEvent, downloadSummary, quoteSummary, summaryFileName, summaryHtml, summaryRow };
+export { SOURCES, closeSummary, summaryNow, openSummary, saveSummary, summaryEvent, downloadSummary, quoteSummary, summaryFileName, summaryHtml, summaryRow };

@@ -277,10 +277,21 @@ try {
       throw new Error(`The fill did not finish: ${said}; panel errors: ${errors.join(' | ') || 'none'}`, { cause: error });
     });
   // A question's row in the page's list, opened (its suggestion, choices and buttons are inside).
+  // Opens a need the way the agent does: its row when the list shows it (All answers), its Needs you
+  // row in the grouped Review, or, while another need is the one on screen (closed needs are hidden
+  // then), the dock's Show the next one, else closing the open one.
   const openRow = async (label) => {
     const row = panel.locator('#report .row.need', { hasText: label }).first();
+    await row.waitFor({ state: 'attached', timeout: 30000 });
+    for (let i = 0; i < 20 && !await row.evaluate((n) => n.classList.contains('open')); i++) {
+      if (await row.isVisible()) { await row.locator('.row-head').click(); break; }
+      const reviewRow = panel.locator('#review-needs .review-row', { hasText: label }).first();
+      if (await reviewRow.isVisible()) { await reviewRow.click(); continue; }
+      const next = panel.locator('#dock-next');
+      if (await next.isVisible()) await next.click();
+      else await panel.locator('#report .row.need.open .row-head').first().click();
+    }
     await row.waitFor({ timeout: 30000 });
-    if (!await row.evaluate((n) => n.classList.contains('open'))) await row.locator('.row-head').click();
     return row;
   };
   const savedSettings = () => panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings);
@@ -399,7 +410,11 @@ try {
   verify('Luna stays suggestion-only while lunaAuto is off', await mock.locator('#mockLunaChoice').inputValue(), '');
   await manual.click();
   await mock.waitForFunction(() => document.querySelector('#mockLunaChoice').value === 'No');
-  await panel.getByText(/Put in .*purple on the page/).first().waitFor();
+  // The panel says the answer went in: on the item's card while something else still needs the
+  // agent, or, with nothing left (the redesign's grouped Review), as the row's "AI · you chose".
+  await panel.getByText(/Put in .*purple on the page/)
+    .or(panel.locator('#review .review-row', { hasText: 'Mock Luna choice' }).filter({ hasText: 'AI · you chose' }))
+    .filter({ visible: true }).first().waitFor();
   await mock.locator('#mockLunaChoice').selectOption('Yes');
   await panel.waitForTimeout(1800);
   verify('manual Luna acceptance and correction are retained', await mock.locator('#mockLunaChoice').inputValue(), 'Yes');
@@ -434,7 +449,8 @@ try {
     if (!await panel.locator('#report .row.need', { hasText: label }).count()) continue;
     const need = await openRow(label);
     await need.locator('.mark-done').click();
-    await panel.locator('#report .row.need.resolved', { hasText: label }).waitFor({ timeout: 30000 });
+    // Settled (`.resolved`); the redesign's one-need-per-screen view hides it and shows the next.
+    await panel.locator('#report .row.need.resolved', { hasText: label }).waitFor({ state: 'attached', timeout: 30000 });
   }
   verify('Mark done lowers "left for you" without a refill', await panel.locator('#fill-summary').innerText() !== leftBefore, true);
   verify('Mark done keeps the Luna approval card', await approve.isVisible(), true);
@@ -573,17 +589,34 @@ try {
     && Object.values(namesSent.at(-1)).every((n) => loaded.record.drivers.some((d) => String(d.first ?? '').startsWith(n))), true);
   verify('the fixture has no GL ticked', loaded.record.coverage.gl === true, false);
   if (await panel.locator('#check-view').isHidden()) await panel.locator('#step-check').click();
+  const focusCard = panel.locator('#warnings.checks-focus .check-focus');
+  await focusCard.waitFor({ timeout: 15000 });
+  verify('intake checks start in focus mode one check at a time', await panel.locator('#warnings .check').count(), 1);
+  await panel.locator('#see-all-checks').click();
   const glCard = panel.locator('#warnings .check', { hasText: 'mention GL' });
   const genderCard = panel.locator('#warnings .check', { hasText: 'is more often a woman\'s name' });
   await glCard.waitFor({ timeout: 15000 });
+  await genderCard.waitFor({ timeout: 15000 });
   const quoted = (await glCard.innerText()).match(/mention GL: "(.+?)"\./)?.[1] ?? '';
   verify('the GL item quotes a line of the claims box', quoted.length > 0 && loaded.record.claims.text.replace(/\s+/g, ' ').includes(quoted.replace(/…$/, '')), true);
   const claimsBeforeChoice = claimsRequests;
-  verify('the gender item says it is a guess from the name', /guess from the first name only/.test(await genderCard.innerText()), true);
-  verify('the gender item says the TNI standard', /filled Male \(TNI standard\)/.test(await genderCard.innerText()), true);
   await panel.locator('#warnings').screenshot({ path: path.join(out, 'luna-intake-checks.png'), animations: 'disabled' });
   await glCard.getByRole('button', { name: 'Client has GL', exact: true }).click();
-  await genderCard.getByRole('button', { name: 'Use Female', exact: true }).click();
+  await panel.waitForFunction(async () => (await chrome.storage.session.get('intake')).intake?.record.coverage.hasGl === true, null, { timeout: 15000 });
+  // Switch back to one-at-a-time focus mode and step through any earlier checks to verify Luna's
+  // choice buttons in FocusCheck as well as in the full list.
+  await panel.locator('#one-check-mode').click();
+  await focusCard.waitFor({ timeout: 15000 });
+  for (let step = 0; step < 12; step++) {
+    if (/is more often a woman's name/.test(await focusCard.innerText())) break;
+    const prevCheck = await focusCard.getAttribute('data-check');
+    await focusCard.getByRole('button', { name: 'Looks right', exact: true }).click();
+    await panel.waitForFunction((prev) => document.querySelector('#warnings .check-focus')?.getAttribute('data-check') !== prev, prevCheck, { timeout: 15000 });
+  }
+  const genderText = await focusCard.innerText();
+  verify('the gender item says it is a guess from the name', /guess from the first name only/.test(genderText), true);
+  verify('the gender item says the TNI standard', /filled Male \(TNI standard\)/.test(genderText), true);
+  await focusCard.getByRole('button', { name: 'Use Female', exact: true }).click();
   await panel.waitForFunction(async () => {
     const { intake } = await chrome.storage.session.get('intake');
     return intake.record.coverage.hasGl === true && intake.record.drivers[0].gender === 'FEMALE';
@@ -591,6 +624,7 @@ try {
   const edited = await savedIntake();
   verify('the buttons are the agent\'s edits', ['coverage.hasGl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
   verify('Client has GL asks for no GL quote', edited.record.coverage.gl === true, false);
+  if (await panel.locator('#see-all-checks').isVisible()) await panel.locator('#see-all-checks').click();
   verify('both items are checked', await panel.locator('#warnings .check', { hasText: /mention GL|woman's name/ }).count(), 0);
   await panel.waitForTimeout(500);
   verify('confirming GL does not read the claims box again', claimsRequests, claimsBeforeChoice);
@@ -644,6 +678,8 @@ try {
   flagIntake = false;
   const offIntake = await savedIntake();
   verify('assistance off: no claims or name check is sent', claimsRequests + namesRequests, offBefore);
+  if (await panel.locator('#check-view').isHidden()) await panel.locator('#step-check').click();
+  if (await panel.locator('#see-all-checks').isVisible()) await panel.locator('#see-all-checks').click();
   verify('assistance off: no GL or gender item', await panel.locator('#warnings .check', { hasText: /mention GL|woman's name/ }).count(), 0);
   verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);

@@ -27,27 +27,43 @@
     <symbol id="sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
     <!-- The client strip's Quote summary (summary-view.jsx). -->
     <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
+    <symbol id="undo" viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></symbol>
+    <symbol id="driver" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+    <symbol id="truck" viewBox="0 0 24 24"><path d="M3 6h11v10H3zM14 9h4l3 3.5V16h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/></symbol>
+    <symbol id="trailer" viewBox="0 0 24 24"><path d="M2 7h15v9H2zM17 13h5"/><circle cx="6" cy="17.5" r="1.8"/><circle cx="12" cy="17.5" r="1.8"/></symbol>
     <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
   </svg>
 
   <h1 class="sr-only">TNI Rater Autofill</h1>
 
-  <!-- Where the panel works: the rater page's carrier, page and place in the quote (the panel's own
-       name off a rater), with Settings on its right. -->
-  <header class="top">
-    <div class="top-main">
+  <!-- Fixed top: the top bar (client name or Rater Autofill, with window controls and Settings),
+       the context line (rater page and stage, or the intake's state and counts), the 2px progress
+       rule, and when an intake is loaded, the file tools and steps. -->
+  <header class="panel-head">
+    <div class="top">
+      <div id="brand" class="brand" hidden><img src="logo.png" alt=""><span>Rater Autofill</span></div>
       <div id="carrier-line" class="carrier-line">
         <img id="site-logo" class="carrier-logo" alt="" hidden>
         <span id="site" class="site">…</span>
         <span id="site-step" class="site-step" hidden></span>
-      </div>
-      <div class="track-row">
-        <div id="site-track" class="track" hidden></div>
         <span id="site-count" class="site-count" hidden></span>
+        <span id="site-caption" class="carrier-caption" hidden></span>
       </div>
-      <div id="brand" class="brand" hidden><img src="logo.png" alt=""><span>Rater Autofill</span></div>
-      <span id="site-caption" class="carrier-caption" hidden></span>
+      <div id="site-track" class="track" hidden></div>
+      <div id="site-rule" class="rule-root"></div>
     </div>
+
+    <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
+         always in view (no menu to open first), and the two tabs, Intake and This page -->
+    <section id="quote" class="client" hidden>
+      <!-- The name, the intake context line, the tools, the file tools' question and the note on the
+           file just loaded: drawn by client-view.jsx (mountClient). -->
+      <div id="client-root"></div>
+      <!-- The intake, then the page in front (its fill and what is left on it). The header's
+           "Stage n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
+      <div id="steps" class="steps" role="tablist" aria-label="Intake or this page"></div>
+    </section>
+
     <span class="top-right">
       <!-- The panel in a window of its own (popOut), and back to Chrome's side panel (dock). -->
       <button type="button" id="pop-out" class="icon-btn" aria-label="Open in its own window" title="Open in its own window" hidden><svg aria-hidden="true"><use href="#new-window"/></svg></button>
@@ -55,17 +71,6 @@
       <button type="button" id="settings-btn" class="icon-btn" aria-label="Settings" title="Settings" aria-expanded="false" aria-controls="settings"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
     </span>
   </header>
-
-  <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
-       always in view (no menu to open first), and the two tabs, Intake and This page -->
-  <section id="quote" class="client" hidden>
-    <!-- The name, the tools, the file tools' question and the note on the file just loaded: drawn by
-         client-view.jsx (mountClient). -->
-    <div id="client-root"></div>
-    <!-- The intake, then the page in front (its fill and what is left on it). The header's
-         "Stage n of m" is the quote's place. Drawn by steps-view.jsx (mountSteps). -->
-    <nav id="steps" class="steps" aria-label="Intake or this page"></nav>
-  </section>
 
   <main id="view" class="view">
     <div id="notices" class="notices"></div>
@@ -77,13 +82,12 @@
     <!-- Pop out or Back to the side panel that didn't work (windowProblem). -->
     <div id="window-note" class="notices" hidden></div>
 
+    <!-- Canvas screen head (#screen-head, with #screen-title h2): drawn by screen-view.jsx (mountScreen). -->
+    <div id="screen-root"></div>
+
     <!-- No intake loaded -->
     <section id="home" class="pane">
-      <div class="intro">
-        <h2>Start a quote</h2>
-        <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote" title="Help: starting a quote" data-help="home">?</a>
-        <p class="muted">Add the client’s quote application.</p>
-      </div>
+      <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote" title="Help: starting a quote" data-help="home">?</a>
       <section id="load" class="drop" tabindex="0">
         <input id="file" type="file" accept="application/pdf,.pdf" hidden>
         <div><h3 class="drop-title">Drop your intake PDF here</h3><p class="drop-hint">or</p></div>
@@ -97,17 +101,23 @@
 
     <!-- Step 1: what looked wrong or missing on the intake (#warnings), then every answer on it
          (#details-row): drawn by checks-view.jsx (mountChecks). -->
-    <section id="check-view" class="pane" hidden></section>
+    <section id="check-view" class="pane" role="tabpanel" aria-labelledby="step-check" hidden></section>
 
     <!-- Steps 2 and 3: the page's answers, one list -->
-    <section id="page-view" hidden>
+    <section id="page-view" role="tabpanel" aria-labelledby="step-fill" hidden>
       <!-- A rater to open, and what's wrong or different about this tab's quote, above its answers
            (#fill-waiting, #issues): drawn by cards-view.jsx (mountCards). -->
       <div id="cards-root"></div>
       <!-- Which driver, vehicle or trailer the page is about: drawn by checks-view.jsx (mountPickers). -->
       <div id="pickers" class="pickers"></div>
+      <!-- All answers header (#review.review-all-head), portaled above #feed when All answers is open. -->
+      <div id="review-all-root"></div>
       <!-- The page's answers (#feed), drawn by feed-view.jsx (mountFeed). -->
       <div id="feed-root"></div>
+      <!-- Post-fill grouped Review (#review), drawn by review-view.jsx (mountReview). -->
+      <div id="review-root"></div>
+      <!-- Clear marks tool (.feed-tools), portaled below #see-all-answers in grouped Review. -->
+      <div id="feed-tools-root"></div>
     </section>
 
     <!-- Settings, over everything but the header: drawn by settings-view.jsx (mountSettings). -->
@@ -130,7 +140,9 @@
   <footer class="foot">
     <!-- The dock (#dock), drawn by steps-view.jsx (mountDock). -->
     <div id="dock-root" class="dock-root"></div>
-    <div id="problem-form" class="problem" hidden>
+    <div id="problem-form" class="problem" role="group" aria-labelledby="problem-title" hidden>
+      <h2 id="problem-title" class="problem-title">Report a problem</h2>
+      <p class="problem-lead">Tell TNI what went wrong on this page.</p>
       <select id="problem-kind" aria-label="What kind of problem">
         <option value="wrong-answer">A wrong answer</option>
         <option value="stuck">The page got stuck</option>
@@ -147,9 +159,9 @@
     <!-- Whether the report just saved reached TNI (usage-panel.js sayProblem, which says it through #announce). -->
     <p id="problem-said" class="problem-said" hidden></p>
     <div class="foot-row">
-      <button type="button" id="report-problem" class="link small" aria-expanded="false" aria-controls="problem-form">Report a problem</button>
       <!-- "Recording usage" (#recording), drawn by settings-view.jsx (mountRecordingLine). -->
       <span id="recording-root" class="recording-root"></span>
+      <button type="button" id="report-problem" class="link small" aria-expanded="false" aria-controls="problem-form">Report a problem</button>
       <span id="foot-version" class="foot-version"></span>
     </div>
   </footer>

@@ -23,13 +23,19 @@ const ratio = (a, b) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
+const GROUNDS = ['surface', 'canvas', 'surface-sunken', 'surface-hover', 'surface-selected', 'surface-open', 'ai-soft', 'ai-badge', 'brand-soft', 'brand-faint'];
 
 test('muted text is 4.5:1 on every surface it sits on (WCAG 1.4.3)', () => {
   // Every light surface token the panel has, the AI's tints too (#ai-note.off sits on --ai-soft;
   // CodeRabbit on #459).
-  const grounds = ['surface', 'canvas', 'surface-sunken', 'surface-hover', 'surface-selected', 'surface-open', 'ai-soft', 'ai-badge', 'brand-soft', 'brand-faint'];
-  for (const ground of grounds) {
+  for (const ground of GROUNDS) {
     assert.ok(ratio(token('ink-muted'), token(ground)) >= 4.5, `--ink-muted on --${ground}: ${ratio(token('ink-muted'), token(ground)).toFixed(2)}`);
+  }
+});
+
+test('amber to-check text (--amber) is 4.5:1 on every surface it sits on (WCAG 1.4.3)', () => {
+  for (const ground of GROUNDS) {
+    assert.ok(ratio(token('amber'), token(ground)) >= 4.5, `--amber on --${ground}: ${ratio(token('amber'), token(ground)).toFixed(2)}`);
   }
 });
 
@@ -49,12 +55,12 @@ test('an input’s edge and the switch’s off track are 3:1 on white and on wha
   assert.match(CSS, /\.switch \{[^}]*background: var\(--border-control\);/);
 });
 
-test('no text in the panel is under 11px, beyond decorative glyphs', () => {
+test('no text in the panel is under 13px, beyond decorative glyphs', () => {
   // The PDF button's tiny "PDF" mark (aria-hidden) and a section's fold arrow are pictures, not text.
   const decorative = /^\.(pdf-icon|section-title::before) /;
   const small = CSS.split('\n').filter((line) => !decorative.test(line))
     .flatMap((line) => [...line.matchAll(/font(?:-size)?:\s*(?:\d{3}\s+)?(\d+(?:\.\d+)?)px/g)].map((m) => [Number(m[1]), line.slice(0, 60)]))
-    .filter(([px]) => px < 11);
+    .filter(([px]) => px < 13);
   assert.deepEqual(small, []);
 });
 
