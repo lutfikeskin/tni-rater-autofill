@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test Person - Household Members FAO Quoting</title>
+</head>
+<body>
+  <div class="ui-blocker-spinner-outer-wrapper" style="display: none;"></div>
+  <nav aria-label="Quote Steps">
+    <a class="navigation-link">NAMED INSURED</a>
+    <a class="navigation-link">PRODUCTS</a>
+    <a class="navigation-link" aria-current="step">HOUSEHOLD MEMBERS</a>
+    <a class="navigation-link">ADDITIONAL DETAILS</a>
+    <a class="navigation-link">COVERAGES/BILL PLANS</a>
+    <a class="navigation-link">PORTFOLIO</a>
+    <a class="navigation-link">POINT OF SALE</a>
+    <a class="navigation-link">FINAL SALE</a>
+  </nav>
+  <main>
+    <section class="driver-card">
+      <h3 id="entitydetailsAI0">Test Person</h3>
+      <question property="Gender" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="Gender_Label" for="People_Drivers_List_0_Embedded_Questions_List_Gender">Gender <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="People_Drivers_List_0_Embedded_Questions_List_Gender" aria-labelledby="Gender_Label entitydetailsAI0">
+            <option value="">Select</option>
+            <option value="M" selected>Male</option>
+            <option value="F">Female</option>
+          </select>
+        </div>
+      </question>
+
+      <question property="Relationship" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="Relationship_Label" for="People_Drivers_List_0_Embedded_Questions_List_Relationship">Relationship <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="People_Drivers_List_0_Embedded_Questions_List_Relationship" aria-labelledby="Relationship_Label entitydetailsAI0">
+            <option value="NI" selected>Named Insured</option>
+            <option value="SP">Spouse</option>
+          </select>
+        </div>
+      </question>
+
+      <question property="LicenseType" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="LicenseType_Label" for="People_Drivers_List_0_Embedded_Questions_List_LicenseType">Driver License Type <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="People_Drivers_List_0_Embedded_Questions_List_LicenseType" aria-labelledby="LicenseType_Label entitydetailsAI0">
+            <option value="US" selected>U.S. License</option>
+            <option value="FP">Foreign</option>
+          </select>
+        </div>
+      </question>
+    </section>
+
+    <section class="driver-card">
+      <h3 id="entitydetailsHM1">Second Test Person</h3>
+      <question property="Gender" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="Gender_Label" for="People_Drivers_List_1_Embedded_Questions_List_Gender">Gender <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="People_Drivers_List_1_Embedded_Questions_List_Gender" aria-labelledby="Gender_Label entitydetailsHM1">
+            <option value="">Select</option>
+            <option value="M">Male</option>
+            <option value="F" selected>Female</option>
+          </select>
+        </div>
+      </question>
+
+      <question property="DriverIncluded" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="DriverIncluded_Label" for="People_Drivers_List_1_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded">Driver Status <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="People_Drivers_List_1_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded" aria-labelledby="DriverIncluded_Label entitydetailsHM1">
+            <option value="R" selected>Rated</option>
+            <option value="E">Excluded</option>
+          </select>
+        </div>
+      </question>
+
+      <question property="StateFiling" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="StateFiling_Label">State Filing <span aria-hidden="true">*</span></label>
+              </div>
+              <div class="help-icon">
+                <help-icon>
+                  <div role="button" tabindex="0" aria-labelledby="tooltipTypeIdStateFiling_Label StateFiling_Label">
+                    <span class="sr-only visually-hidden" aria-hidden="true">Help Text, for</span>
+                  </div>
+                </help-icon>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <label><input type="radio" id="People_Drivers_List_1_Embedded_Questions_List_StateFiling_Y" name="People_Drivers_List_1_Embedded_Questions_List_StateFiling" value="Y">Yes</label>
+          <label><input type="radio" id="People_Drivers_List_1_Embedded_Questions_List_StateFiling_N" name="People_Drivers_List_1_Embedded_Questions_List_StateFiling" value="N" checked>No</label>
+        </div>
+      </question>
+
+      <question property="Code" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="Code_Label" for="People_Drivers_List_1_Violations_List_1_Embedded_Questions_List_Code">Incident Description <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="People_Drivers_List_1_Violations_List_1_Embedded_Questions_List_Code" aria-labelledby="Code_Label entitydetailsHM1">
+            <option value="">Select</option>
+            <option value="SPD" selected>Speeding</option>
+          </select>
+        </div>
+      </question>
+      <a role="button" tabindex="0">Add Another Incident</a>
+      <a role="button" tabindex="0">Remove</a>
+    </section>
+
+    <div class="navigation-buttons">
+      <button type="button" id="btnPreviousId">PRODUCTS (back to previous step)</button>
+      <button type="button" id="btnNextId">ADDITIONAL DETAILS (submit and move to next step)</button>
+    </div>
+  </main>
+</body>
+</html>

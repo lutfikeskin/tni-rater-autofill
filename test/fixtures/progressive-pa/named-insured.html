@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test Person - Named Insured FAO Quoting</title>
+</head>
+<body>
+  <div class="ui-blocker-spinner-outer-wrapper" style="display: none;"></div>
+  <nav aria-label="Quote Steps">
+    <a class="navigation-link" aria-current="step">NAMED INSURED</a>
+    <a class="navigation-link">PRODUCTS</a>
+    <a class="navigation-link">HOUSEHOLD MEMBERS</a>
+    <a class="navigation-link">ADDITIONAL DETAILS</a>
+    <a class="navigation-link">COVERAGES/BILL PLANS</a>
+    <a class="navigation-link">PORTFOLIO</a>
+    <a class="navigation-link">POINT OF SALE</a>
+    <a class="navigation-link">FINAL SALE</a>
+  </nav>
+  <main>
+    <question property="FirstName" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="FirstName_Label" for="NamedInsured_Embedded_Questions_List_FirstName">First Name <span aria-hidden="true">*</span></label>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <input type="text" id="NamedInsured_Embedded_Questions_List_FirstName" value="Test">
+      </div>
+    </question>
+
+    <question property="City" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="City_Label" for="NamedInsured_Embedded_Questions_List_City">City: <span aria-hidden="true">*</span></label>
+            </div>
+            <div class="help-icon">
+              <help-icon>
+                <div role="button" tabindex="0" aria-labelledby="tooltipTypeIdCity_Label City_Label">
+                  <span class="sr-only visually-hidden" aria-hidden="true">Help Text, for</span>
+                </div>
+              </help-icon>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <input type="text" id="NamedInsured_Embedded_Questions_List_City" value="Testville">
+      </div>
+    </question>
+
+    <question property="ZipCode" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="ZipCode_Label" for="NamedInsured_Embedded_Questions_List_ZipCode">ZIP Code <span aria-hidden="true">*</span></label>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <input type="text" id="NamedInsured_Embedded_Questions_List_ZipCode" value="00000">
+      </div>
+    </question>
+
+    <question property="DateOfBirth" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="DateOfBirth_Label" for="mat-input-21">Date of Birth <span class="sr-only">Format MM/DD/YYYY</span><span aria-hidden="true">*</span></label>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <input type="tel" id="mat-input-21" name="pickerInput" value="">
+        <a role="button" tabindex="0">Clear</a>
+      </div>
+    </question>
+
+    <div class="navigation-buttons">
+      <button type="button" id="btnNextId">PRODUCTS (submit and move to next step)</button>
+    </div>
+  </main>
+</body>
+</html>

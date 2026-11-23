@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test Person - Additional Details FAO Quoting</title>
+</head>
+<body>
+  <div class="ui-blocker-spinner-outer-wrapper" style="display: none;"></div>
+  <nav aria-label="Quote Steps">
+    <a class="navigation-link">NAMED INSURED</a>
+    <a class="navigation-link">PRODUCTS</a>
+    <a class="navigation-link">HOUSEHOLD MEMBERS</a>
+    <a class="navigation-link" aria-current="step">ADDITIONAL DETAILS</a>
+    <a class="navigation-link">COVERAGES/BILL PLANS</a>
+    <a class="navigation-link">PORTFOLIO</a>
+    <a class="navigation-link">POINT OF SALE</a>
+    <a class="navigation-link">FINAL SALE</a>
+  </nav>
+  <main>
+    <question property="TotalResidents" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="TotalResidents_Label" for="AdditionalDetails_Embedded_Questions_List_TotalResidents">Total Residents <span aria-hidden="true">*</span></label>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <select id="AdditionalDetails_Embedded_Questions_List_TotalResidents">
+          <option value="">Select</option>
+          <option value="2" selected>2</option>
+        </select>
+      </div>
+    </question>
+
+    <question property="PaperlessPreference" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="PaperlessPreference_Label" for="AdditionalDetails_Embedded_Questions_List_PaperlessPreference">Apply Paperless and accept documents and bills delivered through email? <span class="sr-only">Discount tag, for</span><span aria-hidden="true">*</span></label>
+            </div>
+            <div class="help-icon">
+              <help-icon>
+                <div role="button" tabindex="0" aria-labelledby="tooltipTypeIdPaperlessPreference_Label PaperlessPreference_Label">
+                  <span class="sr-only visually-hidden" aria-hidden="true">Help Text, for</span>
+                </div>
+              </help-icon>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <select id="AdditionalDetails_Embedded_Questions_List_PaperlessPreference">
+          <option value="">Select</option>
+          <option value="Y" selected>Yes</option>
+          <option value="N">No</option>
+        </select>
+      </div>
+    </question>
+
+    <checkbox-input>
+      <label class="checkbox-container">
+        <div class="input-container">
+          <input type="checkbox" name="Boat" id="AdditionalDetails_Embedded_Questions_List_Boat">
+          <div class="custom-checkbox"></div>
+        </div>
+        <span class="label-content">Boat</span>
+      </label>
+    </checkbox-input>
+
+    <div class="navigation-buttons">
+      <button type="button" id="btnPreviousId">HOUSEHOLD MEMBERS (back to previous step)</button>
+      <button type="button" id="btnNextId">COVERAGES/BILL PLANS (submit and move to next step)</button>
+    </div>
+  </main>
+</body>
+</html>

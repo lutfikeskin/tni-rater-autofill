@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Test Person - Products FAO Quoting</title>
+</head>
+<body>
+  <div class="ui-blocker-spinner-outer-wrapper" style="display: none;"></div>
+  <nav aria-label="Quote Steps">
+    <a class="navigation-link">NAMED INSURED</a>
+    <a class="navigation-link" aria-current="step">PRODUCTS</a>
+    <a class="navigation-link">HOUSEHOLD MEMBERS</a>
+    <a class="navigation-link">ADDITIONAL DETAILS</a>
+    <a class="navigation-link">COVERAGES/BILL PLANS</a>
+    <a class="navigation-link">PORTFOLIO</a>
+    <a class="navigation-link">POINT OF SALE</a>
+    <a class="navigation-link">FINAL SALE</a>
+  </nav>
+  <main>
+    <input type="checkbox" id="product_tab_AA" name="product_tab_AA" checked>
+
+    <question property="NamedOperatorIndicator" class="box-row question">
+      <div class="left">
+        <question-label>
+          <div class="label-container">
+            <div class="question-label">
+              <label id="NamedOperatorIndicator_Label">Named Non-Owner Policy <span aria-hidden="true">*</span></label>
+            </div>
+          </div>
+        </question-label>
+      </div>
+      <div class="right">
+        <label><input type="radio" id="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y" name="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator" value="Y">Yes</label>
+        <label><input type="radio" id="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_N" name="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator" value="N" checked>No</label>
+      </div>
+    </question>
+
+    <section class="vehicle-card">
+      <h3 id="entitydetails0">2020 Example Sedan TESTVIN0000000001</h3>
+      <question property="TypeCode" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="TypeCode_Label" for="ProductsAA_Vehicles_List_0_Embedded_Questions_List_TypeCode">Vehicle Type <span aria-hidden="true">*</span></label>
+              </div>
+              <div class="help-icon">
+                <help-icon>
+                  <div role="button" tabindex="0" aria-labelledby="tooltipTypeIdTypeCode_Label TypeCode_Label">
+                    <span class="sr-only visually-hidden" aria-hidden="true">Help Text, for</span>
+                  </div>
+                </help-icon>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="ProductsAA_Vehicles_List_0_Embedded_Questions_List_TypeCode" aria-labelledby="TypeCode_Label entitydetails0">
+            <option value="">Select</option>
+            <option value="SD" selected>Sedan</option>
+            <option value="HB">Hatchback</option>
+          </select>
+        </div>
+      </question>
+      <a id="lienholderLink0_Label" role="button" tabindex="0">Add / Delete</a>
+      <a role="button" tabindex="0">Remove</a>
+      <a role="button" tabindex="0">Clear</a>
+    </section>
+
+    <section class="vehicle-card">
+      <h3 id="entitydetails1">2021 Example Hatch TESTVIN0000000002</h3>
+      <question property="TypeCode" class="box-row question">
+        <div class="left">
+          <question-label>
+            <div class="label-container">
+              <div class="question-label">
+                <label id="TypeCode_Label" for="ProductsAA_Vehicles_List_1_Embedded_Questions_List_TypeCode">Vehicle Type <span aria-hidden="true">*</span></label>
+              </div>
+            </div>
+          </question-label>
+        </div>
+        <div class="right">
+          <select id="ProductsAA_Vehicles_List_1_Embedded_Questions_List_TypeCode" aria-labelledby="TypeCode_Label entitydetails1">
+            <option value="">Select</option>
+            <option value="SD">Sedan</option>
+            <option value="HB" selected>Hatchback</option>
+          </select>
+        </div>
+      </question>
+      <a role="button" tabindex="0">Remove</a>
+    </section>
+
+    <div class="navigation-buttons">
+      <button type="button" id="btnPreviousId">NAMED INSURED (back to previous step)</button>
+      <button type="button" id="btnNextId">HOUSEHOLD MEMBERS (submit and move to next step)</button>
+    </div>
+  </main>
+</body>
+</html>
