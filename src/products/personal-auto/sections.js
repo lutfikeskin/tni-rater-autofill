@@ -67,13 +67,13 @@ export const SECTIONS = [
   { id: 'priorInsurance', title: 'Current insurance', list: 'priorInsurance', item: 'Policy', fields: [
     ['priorInsurance[].currentlyInsured', 'Currently insured', 'bool'],
     ['priorInsurance[].carrier', 'Carrier'],
-    ['priorInsurance[].limit', 'Bodily injury limits', 'choice', ['State Minimum or less', '$25k/$50k', '$50k/$100k', '$100k CSL', '$100k/$300k', '$300k CSL', '$350k CSL',
+    ['priorInsurance[].limit', 'Bodily injury limits', 'choice', ['State Minimum', 'State Minimum or less', '$25k/$50k', '$50k/$100k', '$100k CSL', '$100k/$300k', '$300k CSL', '$350k CSL',
       '$250k/$500k', '$500k CSL', '$750k CSL', '$1,000,000 CSL']],
     ['priorInsurance[].insuredFor', 'Insured with them for'],
     ['priorInsurance[].expiration', 'Expiration', 'date'],
   ] },
   { id: 'coverage', title: 'Requested coverage', fields: [
-    ['coverage.liabilityLimit', 'Liability limit', 'choice', ['None', '25/50/25', '50/100/50', '100/300/50', '100/300/100', '250/500/100', '100 CSL', '300 CSL', '500 CSL']],
+    ['coverage.liabilityLimit', 'Liability limit', 'choice', ['None', 'State Minimum', '25/50/25', '50/100/50', '100/300/50', '100/300/100', '250/500/100', '100 CSL', '300 CSL', '500 CSL']],
     ['coverage.compDeductible', 'Comprehensive deductible', 'choice', ['No Coverage', '$100', '$250', '$500', '$750', '$1,000', '$2,000', '$100 w/$50 Glass',
       '$250 w/$50 Glass', '$500 w/$50 Glass', '$1,000 w/$50 Glass', '$2,000 w/$50 Glass']],
     ['coverage.collDeductible', 'Collision deductible', 'choice', ['No Coverage', '$100', '$250', '$500', '$750', '$1,000', '$2,000']],

@@ -72,7 +72,38 @@ test('the current form reads into the personal-auto record, each answer from its
   // The second VIN's check digit is wrong on purpose; nothing else needs the agent.
   assert.deepEqual(r.warnings.map((w) => w.code), ['vin.invalid']);
   assert.deepEqual(r.rows, { drivers: [1, 2], vehicles: [1, 2], trailers: [] });
-  assert.deepEqual(r.readFrom, {});
+  // The one lienholder row is the financed vehicle's: the panel shows each answer on its own box.
+  assert.deepEqual(r.readFrom, Object.fromEntries(['name', 'street', 'city', 'state', 'zip'].map((f) => [`vehicles[0].lienholder.${f}`, [`lien_${f}`]])));
+});
+
+test("the one lienholder row is the financed or leased vehicle's; whose it is, when that is unclear, is the agent's", () => {
+  const at = (changes) => ok(readIntake({ ...current.raw, ...changes }, { today }));
+  const codes = (r) => r.warnings.map((w) => `${w.level} ${w.code} ${w.path}`);
+  // Leased instead of financed: still the one.
+  assert.equal(at({ veh_ownership_1: 'Leased' }).record.vehicles[0].lienholder.name, 'Example Credit Union');
+  // Two financed vehicles: the agent's, quoted; neither is said to have no lienholder.
+  const two = at({ veh_ownership_2: 'Financed' });
+  assert.deepEqual(two.record.vehicles.map((v) => v.lienholder.name), [null, null]);
+  assert.ok(two.warnings.some((w) => w.code === 'lienholder.whose' && w.level === 'check' && w.msg.includes('Example Credit Union, 1 Bank Way, Dallas, TX, 75201')));
+  assert.ok(!codes(two).some((c) => c.includes('lienholder.missing')));
+  // No vehicle financed or leased: with two vehicles the agent's; with one, that vehicle's, said so.
+  assert.ok(codes(at({ veh_ownership_1: 'Owned' })).includes('check lienholder.whose vehicles'));
+  const second = Object.fromEntries(Object.keys(current.raw).filter((k) => /^veh_.*_2$/.test(k)).map((k) => [k, '']));
+  const one = at({ ...second, veh_ownership_1: 'Owned' });
+  assert.equal(one.record.vehicles.length, 1);
+  assert.equal(one.record.vehicles[0].lienholder.city, 'Dallas');
+  assert.ok(codes(one).includes('info lienholder.not-financed vehicles[0].lienholder.name'));
+  // A financed vehicle with no lienholder given.
+  const none = at({ lien_name: '', lien_street: '', lien_city: '', lien_state: 'Select*', lien_zip: '' });
+  assert.ok(codes(none).includes('check lienholder.missing vehicles[0].lienholder.name'));
+  assert.deepEqual(none.record.vehicles[0].lienholder, { name: null, street: null, city: null, state: null, zip: null });
+});
+
+test('State Minimum is read as the client chose it, on both limit lists', () => {
+  const r = ok(readIntake({ ...current.raw, prior_bi_limit: 'State Minimum', liability_limit: 'State Minimum' }, { today }));
+  assert.equal(r.record.priorInsurance[0].limit, 'State Minimum');
+  assert.equal(r.record.coverage.liabilityLimit, 'State Minimum');
+  for (const path of ['priorInsurance[0].limit', 'coverage.liabilityLimit']) assert.ok(fieldInfo(path, r.record).options.includes('State Minimum'), path);
 });
 
 test('the first version\'s shared boxes are split, each split said for the agent to confirm, and answers asked once are only given to one vehicle', () => {
