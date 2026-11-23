@@ -2,7 +2,7 @@
 // The side panel: filling and capturing.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
-import { fieldInfo } from '../../src/schema.js';
+import { fieldInfo } from '../../src/product-parts.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem } from '../../src/units.js';
@@ -1246,8 +1246,8 @@ function answerSource(rec) {
     yours: { kind: 'you', ...words.yours },
     changed: { kind: 'page', ...words.changed },
   }[kind];
-  const known = (path) => Boolean(path && (fieldInfo(path).label !== path || get(state.intake?.record ?? {}, path) !== undefined));
-  const said = (path) => `${fieldInfo(path).label}: ${SOURCE.value(get(state.intake?.record ?? {}, path))}`;
+  const known = (path) => Boolean(path && (fieldInfo(path, state.intake?.record).label !== path || get(state.intake?.record ?? {}, path) !== undefined));
+  const said = (path) => `${fieldInfo(path, state.intake?.record).label}: ${SOURCE.value(get(state.intake?.record ?? {}, path))}`;
   const quoteFrom = (from, path) => (from?.length ? from.map(said).join(' · ') : known(path) ? said(path) : SOURCE.answer(rec.value));
   const [title, quote] = {
     intake: [open.intake(place ? pdfPageSaid(place.page, ', page ') : null), quoteFrom(rec.from, rec.path)],
