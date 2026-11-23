@@ -399,7 +399,11 @@ try {
   verify('Luna stays suggestion-only while lunaAuto is off', await mock.locator('#mockLunaChoice').inputValue(), '');
   await manual.click();
   await mock.waitForFunction(() => document.querySelector('#mockLunaChoice').value === 'No');
-  await panel.getByText(/Put in .*purple on the page/).first().waitFor();
+  // The panel says the answer went in: on the item's card while something else still needs the
+  // agent, or, with nothing left (the redesign's grouped Review), as the row's "AI · you chose".
+  await panel.getByText(/Put in .*purple on the page/)
+    .or(panel.locator('#review .review-row', { hasText: 'Mock Luna choice' }).filter({ hasText: 'AI · you chose' }))
+    .filter({ visible: true }).first().waitFor();
   await mock.locator('#mockLunaChoice').selectOption('Yes');
   await panel.waitForTimeout(1800);
   verify('manual Luna acceptance and correction are retained', await mock.locator('#mockLunaChoice').inputValue(), 'Yes');
@@ -434,7 +438,8 @@ try {
     if (!await panel.locator('#report .row.need', { hasText: label }).count()) continue;
     const need = await openRow(label);
     await need.locator('.mark-done').click();
-    await panel.locator('#report .row.need.resolved', { hasText: label }).waitFor({ timeout: 30000 });
+    // Settled (`.resolved`); the redesign's one-need-per-screen view hides it and shows the next.
+    await panel.locator('#report .row.need.resolved', { hasText: label }).waitFor({ state: 'attached', timeout: 30000 });
   }
   verify('Mark done lowers "left for you" without a refill', await panel.locator('#fill-summary').innerText() !== leftBefore, true);
   verify('Mark done keeps the Luna approval card', await approve.isVisible(), true);
