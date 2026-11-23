@@ -216,9 +216,9 @@ test('Review groups Needs you uncapped, pending AI picks, Q1 Worth a look, Marke
   expect(restRows[1].querySelector('.review-row-sub')).toBeNull();
   expect(restRows.every((r) => r.getAttribute('aria-expanded') === 'false')).toBe(true);
 
-  // All answers are already shown inline across Needs you, Worth a look, and Other answers,
-  // so grouped Review omits #see-all-answers (it appears only while focus-need hides the lists).
-  expect(document.getElementById('see-all-answers')).toBeNull();
+  // See all answers is always offered: All answers holds the filters, the tags-and-marks key and
+  // a marked need's Undo (the maintainer, 2026-11-23).
+  expect(document.getElementById('see-all-answers')?.textContent).toMatch(/^See all \d+ answers/);
   expect(document.getElementById('feed')?.getAttribute('data-grouped')).toBe('true');
   // Flat filter bar: no sliding .filters-thumb element.
   expect(document.querySelector('.filters-thumb')).toBeNull();
@@ -286,14 +286,13 @@ test('See all answers, Back to summary, opening a Review row via toggleRow, and 
   expect(document.querySelector('#report .rows > .row.open')?.textContent).toContain('Medical payments');
   expect(nameless(document.body)).toEqual([]);
 
-  // Back to summary returns to Review and moves focus to #review-title when #see-all-answers is omitted.
+  // Back to summary returns to Review and moves focus to #see-all-answers, shown in grouped Review too.
   act(() => fireEvent.click(/** @type {HTMLElement} */ (document.getElementById('back-to-review'))));
   expect(state.allAnswers).toBe(false);
-  expect(document.activeElement?.id).toBe('review-title');
+  expect(document.activeElement?.id).toBe('see-all-answers');
   expect(document.getElementById('feed')?.getAttribute('data-grouped')).toBe('true');
-  expect(document.getElementById('see-all-answers')).toBeNull();
 
-  // In focus-need mode (where grouped cards hide), See all answers appears and toggles with focus restored.
+  // In focus-need mode (where grouped cards hide), See all answers stays and toggles with focus restored.
   act(() => {
     toggleRow(need, true);
     state.dock = { phase: 'needs', eyebrow: '2 filled · 1 needs you', title: 'Answer 1 question', sub: '' };
@@ -524,9 +523,11 @@ test('grouped Review, focus-need, and All answers keep DOM focus order matching 
   // 1. grouped-review: .ai-holder -> #review (#review-needs, #review-worth) -> #feed-tools-root > .feed-tools (#unmark)
   const reviewRow = document.querySelector('#review-needs .review-row');
   const unmark = document.getElementById('unmark');
-  expect(document.getElementById('see-all-answers')).toBeNull();
+  const seeAllGrouped = document.getElementById('see-all-answers');
+  expect(seeAllGrouped).not.toBeNull();
   expect(document.querySelector('#feed-tools-root > .feed-tools #unmark')).toBe(unmark);
   expect(isBefore(aiBtn, reviewRow)).toBe(true);
+  expect(isBefore(reviewRow, seeAllGrouped)).toBe(true);
   expect(isBefore(reviewRow, unmark)).toBe(true);
 
   // 2. focus-need: .ai-holder -> .row.need.open -> #feed .feed-tools (#unmark) -> #see-all-answers

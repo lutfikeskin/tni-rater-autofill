@@ -177,7 +177,6 @@ function Review({ act = {}, host } = {}) {
   if (!entry || !Array.isArray(entry.list) || filling || pastOpen) return null;
 
   const { needs, worth, rest, intakeCount, all } = reviewGroups(entry.list);
-  const focusNeed = entry.list.some((r) => r.type === 'need' && !r.gone && r.open && (!r.settled || r.pending));
   const hasStandard = worth.some((r) => !r.changed && (r.kind === 'standard' || reviewRowHead(r).tag?.text === SOURCE.tag.standard.text));
   const rowCtx = entry.ctx ?? { tabId: tab?.id ?? null, page: entry.page ?? '', carrier: tab?.carrier ?? null };
   const ownHead = !dock || screen === 'review' || screen === 'ai';
@@ -280,7 +279,7 @@ function Review({ act = {}, host } = {}) {
           </div>
         </section>
       ) : null}
-      {focusNeed && all.length > 0 ? (
+      {all.length > 0 ? (
         <div className="review-tools">
           <button type="button" id="see-all-answers" className="link review-see-all" onClick={showAll}>
             {REVIEW.seeAll(all.length, intakeCount)}
