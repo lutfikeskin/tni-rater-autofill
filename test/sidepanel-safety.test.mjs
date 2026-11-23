@@ -21,6 +21,7 @@ import { get as getPath, set as setPath } from '../src/shared/record-paths.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
+import { progressivePa } from '../src/carriers/progressive-pa.js';
 import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
 import { productOf } from '../src/products.js';
 import { quotedCarrierPolicy } from '../src/util.js';
@@ -8419,6 +8420,8 @@ test('a stop is the carrier\'s stop page or, on a one-address application, a ste
   assert.equal(context.stopNoteFor(geico, '/quote'), geico.stopSteps['MVR & CLUE']);
   assert.equal(context.stopNoteFor(geico, '/quote', 'Payment Information'), geico.stopSteps['Payment Information']);
   assert.equal(context.stopNoteFor(geico, '/quote', 'Quote & Coverages'), null);
+  assert.equal(context.stopNoteFor(progressivePa, '/Quote/Index/', 'Point of Sale'), progressivePa.stopSteps['Point of Sale']);
+  assert.equal(context.stopNoteFor(progressivePa, '/Quote/Index/', 'Coverages'), null);
   state.tabSteps.set(3, 'Vehicles');
   assert.equal(context.stopNoteFor(geico, '/quote'), null);
   state.tabSteps.delete(3);
