@@ -6,7 +6,7 @@ import { fieldInfo } from '../../src/schema.js';
 import { redactionTerms } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, unitExtraRowsItem } from '../../src/units.js';
-import { get } from '../../src/util.js';
+import { get } from '../../src/shared/record-paths.js';
 import { fieldChangeEvent, checkDismissedEvent, redactor, knownStep } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { isStandard } from '../../src/resolution.js';

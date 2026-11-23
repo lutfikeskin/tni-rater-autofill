@@ -7,7 +7,8 @@
 // Downloads. No DOM but the download.
 // One part of the panel; sidepanel.js wires the parts together.
 import { fieldInfo } from '../../src/schema.js';
-import { get, STATES } from '../../src/util.js';
+import { STATES } from '../../src/util.js';
+import { get } from '../../src/shared/record-paths.js';
 import * as usage from '../usage-log.js';
 import { $, state } from './core.js';
 import { showScreen } from './record.js';

@@ -3,7 +3,7 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import { ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE, ntlWithPrimary, NTL_PRIMARY_MESSAGE } from '../../src/normalize.js';
 import { redactionTerms } from '../../src/plan.js';
-import { get } from '../../src/util.js';
+import { get } from '../../src/shared/record-paths.js';
 import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';

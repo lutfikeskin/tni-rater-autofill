@@ -31,7 +31,7 @@
 import fs from 'node:fs';
 import { SECTIONS } from '../../src/schema.js';
 import { matchIntake, normalizeForMatch } from '../../src/usage.js';
-import { get } from '../../src/util.js';
+import { get } from '../../src/shared/record-paths.js';
 import { activeOf, choiceVerdict, shown } from './benchmark.mjs';
 import { AGENT_DEFAULT_SOURCE } from './agent-defaults.mjs';
 import { quotePage } from './events.mjs';

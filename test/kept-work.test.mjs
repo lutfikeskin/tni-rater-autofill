@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneKeptWork } from '../src/kept-work.js';
-import { get } from '../src/util.js';
+import { get } from '../src/shared/record-paths.js';
 
 const warnings = [
   { code: 'drivers.cdl', path: 'drivers[0].cdl' },

@@ -6,7 +6,7 @@ import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
 import { noNumberEdit, rederive } from '../../src/normalize.js';
 import { readIntake } from '../../src/intake-forms.js';
 import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
-import { get, set } from '../../src/util.js';
+import { get, set } from '../../src/shared/record-paths.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import { redactionTerms } from '../../src/plan.js';
 import { intakeSummary, intakeProfile, agentSettingsEvent, platformOf, redactor } from '../../src/usage.js';

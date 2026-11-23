@@ -8,8 +8,8 @@
 //  - text typed into boxes is never logged. It is compared with the intake on this computer and
 //    only the result is kept ("matches drivers[0].dob", "same as autofill except formatting").
 
-import { toDate } from './normalize.js';
-import { toMoney, noPriorInsurance } from './util.js';
+import { toDate, toMoney } from './shared/parse.js';
+import { noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
 import { redactionPattern } from './redaction.js';
 import { ID_LIKE, LIMIT, PROFILE_UNITS } from './usage-schema.js';
@@ -431,7 +431,7 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js', 'src/shared/parse.js', 'src/shared/address.js', 'src/shared/record-paths.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }

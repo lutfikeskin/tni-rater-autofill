@@ -4,7 +4,8 @@
 import { sourcePlace } from '../../src/intake-source.js';
 import { checkHolds, noNumberEdit, parseEdit, rederive } from '../../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../../src/schema.js';
-import { get, set, STATES, quotedCarrierPolicy } from '../../src/util.js';
+import { STATES, quotedCarrierPolicy } from '../../src/util.js';
+import { get, set } from '../../src/shared/record-paths.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
 import * as usage from '../usage-log.js';
 import { $, persistUnitForms, state } from './core.js';
