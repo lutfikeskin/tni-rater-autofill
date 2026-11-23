@@ -99,11 +99,14 @@ test("the one lienholder row is the financed or leased vehicle's; whose it is, w
   assert.deepEqual(none.record.vehicles[0].lienholder, { name: null, street: null, city: null, state: null, zip: null });
 });
 
-test('State Minimum is read as the client chose it, on both limit lists', () => {
-  const r = ok(readIntake({ ...current.raw, prior_bi_limit: 'State Minimum', liability_limit: 'State Minimum' }, { today }));
-  assert.equal(r.record.priorInsurance[0].limit, 'State Minimum');
-  assert.equal(r.record.coverage.liabilityLimit, 'State Minimum');
-  for (const path of ['priorInsurance[0].limit', 'coverage.liabilityLimit']) assert.ok(fieldInfo(path, r.record).options.includes('State Minimum'), path);
+test('State Minimum or less is read as the client chose it, on both limit lists', () => {
+  const r = ok(readIntake({ ...current.raw, prior_bi_limit: 'State Minimum or less', liability_limit: 'State Minimum or less' }, { today }));
+  assert.equal(r.record.priorInsurance[0].limit, 'State Minimum or less');
+  assert.equal(r.record.coverage.liabilityLimit, 'State Minimum or less');
+  for (const path of ['priorInsurance[0].limit', 'coverage.liabilityLimit']) {
+    const { options } = fieldInfo(path, r.record);
+    assert.ok(options.includes('State Minimum or less') && !options.includes('State Minimum'), path);
+  }
 });
 
 test('the first version\'s shared boxes are split, each split said for the agent to confirm, and answers asked once are only given to one vehicle', () => {
