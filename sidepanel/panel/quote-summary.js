@@ -6,7 +6,7 @@
 // nothing on, a carrier page. `summaryHtml` writes it as one HTML file, which Save summary puts in
 // Downloads. No DOM but the download.
 // One part of the panel; sidepanel.js wires the parts together.
-import { fieldInfo } from '../../src/schema.js';
+import { fieldInfo } from '../../src/product-parts.js';
 import { STATES } from '../../src/util.js';
 import { get } from '../../src/shared/record-paths.js';
 import * as usage from '../usage-log.js';
@@ -71,10 +71,10 @@ function summaryRow(rec) {
 }
 
 // An intake field as the summary names it: its label, with which driver, vehicle or trailer
-// ("Driver 2: Date of birth").
-function fieldSaid(path) {
+// ("Driver 2: Date of birth"), by the record's product's own labels.
+function fieldSaid(path, record) {
   const unit = /^(drivers|vehicles|trailers)\[(\d+)\]/.exec(path);
-  const label = fieldInfo(path)?.label ?? path;
+  const label = fieldInfo(path, record)?.label ?? path;
   return unit ? `${{ drivers: 'Driver', vehicles: 'Vehicle', trailers: 'Trailer' }[unit[1]]} ${Number(unit[2]) + 1}: ${label}` : label;
 }
 
@@ -117,7 +117,7 @@ function quoteSummary({ reports = new Map(), intake = null, quoteStates = new Ma
   const placed = carriers.flatMap((c) => c.pages.flatMap((p) => p.rows.map((r) => ({ ...r, carrier: c.name, page: p.title }))));
   // The agent's corrections to the intake, what they answered or changed on a page, their own
   // defaults, and a quote state they kept though the intake says another.
-  const edits = (intake?.agentEdited ?? []).map((path) => ({ kind: 'edit', carrier: null, page: null, label: fieldSaid(path),
+  const edits = (intake?.agentEdited ?? []).map((path) => ({ kind: 'edit', carrier: null, page: null, label: fieldSaid(path, intake?.record),
     value: blank(get(record, path)) ? 'Blank' : said(get(record, path)), said: 'Corrected in the panel' }));
   const states = [...quoteStates].filter(([, p]) => p?.dismissed && p.dismissed === `${intakeId}|${p.code}`).map(([tabId, p]) => ({ kind: 'state',
     carrier: carriers.find((c) => c.tabId === tabId)?.name ?? p.carrier ?? null, page: null,

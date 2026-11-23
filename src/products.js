@@ -1,13 +1,15 @@
 // @ts-check
 // Insurance products (lines of business) the extension supports.
-// Today only Commercial Auto is implemented; every carrier config and normalized client record
-// declares its product so a second line of business (e.g. Personal Auto) can coexist cleanly.
+// Every carrier config and normalized client record declares its product; the loaded intake's
+// product picks the carrier configs for a tab (src/carriers.js carrierForUrl). Personal Auto reads
+// its intake and has carrier configs without rules yet (src/products/personal-auto/).
 
 /** @import { ClientRecord, Product } from '../types.js' */
 
 /** @type {Product[]} */
 export const PRODUCTS = [
   { id: 'commercial-auto', name: 'Commercial Auto' },
+  { id: 'personal-auto', name: 'Personal Auto' },
 ];
 
 export const DEFAULT_PRODUCT = 'commercial-auto';

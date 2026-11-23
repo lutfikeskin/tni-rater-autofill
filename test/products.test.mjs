@@ -16,11 +16,11 @@ const raw = await readIntakeFields(pdfjs, fixture);
 
 test('PRODUCTS catalog, DEFAULT_PRODUCT, and productOf defaults and validation', () => {
   assert.equal(DEFAULT_PRODUCT, 'commercial-auto');
-  assert.deepEqual(PRODUCTS, [{ id: 'commercial-auto', name: 'Commercial Auto' }]);
+  assert.deepEqual(PRODUCTS, [{ id: 'commercial-auto', name: 'Commercial Auto' }, { id: 'personal-auto', name: 'Personal Auto' }]);
 
   assert.equal(productOf({ product: 'commercial-auto' }), 'commercial-auto');
   // Unknown products (e.g. a record from a newer build or corrupted value) fall back to DEFAULT_PRODUCT.
-  assert.equal(productOf({ product: 'personal-auto' }), DEFAULT_PRODUCT);
+  assert.equal(productOf({ product: 'personal-auto' }), 'personal-auto');
   assert.equal(productOf({ product: 'future-line-of-business' }), DEFAULT_PRODUCT);
   assert.equal(productOf({ product: '' }), DEFAULT_PRODUCT);
   assert.equal(productOf(/** @type {any} */ ({ product: 42 })), DEFAULT_PRODUCT);
@@ -61,11 +61,14 @@ test('readIntake returns the sole form error with one form and names all forms w
   const unknown = { some_other_field: 'hello', another_field: 'world' };
   assert.equal(detectIntakeForm(unknown), null);
 
-  // One registered form: exact error from that form (identical to normalizeIntake today).
-  const single = readIntake(unknown);
+  // One registered form: exact error from that form (identical to normalizeIntake).
+  const commercialOnly = INTAKE_FORMS.filter((f) => f.product === 'commercial-auto');
+  const single = readIntake(unknown, { forms: commercialOnly });
   const direct = normalizeIntake(unknown);
   assert.deepEqual(single, direct);
   assert.deepEqual(single, { error: UNKNOWN_INTAKE_ERROR });
+  // The registry as shipped (commercial and personal auto): the error names both forms.
+  assert.match(/** @type {{ error: string }} */ (readIntake(unknown)).error, /TNI Commercial Quote Application or TNI Personal Auto Insurance Quote Application/);
 
   // Several registered forms: error names every registered form.
   /** @type {IntakeForm} */
@@ -121,7 +124,7 @@ test('detectIntakeForm and readIntake route to a second form, stamp form and rec
   assert.equal(result.record.product, 'personal-auto');
   assert.equal(result.record.applicant.name, 'Jane Doe');
   // Production registry was not mutated.
-  assert.equal(INTAKE_FORMS.length, 1);
+  assert.deepEqual(INTAKE_FORMS.map((f) => f.id), ['tni-commercial-auto', 'tni-personal-auto']);
 });
 
 test('carrierForUrl preserves existing behavior when product is omitted and filters when provided', () => {
@@ -134,7 +137,9 @@ test('carrierForUrl preserves existing behavior when product is omitted and filt
   assert.equal(carrierForUrl(progUrl, { product: 'commercial-auto' })?.id, 'progressive');
   assert.equal(carrierForUrl(geicoUrl, { product: 'commercial-auto' })?.id, 'geico');
   assert.equal(carrierForUrl(amwinsUrl, { product: 'commercial-auto' })?.id, 'amwins');
-  assert.equal(carrierForUrl(progUrl, { product: 'personal-auto' }), null);
+  assert.equal(carrierForUrl(progUrl, { product: 'personal-auto' })?.id, 'progressive-pa');
+  assert.equal(carrierForUrl(geicoUrl, { product: 'personal-auto' })?.id, 'geico-pa');
+  assert.equal(carrierForUrl(amwinsUrl, { product: 'personal-auto' }), null);
   assert.equal(carrierForUrl('http://localhost:8123/test/fixtures/geico/quote.html', { product: 'commercial-auto' })?.id, 'geico');
   assert.equal(carrierForUrl('http://localhost:8123/test/fixtures/geico/quote.html', { product: 'personal-auto' }), null);
 });
@@ -169,6 +174,6 @@ test('carrierForUrl disambiguates carriers sharing a host across products', () =
   assert.equal(carrierForUrl(url, { product: 'personal-auto', carriers })?.id, 'progressive-pa');
   // Non-matching product returns null rather than falling back.
   assert.equal(carrierForUrl(url, { product: 'homeowners', carriers }), null);
-  // Production CARRIERS list was not mutated.
-  assert.ok(CARRIERS.every((c) => c.product === 'commercial-auto'));
+  // Production CARRIERS list was not mutated: commercial auto's carriers, and personal auto's without rules yet.
+  assert.deepEqual(CARRIERS.filter((c) => c.product === 'personal-auto').map((c) => [c.id, c.rules.length]), [['geico-pa', 0], ['progressive-pa', 0]]);
 });

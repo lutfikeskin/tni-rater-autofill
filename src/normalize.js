@@ -10,7 +10,7 @@ import { otherNotes, noPriorInsurance, companyName, quotedCarriersOf, priorInsur
 import { set } from './shared/record-paths.js';
 import { ownerRow, ownerRowNameDiffers } from './answers/owner.js';
 import { clean, cleanMultiline, parseLicense, plainLicense, splitName, toDate, toInt, toMoney, toPhone, vinProblem, yesNo } from './shared/parse.js';
-import { parseAddress } from './shared/address.js';
+import { readGaraging } from './shared/address.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -947,27 +947,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   warnings.push(...years.warnings);
 
   // --- Garaging address -----------------------------------------------------------------------
-  const addr = parseAddress(raw.garaging_address);
-  if (addr) {
-    const { confident, joined, ...parts } = addr;
-    record.garaging = parts;
-    // A city run together with its state ("HENRICOVA 23228"): nothing split, the agent's (TNI, 2026-11-03).
-    if (joined) check('address.city-state-joined', 'garaging.city', `The city and state look run together in "${txt('garaging_address')}". Fill in street, city, state and ZIP.`);
-    else if (!addr.state) check('address.unparsed', 'garaging.street', `Couldn't split "${txt('garaging_address')}". Fill in street, city, state and ZIP.`);
-    else {
-      const asSplit = `street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}", state ${addr.state}`;
-      if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't find the city in "${txt('garaging_address')}".`);
-      if (!addr.zip) check('address.no-zip', 'garaging.zip', `No ZIP in "${txt('garaging_address')}"${addr.city ? `, split as ${asSplit}` : ''}. Fill in the ZIP${addr.city ? ' and confirm the rest' : ''}.`);
-      else if (addr.city && !confident) {
-        check('address.no-commas', 'garaging.city', String(txt('garaging_address')).includes(',')
-          ? `Split "${txt('garaging_address')}" as ${asSplit}. Confirm.`
-          : `Split an address with no commas: street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
-      }
-    }
-  } else {
-    record.garaging = { street: null, unit: null, city: null, state: null, zip: null };
-    check('address.missing', 'garaging.street', 'No garaging address on the form.');
-  }
+  const garaging = readGaraging(raw.garaging_address);
+  record.garaging = garaging.garaging;
+  for (const [code, path, msg] of garaging.checks) check(code, path, msg);
 
   // --- Drivers --------------------------------------------------------------------------------
   ROWS.forEach((n, i) => {

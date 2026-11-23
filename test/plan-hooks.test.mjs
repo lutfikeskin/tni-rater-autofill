@@ -130,5 +130,5 @@ test('the generic label rules are opt-in: a carrier without useGenericRules gets
   assert.equal(generic({ id: 'new', hosts: [], rules: [] }), 0, 'no key: no generic rules');
   assert.equal(generic({ id: 'new', hosts: [], rules: [], useGenericRules: false }), 0);
   assert.ok(generic({ id: 'new', hosts: [], rules: [], useGenericRules: true }) > 0, 'opted in');
-  assert.deepEqual(Object.fromEntries(CARRIERS.map((c) => [c.id, c.useGenericRules])), { progressive: false, geico: false, amwins: true, test: true }, 'every carrier says it');
+  assert.deepEqual(Object.fromEntries(CARRIERS.map((c) => [c.id, c.useGenericRules])), { progressive: false, geico: false, amwins: true, 'geico-pa': false, 'progressive-pa': false, test: true }, 'every carrier says it');
 });

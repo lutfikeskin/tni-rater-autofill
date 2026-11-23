@@ -161,11 +161,11 @@ test('the panel build stamps the rules fingerprint of RULE_FILES, and fails if t
   // Audit 2026-11-07, CARR-14: each carrier's own fingerprint, beside the global one: its module and
   // its page adapter with the shared files, so one carrier's change leaves the others' as they were.
   const carriers = await carrierRulesOf(root);
-  assert.deepEqual(Object.keys(carriers).sort(), ['amwins', 'geico', 'progressive']);
+  assert.deepEqual(Object.keys(carriers).sort(), ['amwins', 'geico', 'geico-pa', 'progressive', 'progressive-pa']);
   assert.ok(out.code.includes(`const CARRIER_RULES = ${JSON.stringify(carriers)};`));
   assert.equal(carriers.geico, await rulesHash(carrierRuleFiles('geico').map(read)));
   assert.ok(carrierRuleFiles('geico').includes('src/content/carriers/geico.js') && !carrierRuleFiles('geico').includes('src/carriers/progressive.js'));
-  assert.equal(new Set(Object.values(carriers)).size, 3, 'one fingerprint each');
+  assert.equal(new Set(Object.values(carriers)).size, 5, 'one fingerprint each');
   assert.throws(() => stampCarrierRules('no placeholder', carriers));
   assert.throws(() => stampCarrierRules(source, { geico: "x'; alert(1); '" }));
   plugin.buildEnd();
@@ -274,7 +274,7 @@ test('the store build has no localhost: not in its manifest, not among its carri
   assert.ok(plugin.transform(source, 'C:\\repo\\src\\carriers.js').code.includes('const LOCAL_PAGES = false;'), 'the store build stamps it');
   assert.equal(provenancePlugin({ channel: 'unpacked', commit: null }).transform(source, `/repo/${LOCAL_PAGES_FILE}`), null, 'the unpacked copy keeps local pages');
   // As the store bundle reads it: no test carrier, and a practice page is no carrier.
-  const mod = await import(`data:text/javascript,${encodeURIComponent(stored.replace(/^import .*$/gm, '').replace(/^\/\*\* @import.*$/gm, '').replace(/^\s*progressive,\n\s*geico,\n\s*amwins,\n/m, ''))}`);
+  const mod = await import(`data:text/javascript,${encodeURIComponent(stored.replace(/^import .*$/gm, '').replace(/^\/\*\* @import.*$/gm, '').replace(/^\s*\w+,$/gm, ''))}`);
   assert.equal(mod.CARRIERS.some((c) => c.id === 'test'), false);
   assert.equal(mod.carrierForUrl('http://localhost:8080/test/fixtures/amwins/page.html'), null);
 });

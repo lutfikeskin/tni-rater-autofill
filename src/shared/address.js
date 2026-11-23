@@ -141,3 +141,36 @@ export function parseAddress(raw) {
   if (repaired) out.confident = false;
   return out;
 }
+
+/**
+ * The garaging address box, split, with what the agent should check about the split: the same for
+ * every product's intake. `checks`: [code, record path, message] (the intake's check items).
+ * @param {unknown} box  the box as the form holds it
+ * @returns {{ garaging: { street: string|null, unit: string|null, city: string|null, state: string|null, zip: string|null }, checks: [string, string, string][] }}
+ */
+export function readGaraging(box) {
+  /** @type {[string, string, string][]} */
+  const checks = [];
+  const check = (code, path, msg) => checks.push([code, path, msg]);
+  const said = clean(box);
+  const addr = parseAddress(box);
+  if (!addr) {
+    check('address.missing', 'garaging.street', 'No garaging address on the form.');
+    return { garaging: { street: null, unit: null, city: null, state: null, zip: null }, checks };
+  }
+  const { confident, joined, ...parts } = addr;
+  // A city run together with its state ("HENRICOVA 23228"): nothing split, the agent's (TNI, 2026-11-03).
+  if (joined) check('address.city-state-joined', 'garaging.city', `The city and state look run together in "${said}". Fill in street, city, state and ZIP.`);
+  else if (!addr.state) check('address.unparsed', 'garaging.street', `Couldn't split "${said}". Fill in street, city, state and ZIP.`);
+  else {
+    const asSplit = `street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}", state ${addr.state}`;
+    if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't find the city in "${said}".`);
+    if (!addr.zip) check('address.no-zip', 'garaging.zip', `No ZIP in "${said}"${addr.city ? `, split as ${asSplit}` : ''}. Fill in the ZIP${addr.city ? ' and confirm the rest' : ''}.`);
+    else if (addr.city && !confident) {
+      check('address.no-commas', 'garaging.city', String(said).includes(',')
+        ? `Split "${said}" as ${asSplit}. Confirm.`
+        : `Split an address with no commas: street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
+    }
+  }
+  return { garaging: parts, checks };
+}

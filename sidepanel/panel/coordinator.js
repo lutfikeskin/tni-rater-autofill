@@ -750,7 +750,7 @@ async function captureLayout(job, reason) {
     const r = state.intake.record;
     const context = {
       state: r.garaging?.state ?? null,
-      businessClass: r.operations.businessClass,
+      businessClass: r.operations?.businessClass ?? null,
       vehicleTypes: [...new Set(r.vehicles.map((v) => v.type).filter(Boolean))],
       trailers: r.trailers.length > 0,
       drivers: r.drivers.length,

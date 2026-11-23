@@ -1,9 +1,10 @@
 // @ts-check
 // Intake form registry: detects which PDF form a raw AcroForm field map belongs to and routes it to
-// that form's normalizer. Today only the TNI Commercial Quote Application is registered; a second
-// product's intake PDF registers its own entry here without changing the panel's load path.
+// that form's normalizer: the TNI Commercial Quote Application and the TNI Personal Auto Insurance
+// Quote Application, each its product's own (src/products/personal-auto/index.js).
 
 import { UNKNOWN_INTAKE_ERROR, isCommercialAutoIntake, normalizeIntake } from './normalize.js';
+import { PERSONAL_AUTO_FORM } from './products/personal-auto/index.js';
 
 /** @import { IntakeForm, IntakeResult } from '../types.js' */
 
@@ -17,6 +18,7 @@ export const INTAKE_FORMS = [
     normalize: normalizeIntake,
     error: UNKNOWN_INTAKE_ERROR,
   },
+  PERSONAL_AUTO_FORM,
 ];
 
 /**
