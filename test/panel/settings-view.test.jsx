@@ -317,3 +317,10 @@ test('the store copy hides Advanced, its server read-only with no token box', ()
   expect([advanced.hidden, url.readOnly, token.closest('label').hidden]).toEqual([true, true, true]);
   expect(container.querySelector('#server-locked').textContent).toBe('This copy sends to TNI\'s server, or the one your organization set.');
 });
+
+test('How it runs: one line under the head, said from the switches as they change', () => {
+  const { container } = render(<Settings act={acts([])} />);
+  expect($(container, '#settings-mode').textContent).toBe('Pages fill when they open; it waits for your Looks right, continue.');
+  act(() => { state.switches = { ...SWITCHES, autoPages: false, autoAdvance: false }; });
+  expect($(container, '#settings-mode').textContent).toBe('You start each page with Fill this page; you click Continue yourself.');
+});

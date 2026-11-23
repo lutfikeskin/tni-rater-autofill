@@ -112,3 +112,20 @@ test('a card said again with a button gone keeps focus on the button the agent w
   rerender(<IssueCard {...said(['See intake'])} />);
   expect([document.activeElement, button.isConnected, button.textContent]).toEqual([button, true, 'See intake']);
 });
+
+test('owner note renders a corner help link on screen === owner and hides it on other screens', () => {
+  act(() => {
+    state.intake = {};
+    state.view = 'page';
+    state.dock = { phase: 'hold', button: 'fill' };
+    state.cards = { owner: card({ tone: 'warn', title: 'Another client’s quote?' }) };
+  });
+  const { container } = render(<Cards />);
+  const ownerHelp = $(container, 'owner-note').querySelector('a.help-link');
+  expect(ownerHelp?.getAttribute('href')).toBe('guide.html#page');
+
+  act(() => {
+    state.dock = { phase: 'hold', alt: 'fill-anyway' };
+  });
+  expect($(container, 'owner-note').querySelector('a.help-link')).toBeNull();
+});

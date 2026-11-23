@@ -12,11 +12,13 @@ import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
+import { screenFor } from './screen.js';
+import { HelpLink } from './help-link.jsx';
 import { RATERS } from '../../src/carriers.js';
 
 // A card: its tone ('' red, 'warn', 'info', 'quiet'), title, what it says, its notes, what it
 // compares side by side, and its buttons. The panel's other cards are drawn with it too (notes-view.jsx).
-function IssueCard({ tone, title, text, notes, sections = [], compare, actions, role }) {
+function IssueCard({ tone, title, text, notes, sections = [], compare, actions, role, help = null }) {
   return (
     <div className={`issue${tone ? ` ${tone}` : ''}`} role={role}>
       <div className="issue-head">
@@ -32,6 +34,7 @@ function IssueCard({ tone, title, text, notes, sections = [], compare, actions, 
             </div>
           ))}
         </div>
+        {help ? <HelpLink topic={help} /> : null}
       </div>
       {compare.length ? <div className="compare">{compare.map(([k, v], i) => <span key={i}><span className="k">{`${k}:`}</span>{` ${v}`}</span>)}</div> : null}
       {actions.length ? (
@@ -65,6 +68,7 @@ const NOTES = [
 // (`act.portal`, with the URL): a page the agent asked for, where nothing is filled by itself.
 function Cards({ act = {} }) {
   const cards = useStore(panelStore, (s) => s.cards) ?? {};
+  const screen = useStore(panelStore, screenFor);
   return (
     <>
       <div id="fill-waiting" className="pane waiting" hidden={cards.waiting == null}>
@@ -78,7 +82,9 @@ function Cards({ act = {} }) {
       </div>
       <div id="issues" className="issues">
         {NOTES.map(({ name, id }) => (
-          <div key={id} id={id} hidden={!cards[name]}>{cards[name] ? <IssueCard {...cards[name]} /> : null}</div>
+          <div key={id} id={id} hidden={!cards[name]}>
+            {cards[name] ? <IssueCard {...cards[name]} help={name === 'owner' && screen === 'owner' ? 'page' : null} /> : null}
+          </div>
         ))}
       </div>
     </>

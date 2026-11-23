@@ -23,8 +23,16 @@ import { CHECKS } from './messages.js';
 
 // The client's header is said as data (state.client), which client-view.jsx draws: the name, the
 // garaging state and what the quote is about, the intake PDF's button, and the file tools' question.
+let renderedIntake = null;
 function render() {
   const has = !!state.intake;
+  const currentIntake = has ? (state.intake.intakeId ?? state.intake) : null;
+  if (renderedIntake !== currentIntake) {
+    renderedIntake = currentIntake;
+    state.checksAll = false;
+    state.allAnswers = false;
+    state.allAnswersFor = null;
+  }
   showScreen();
   state.recordingLine = has;
   // Marking a test run (Settings → Advanced) needs an intake to mark: null hides it (settings-view.jsx).
@@ -39,6 +47,8 @@ function render() {
     // "Maryland · 2 drivers · 1 vehicle".
     meta: [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
       record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · '),
+    // The same, drawn with an icon for each count (client-view.jsx); `meta` stays its words.
+    counts: { state: st ? STATES[st] ?? st : null, drivers: record.drivers.length, vehicles: record.vehicles.length, trailers: record.trailers.length },
     pdf: pdfAvailable(),
     ask: state.fileConfirm ? state.fileQuestion : null,
   };
@@ -112,6 +122,27 @@ function setView(view) {
   $('view').scrollTop = 0;
 }
 
+function setChecksAll(all) {
+  state.checksAll = !!all;
+}
+
+function setAllAnswers(all) {
+  state.allAnswers = !!all;
+  state.allAnswersFor = all ? state.reportFor : null;
+}
+
+// "Decide later and fill" / "Check the rest later": switches to the page view without starting a
+// fill on its own; when keyboard focus was inside the panel, moves focus to the dock's enabled
+// primary button instead of leaving it on #screen-title.
+function decideLater() {
+  const hadFocus = document.hasFocus() && !!document.activeElement && document.activeElement !== document.body;
+  flushSync(() => setView('page'));
+  if (!hadFocus) return;
+  const dock = $('dock');
+  if (!dock || dock.hidden) return;
+  dock.querySelector('.dock-body > button.primary:not([hidden]):not(:disabled)')?.focus();
+}
+
 // A check the agent sees here. The current insurance being with a carrier the panel quotes
 // (prior.carrier-is-quoted) only on that carrier's site: on another carrier's quote it is no
 // concern (TNI, 2026-10-27: GEICO's red card on a Progressive quote).
@@ -175,9 +206,11 @@ function renderWarnings() {
   state.checks = {
     title: CHECKS.title(open),
     sub: CHECKS.sub(open),
+    open,
     cards,
     // A row like All client details below it, opening its notes in a card joined under it.
     cleanup: infos.map((w) => w.msg),
+    later: () => decideLater(),
   };
   renderSteps();
 }
@@ -194,9 +227,10 @@ async function toggleDone(i, isDone) {
   await save();
   flushSync(renderWarnings);
   renderSections();
-  // Keyboard focus stays where the agent was: on the row's Undo, or the card's Looks right now.
+  // Keyboard focus stays where the agent was: on the row's Undo (full list), the next open card's
+  // first control (focus mode), or the view tabs.
   const row = document.querySelector(`#warnings [data-check="${i}"]`);
-  (row?.querySelector('button') ?? $('step-check')).focus();
+  (row?.querySelector('button') ?? document.querySelector('#warnings :is(input, select, textarea, button)') ?? $('step-fill') ?? $('step-check'))?.focus();
 }
 
 function openFlags(prefix) {
@@ -528,4 +562,4 @@ function releaseUnitForms(list, index) {
   if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
-export { agentEdit, checkShown, closeSettings, firstView, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setFilter, setView, showEmpty, showScreen, toggleDone };
+export { agentEdit, checkShown, closeSettings, decideLater, firstView, jumpTo, openKeyForm, openSettings, pickUnit, releaseDiscardedForms, render, renderPickers, renderSections, renderWarnings, setAllAnswers, setChecksAll, setFilter, setView, showEmpty, showScreen, toggleDone };

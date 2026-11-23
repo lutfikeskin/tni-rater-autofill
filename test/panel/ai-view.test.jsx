@@ -173,3 +173,22 @@ test('aiHolder draws what it is told before say returns, says whether it is on s
   holder.remove();
   expect([holder.isConnected, holder.node.childElementCount]).toEqual([false, 0]);
 });
+
+test('focused NeedRow .ai-slot mounts AiCard as .ai-box or .ai-done with exact Luna button labels', () => {
+  const host = document.createElement('div');
+  host.id = 'report';
+  host.dataset.focus = 'need';
+  const row = host.appendChild(document.createElement('div'));
+  row.className = 'row need open';
+  const slot = row.appendChild(document.createElement('div'));
+  slot.className = 'ai-slot';
+  const { unmount, rerender } = render(<AiCard card={{ kind: 'suggest', choice: 'No', tip: null, why: null, use: () => null, noThanks: () => {} }} />, { container: slot });
+  expect(slot.querySelector('.ai-box')).not.toBeNull();
+  expect(buttons(slot).map(([, text]) => text)).toEqual(['Use this answer', 'No thanks']);
+  rerender(<AiCard card={{ kind: 'picked', choice: 'No', tip: null, notes: [], approve: () => {}, reject: () => {} }} />);
+  expect(buttons(slot).map(([, text]) => text)).toEqual(['Approve', 'Reject']);
+  rerender(<AiCard card={{ kind: 'rejected', text: 'Rejected', confirm: () => {} }} />);
+  expect(slot.querySelector('.ai-done')).not.toBeNull();
+  expect(buttons(slot).map(([, text]) => text)).toEqual(['Confirm the current page answer']);
+  unmount();
+});

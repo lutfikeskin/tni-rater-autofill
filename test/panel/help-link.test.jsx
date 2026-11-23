@@ -25,7 +25,7 @@ test('each view has a ? that opens the guide at its own section in a new tab', (
   for (const [file, topic] of [['checks-view', 'intake'], ['feed-view', 'page'], ['settings-view', 'settings'], ['details-view', 'details']]) {
     expect(read(`sidepanel/panel/${file}.jsx`), file).toContain(`<HelpLink topic="${topic}" />`);
   }
-  expect(read('sidepanel/sidepanel.html')).toContain('<h2>Start a quote</h2>\n        <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote"');
+  expect(read('sidepanel/sidepanel.html')).toContain('<section id="home" class="pane">\n      <a class="help-link" href="guide.html#home" target="_blank" rel="noopener" aria-label="Help: starting a quote"');
   // Built with the panel: the package carries it beside sidepanel.html.
   expect(read('vite.config.js')).toContain("guide: path.join(here, 'sidepanel/guide.html')");
   // A static page: nothing in it runs.
