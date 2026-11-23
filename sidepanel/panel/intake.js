@@ -3,7 +3,8 @@
 // One part of the panel; sidepanel.js wires the parts together.
 import * as pdfjs from '../../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../../src/intake.js';
-import { noNumberEdit, rederive } from '../../src/normalize.js';
+import { noNumberEdit } from '../../src/normalize.js';
+import { rederive } from '../../src/product-parts.js';
 import { readIntake } from '../../src/intake-forms.js';
 import { KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf } from '../../src/kept-work.js';
 import { get, set } from '../../src/shared/record-paths.js';

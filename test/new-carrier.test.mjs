@@ -24,7 +24,10 @@ test('every path the new-carrier template names exists, for each carrier where i
       const adapters = CARRIERS.filter((c) => c.pageAdapter);
       assert.ok(adapters.length >= 1);
       for (const c of adapters) {
-        assert.equal(c.pageAdapter, p.replace('<carrier>', c.id), `${c.id}'s pageAdapter`);
+        // Another product on the same carrier's site may read its pages with that carrier's adapter (geico-pa: geico's).
+        const sibling = adapters.some((o) => o !== c && o.pageAdapter === c.pageAdapter && o.pageAdapter === p.replace('<carrier>', o.id)
+          && o.hosts.some((h) => c.hosts.some((k) => String(k) === String(h))));
+        assert.ok(c.pageAdapter === p.replace('<carrier>', c.id) || sibling, `${c.id}'s pageAdapter: its own, or its carrier's on the same site`);
         assert.ok(fs.existsSync(new URL(`../${c.pageAdapter}`, import.meta.url)), `${c.pageAdapter} exists`);
       }
       continue;

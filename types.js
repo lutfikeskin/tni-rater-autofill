@@ -73,6 +73,17 @@
  * @property {string} [error]  error message when this is the sole registered form and the PDF does not match
  */
 
+/**
+ * What the panel needs of a product, from the product's own code (src/product-parts.js): its
+ * record's sections and fields, what an agent's edit recomputes, and how a client with no name is
+ * said.
+ * @typedef {object} ProductParts
+ * @property {{ id: string, title: string, list?: string, item?: string, fields: any[][] }[]} sections  the record's sections in order: a list's (`list`) fields are paths with `[]`
+ * @property {(path: string) => any} fieldInfo  a field by its path: `{ path, label, kind, options?, section? }` (src/schema.js fieldInfo)
+ * @property {(record: ClientRecord, path: string, options?: any) => string[]} rederive  the answers an edit of `path` recomputes
+ * @property {string} unnamed  the panel's name for a client the intake doesn't name
+ */
+
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */
 
 /**

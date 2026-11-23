@@ -63,7 +63,7 @@ export async function intakeSummary(pdfBytes, raw, result) {
     formVersion: (await sha256Hex(Object.keys(raw).sort().join('|'))).slice(0, 16),
     answers: stats.filled,
     state: record.garaging?.state ?? null,
-    businessClass: record.operations.businessClass,
+    businessClass: record.operations?.businessClass ?? null,
     vehicleTypes: [...new Set(record.vehicles.map((v) => v.type).filter(Boolean))],
     counts: { drivers: record.drivers.length, vehicles: record.vehicles.length, trailers: record.trailers.length },
     coverages: Object.entries(record.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
@@ -431,7 +431,7 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js', 'src/shared/parse.js', 'src/shared/address.js', 'src/shared/record-paths.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js', 'src/shared/parse.js', 'src/shared/address.js', 'src/shared/record-paths.js', 'src/carriers/geico-pa.js', 'src/carriers/progressive-pa.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }

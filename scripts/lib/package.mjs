@@ -167,7 +167,8 @@ const CARRIER_RULES_PLACEHOLDER = 'const CARRIER_RULES = null;';
 export function stampCarrierRules(text, hashes) {
   if (text.split(CARRIER_RULES_PLACEHOLDER).length !== 2) throw new Error(`expected one ${CARRIER_RULES_PLACEHOLDER}`);
   for (const [id, hash] of Object.entries(hashes)) {
-    if (!/^[a-z]+$/.test(id) || !/^[0-9a-f]{12}$/.test(hash)) throw new Error(`not a carrier fingerprint: ${id} ${hash}`);
+    // A carrier id as the usage server takes one (src/usage-schema.js): lowercase, digits and hyphens.
+    if (!/^[a-z][a-z0-9-]{0,19}$/.test(id) || !/^[0-9a-f]{12}$/.test(hash)) throw new Error(`not a carrier fingerprint: ${id} ${hash}`);
   }
   return text.replace(CARRIER_RULES_PLACEHOLDER, `const CARRIER_RULES = ${JSON.stringify(hashes)};`);
 }

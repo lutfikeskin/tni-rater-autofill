@@ -40,7 +40,6 @@ const KNOWN = [
   'sidepanel/panel/quote-summary.js -> src/util.js',
   'sidepanel/panel/record.js -> src/answers/owner.js',
   'sidepanel/panel/record.js -> src/normalize.js',
-  'sidepanel/panel/record.js -> src/schema.js',
   'sidepanel/panel/record.js -> src/util.js',
 ];
 

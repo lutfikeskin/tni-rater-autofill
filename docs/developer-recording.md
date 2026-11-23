@@ -61,6 +61,8 @@ A *moment* is a numbered point in the timeline at which a screenshot, a DOM snap
 
 The id is `<carrier>-<scenario>-<yyyymmdd-hhmm>-<4 hex>`, the scenario typed in the panel's existing Scenario box and redacted like a capture's (`capturePage` in [fill.js](../sidepanel/panel/fill.js)).
 
+A quote of another product is recorded the same way, with that product's intake loaded: with a personal-auto intake, GEICO's and Progressive's sites are the personal-auto carriers `geico-pa` and `progressive-pa` (`carrierForUrl`), which have no rules yet, so nothing is filled while it records, and the recording and its layouts are named by that carrier.
+
 ## What is recorded
 
 ### Timing

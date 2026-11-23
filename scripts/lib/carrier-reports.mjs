@@ -67,6 +67,10 @@ export const CARRIER_REPORTS = {
     // Its mock draws the quote with a script (test/fixtures/geico/mock.js): no static ids to compare.
     mock: null,
   },
+  // Personal auto, with no rules yet: which of its pages are the quote and where one ends are not
+  // recorded yet, so no page is a question to write a rule for, and no quote reads as done.
+  'geico-pa': { quotePage: () => false, portalPage: null, finalPage: /(?!)/, finalClick: null, loginPage: LOGIN, mock: null },
+  'progressive-pa': { quotePage: () => false, portalPage: null, finalPage: /(?!)/, finalClick: null, loginPage: LOGIN, mock: null },
 };
 
 export const REPORT_KEYS = ['quotePage', 'portalPage', 'finalPage', 'finalClick', 'loginPage', 'mock'];

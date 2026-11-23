@@ -2,8 +2,8 @@
 // The side panel: rendering the client record.
 // One part of the panel; sidepanel.js wires the parts together.
 import { sourcePlace } from '../../src/intake-source.js';
-import { checkHolds, noNumberEdit, parseEdit, rederive } from '../../src/normalize.js';
-import { SECTIONS, fieldInfo } from '../../src/schema.js';
+import { checkHolds, noNumberEdit, parseEdit } from '../../src/normalize.js';
+import { fieldInfo, partsOf, rederive, sectionsOf } from '../../src/product-parts.js';
 import { STATES, quotedCarrierPolicy } from '../../src/util.js';
 import { get, set } from '../../src/shared/record-paths.js';
 import { ownerDrivesAnswered } from '../../src/answers/owner.js';
@@ -35,7 +35,7 @@ function render() {
   const n = (k, one) => `${record[k].length} ${one}${record[k].length === 1 ? '' : 's'}`;
   const st = record.garaging?.state;
   state.client = {
-    name: record.applicant.name || record.applicant.owner1 || 'Unnamed business',
+    name: record.applicant.name || record.applicant.owner1 || partsOf(record).unnamed,
     title: `${fileName} · ${stats.filled} answers`,
     // "Maryland · 2 drivers · 1 vehicle".
     meta: [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
@@ -148,7 +148,7 @@ function renderWarnings() {
   const checks = warnings.map((w, i) => [w, i]).filter(([w]) => checkShown(w)).sort(([a], [b]) => Number(!!b.alert) - Number(!!a.alert));
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
-  const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path).label !== path;
+  const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path, state.intake?.record).label !== path;
   // "See intake" only where the PDF shows the item (an answer only the agent gives: none).
   const pdfLink = (w, label) => {
     const place = sourcePlace(w.path, state.intake);
@@ -159,8 +159,8 @@ function renderWarnings() {
   // A card: the item's number on the intake (`i`), its field's name (`title`, or null) and what it says;
   // a checked one is a row with Undo.
   const cards = checks.map(([w, i]) => {
-    const info = editable(w.path) ? fieldInfo(w.path) : null;
-    const label = info?.label ?? fieldInfo(w.path ?? '').label;
+    const info = editable(w.path) ? fieldInfo(w.path, state.intake?.record) : null;
+    const label = info?.label ?? fieldInfo(w.path ?? '', state.intake?.record).label;
     const card = { i, title: info?.label ?? null, msg: w.msg };
     if (done.includes(i)) return { ...card, done: true, said: info ? `${info.label} checked` : 'Checked', undo: () => toggleDone(i, false) };
     // Luna's GL and driver-gender items: their own buttons set the field (the agent's edit) or
@@ -224,7 +224,7 @@ function renderSections({ keep = [] } = {}) {
   const editedCount = (state.intake.agentEdited ?? []).length;
   let hidden = 0;
   const sections = [];
-  for (const section of SECTIONS) {
+  for (const section of sectionsOf(record)) {
     const items = section.list ? record[section.list] ?? [] : [record[section.id]];
     if (section.list && !items.length) continue;
     const flags = openFlags(section.list ?? section.id);
@@ -286,10 +286,10 @@ function fieldSaid(path, kind) {
   const said = { id: `f-${path.replace(/[^\w]/g, '_')}`, value: value == null ? '' : String(value), blank: value == null };
   if (kind === 'bool') return { ...said, control: 'select', options: [['', '—'], ['true', 'Yes'], ['false', 'No']] };
   if (kind === 'textarea') return { ...said, control: 'textarea' };
-  if (kind === 'state' || fieldInfo(path).options) {
+  if (kind === 'state' || fieldInfo(path, state.intake?.record).options) {
     // The intake form's dropdown, its options in client details too. Its boxes also take typed
     // text, so a value off the list stays, as written, among the options.
-    const options = kind === 'state' ? Object.keys(STATES) : fieldInfo(path).options;
+    const options = kind === 'state' ? Object.keys(STATES) : fieldInfo(path, state.intake?.record).options;
     const shown = value == null ? null : String(value);
     return { ...said, control: 'select', options: [['', '—'],
       ...(shown != null && !options.includes(shown) ? [[shown, shown]] : []),
@@ -434,8 +434,8 @@ async function agentEdit(path, after, kind, { restore = false } = {}) {
 // hidden as empty, or in a folded section, is brought out first.
 function jumpTo(path) {
   flushSync(openDetails);
-  const info = fieldInfo(path);
-  const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
+  const info = fieldInfo(path, state.intake?.record);
+  const sectionId = info.section?.id ?? sectionsOf(state.intake?.record).find((s) => s.id === path || s.list === path)?.id;
   let section = $('sections').querySelector(`.section[data-id="${sectionId}"]`);
   if (!section) return;
   let row = $('sections').querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? section;

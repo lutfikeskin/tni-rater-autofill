@@ -45,6 +45,8 @@
 import { progressive } from './carriers/progressive.js';
 import { amwins } from './carriers/amwins.js';
 import { geico } from './carriers/geico.js';
+import { geicoPa } from './carriers/geico-pa.js';
+import { progressivePa } from './carriers/progressive-pa.js';
 
 /** @import { CarrierConfig } from '../types.js' */
 
@@ -59,6 +61,9 @@ export const CARRIERS = [
   progressive,
   geico,
   amwins,
+  // Personal auto: chosen for a tab only when a personal-auto intake is loaded (carrierForUrl).
+  geicoPa,
+  progressivePa,
   ...(LOCAL_PAGES ? [{
     id: 'test',
     name: 'Local test page',
