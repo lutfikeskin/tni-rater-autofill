@@ -9,11 +9,11 @@
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
   '0.9.42': [
+    'A new panel: intake checks and questions come one at a time.',
+    'After a fill, a summary shows what needs you and what is worth a look.',
     'Progressive: phone and email fill from the intake; mobile phone is Yes.',
     'Progressive Rates: cargo, GL and interchange fill without stopping.',
-    'Fewer intake checks: two-word first names and most addresses pass.',
-    'A page part that never loads no longer blocks Fill, Stop or Clear.',
-    'An AI answer sent but not confirmed can be confirmed or rejected.',
+    'Fewer intake checks, and a stuck page part no longer blocks Fill or Stop.',
   ],
   '0.9.41': [
     "GEICO: the owner's name and birth date fill again.",
