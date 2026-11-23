@@ -8,6 +8,13 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
+  '0.9.42': [
+    'Progressive: phone and email fill from the intake; mobile phone is Yes.',
+    'Progressive Rates: cargo, GL and interchange fill without stopping.',
+    'Fewer intake checks: two-word first names and most addresses pass.',
+    'A page part that never loads no longer blocks Fill, Stop or Clear.',
+    'An AI answer sent but not confirmed can be confirmed or rejected.',
+  ],
   '0.9.41': [
     "GEICO: the owner's name and birth date fill again.",
     'An invalid VIN is left for you instead of typed.',
