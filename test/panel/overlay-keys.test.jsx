@@ -74,3 +74,43 @@ test('Settings covers the view but is not modal: Tab leaves it as it would anywh
   expect([e.defaultPrevented, document.activeElement.id]).toEqual([false, 'agent-initials']);
   view.unmount();
 });
+
+test('Escape closes a sheet over the file popover first, then the popover, and Settings first while it hides the popover', () => {
+  const closed = [];
+  let summary = true;
+  let fileConfirm = true;
+  const settings = true;
+  const view = render(
+    <>
+      <button type="button" id="settings-btn">Settings</button>
+      <section id="settings"><button type="button" id="settings-done">Done</button></section>
+      <div id="quote"><div id="file-confirm"><button type="button" id="file-confirm-no">Cancel</button></div></div>
+      <div id="summary-view"><button type="button" id="summary-close">Close</button></div>
+    </>,
+  );
+  const $ = (id) => document.getElementById(id);
+  const layers = () => [
+    { el: $('summary-view'), open: summary, close: () => closed.push('summary'), modal: true },
+    { el: $('file-confirm'), open: fileConfirm && !$('file-confirm').closest('[hidden]'), close: () => closed.push('popover') },
+    { el: $('settings'), open: settings, close: () => closed.push('settings') },
+  ];
+  const listener = (e) => overlayKey(e, layers());
+  document.addEventListener('keydown', listener);
+  try {
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(closed).toEqual(['summary']);
+
+    summary = false;
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(closed).toEqual(['summary', 'popover']);
+
+    closed.length = 0;
+    fileConfirm = true;
+    $('quote').hidden = true;
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(closed).toEqual(['settings']);
+  } finally {
+    document.removeEventListener('keydown', listener);
+    view.unmount();
+  }
+});

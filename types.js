@@ -1450,6 +1450,9 @@
  * @property {any} [loadError]
  * @property {any[]} [siteTrack]
  * @property {any} [checks]
+ * @property {boolean} [checksAll] true when the agent opened the full intake-checks list instead of one-at-a-time focus mode
+ * @property {boolean} [allAnswers] true when the agent opened All answers instead of the grouped post-fill Review
+ * @property {any} [allAnswersFor] report entry for which All answers was opened; another report returns to Review
  * @property {any[]} [pickers]
  * @property {string | null} [fileConfirm]
  * @property {any} [fileConfirmFrom]
@@ -1500,6 +1503,56 @@
 /**
  * Zustand vanilla store for the side panel state.
  * @typedef {import('zustand/vanilla').StoreApi<PanelState>} PanelStore
+ */
+
+/**
+ * Identifier of the screen currently shown by the side panel (`screenFor` in
+ * `sidepanel/panel/screen.js`), derived from `intake`, `view`, `settingsOpen` and `dock`:
+ * - `start`: no intake loaded yet (Home; `DOCK.start`)
+ * - `norater`: intake loaded, no supported rater tab in front (`DOCK.openRater`)
+ * - `unreadable`: active tab's URL cannot be read by the extension (`DOCK.unreadable`)
+ * - `preview`: panel opened outside the Chrome extension (`DOCK.preview`)
+ * - `portal`: carrier site outside a quote page (`DOCK.portal`)
+ * - `stopped`: carrier stop page or referral screen (`DOCK.stopped`)
+ * - `yours`: carrier stop step or screen left to the agent (`DOCK.yours`)
+ * - `hold`: quote state on the page disagrees with the intake (`DOCK.stateHold`, `alt: 'fill-anyway'`)
+ * - `defaults`: waiting on whose defaults this quote takes (`DOCK.defaultsAsk`, `DOCK.defaultsHeld`)
+ * - `owner`: rater tab's quote was not started with this intake (`DOCK.otherClient`)
+ * - `ready`: quote page ready to fill before a report exists (`DOCK.ready`)
+ * - `filling`: fill running on the active tab, including when the page hasn't answered (`FILLING`)
+ * - `elsewhere`: fill running on another tab (`FILLING.elsewhere`)
+ * - `review`: filled page in review (`continueSaid`: `needs`, `waiting`, `check`, `yours` with `alt: 'fill-again'`, `ready-continue`)
+ * - `stopped-fill`: fill halted after the agent clicked Stop (`DOCK.stoppedFill`)
+ * - `error`: fill ended with an error (`DOCK.error`)
+ * - `ai`: AI picks waiting for approval before Continue (`DOCK.ai`)
+ * - `finished`: quote at the step or action where TNI stops, with Quote summary (`DOCK.finished`)
+ * - `continued`: transitional state right after Continue was clicked (`CONTINUE.continued`)
+ * - `check`: intake checks view (`state.view === 'check'`)
+ * - `settings`: Settings open over the panel (`state.settingsOpen`)
+ * @typedef {'start' | 'norater' | 'unreadable' | 'preview' | 'portal' | 'stopped' | 'yours' | 'hold' | 'defaults' | 'owner' | 'ready' | 'filling' | 'elsewhere' | 'review' | 'stopped-fill' | 'error' | 'ai' | 'finished' | 'continued' | 'check' | 'settings'} PanelScreen
+ */
+
+/**
+ * Shape of `state.dock` (`renderDock` in `coordinator.js`, built from `dockFor`, `fillingSaid`
+ * and `continueSaid` and read by `steps-view.jsx`, `screen-view.jsx` and `screen.js`).
+ * @typedef {object} DockSnapshot
+ * @property {string} [phase] dock phase id (`start`, `off`, `ready`, `filling`, `needs`, `done`, …)
+ * @property {'bad' | 'warn' | 'good' | 'blue' | 'ai'} [tone] colour tone of the dock and its primary button
+ * @property {string} [eyebrow] short status label above the dock title
+ * @property {string} [title] main dock heading for the current phase
+ * @property {string} [sub] supporting line under the dock title
+ * @property {string} [button] id of the primary dock button shown (`fill`, `fill-stop`, `dock-next`, `look-right`, `ai-approve`, `dock-summary`, `dock-defaults`)
+ * @property {string} [label] text overridden on the primary dock button
+ * @property {boolean} [disabled] whether the primary dock button starts disabled
+ * @property {string} [alt] action key for `#dock-alt` (`fill-again` or `fill-anyway`)
+ * @property {string} [altLabel] text shown on `#dock-alt`
+ * @property {string} [go] `#fill[data-go]` mode (`continue` when `#fill` continues instead of filling)
+ * @property {number | boolean} [progress] fill progress fraction (`0..1`) or `true` when indeterminate
+ * @property {string} [progressSaid] accessible announcement string for the progress bar
+ * @property {boolean} [hidden] whether `#dock` is hidden while Settings is open (`settingsOpen && button !== 'fill-stop'`)
+ * @property {string} [report] report status attribute mirrored to `#dock[data-report]`
+ * @property {boolean} [busy] while a fill runs: the dock's buttons other than Stop are disabled
+ * @property {string} [paused] footer note when automatic filling is paused on the active tab
  */
 
 /**

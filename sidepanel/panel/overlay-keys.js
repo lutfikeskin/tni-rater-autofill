@@ -1,6 +1,7 @@
 // @ts-check
 // The keyboard over what covers the panel (docs/panel-ui.md, "Over the panel"): Escape closes the
-// topmost one that is open (the PDF sheet, the quote summary, client details, then Settings), and
+// topmost one that is open (the PDF sheet, the quote summary, client details, the file popover,
+// then Settings), and
 // Tab and Shift+Tab stay inside a sheet (`modal`) while it is open, wrapping at its ends. Settings
 // covers the view but isn't modal: the header stays usable beside it. sidepanel.js passes the
 // layers, read at each key, in that order.
