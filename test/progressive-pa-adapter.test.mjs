@@ -8,7 +8,7 @@ import { progressivePa } from '../src/carriers/progressive-pa.js';
 import { carrierRuleFiles, fieldChangeEvent, knownStep, redactor } from '../src/usage.js';
 import { carrierRefusal } from '../scripts/lib/carrier-reports.mjs';
 import { currentPage, pageAt, pageBusy } from '../src/kit/adapter.js';
-import { stepKey } from '../src/kit/dom.js';
+import { collectControls, stepKey } from '../src/kit/dom.js';
 import { capture } from '../src/kit/capture.js';
 import { findAdvanceButton, findButton } from '../src/kit/actions.js';
 
@@ -161,7 +161,7 @@ test('adapter shape: registers carrier progressive-pa with shared hooks only (no
 });
 
 test('recorder logs clean question captions across all fixtures, never helper/sr-only/entity noise, and handles radios and checkboxes', () => {
-  const NOISE = [/\bHelp Text\b/i, /\bDiscount tag\b/i, /\bClear\b/i, /\bRemove\b/i, /\bFormat\b/i, /\bCost of coverage\b/i, /\bfor\b/i];
+  const NOISE = [/\bHelp Text\b/i, /\bDiscount tag\b/i, /\bClear\b/i, /\bRemove\b/i, /\bFormat\b/i, /\bCost of coverage\b/i, /\bfor\b/i, /\bview\s*model\b/i];
 
   /** @type {Record<string, Record<string, string>>} */
   const expectedByFixture = {
@@ -192,6 +192,7 @@ test('recorder logs clean question captions across all fixtures, never helper/sr
       AdditionalDetails_Embedded_Questions_List_Boat: 'Boat',
     },
     'coverages.html': {
+      CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_Y: 'Accident Forgiveness',
       CoveragesAA_Vehicles_List_0_Embedded_Questions_List_veh_liab: 'Liability',
       CoveragesAA_Vehicles_List_0_Embedded_Questions_List_COMP: 'Comprehensive Deductible',
       CoveragesAA_Vehicles_List_0_Embedded_Questions_List_COLL: 'Collision Deductible',
@@ -474,8 +475,18 @@ test('field keys match the decided ref, row, and picker:special mapping across f
       [{ type: 'checkbox', name: 'IsSelected', id: 'Portfolio_HvdVehicles_List_3_Embedded_Questions_List_IsSelected' }, 'Portfolio.HvdVehicles.IsSelected', '4', 'ref:Portfolio.HvdVehicles.IsSelected@4'],
       [{ type: 'checkbox', name: 'IsSelected', id: 'Portfolio_HvdVehicles_List_4_Embedded_Questions_List_IsSelected' }, 'Portfolio.HvdVehicles.IsSelected', '5', 'ref:Portfolio.HvdVehicles.IsSelected@5'],
       [{ type: 'checkbox', name: 'IsIncluded', id: 'Portfolio_Embedded_EmbeddedViewModel_ProductSpecificInformation_List_0_Embedded_Questions_List_IsIncluded' }, 'Portfolio.Embedded.EmbeddedViewModel.ProductSpecificInformation.IsIncluded', '1', 'ref:Portfolio.Embedded.EmbeddedViewModel.ProductSpecificInformation.IsIncluded'],
+      [{ type: 'radio', id: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y', name: 'viewModel_Embedded_Questions_List_1' }, 'ProductsAA.NamedOperatorIndicator', null, 'ref:ProductsAA.NamedOperatorIndicator'],
+      [{ type: 'radio', id: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_N', name: 'viewModel_Embedded_Questions_List_1' }, 'ProductsAA.NamedOperatorIndicator', null, 'ref:ProductsAA.NamedOperatorIndicator'],
       [{ type: 'radio', id: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y', name: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator' }, 'ProductsAA.NamedOperatorIndicator', null, 'ref:ProductsAA.NamedOperatorIndicator'],
-      [{ type: 'radio', id: 'People_Drivers_List_1_Embedded_Questions_List_StateFiling_N', name: 'People_Drivers_List_1_Embedded_Questions_List_StateFiling' }, 'People.Drivers.StateFiling', '2', 'ref:People.Drivers.StateFiling@2'],
+      [{ type: 'radio', id: 'People_Drivers_List_2_Embedded_Questions_List_StateFiling_Y', name: 'viewModel_Drivers_List_2_Embedded_Questions_List_13' }, 'People.Drivers.StateFiling', '3', 'ref:People.Drivers.StateFiling@3'],
+      [{ type: 'radio', id: 'People_Drivers_List_2_Embedded_Questions_List_StateFiling_N', name: 'viewModel_Drivers_List_2_Embedded_Questions_List_13' }, 'People.Drivers.StateFiling', '3', 'ref:People.Drivers.StateFiling@3'],
+      [{ type: 'radio', id: 'People_Drivers_List_2_Embedded_Questions_List_StateFiling_N', name: 'People_Drivers_List_2_Embedded_Questions_List_StateFiling' }, 'People.Drivers.StateFiling', '3', 'ref:People.Drivers.StateFiling@3'],
+      [{ type: 'radio', id: 'CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_Y', name: 'viewModel_PolicyCoverage_Embedded_Questions_List_0' }, 'CoveragesAA.PolicyCoverage.AccidentForgiveness', null, 'ref:CoveragesAA.PolicyCoverage.AccidentForgiveness'],
+      [{ type: 'radio', id: 'CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_N', name: 'viewModel_PolicyCoverage_Embedded_Questions_List_0' }, 'CoveragesAA.PolicyCoverage.AccidentForgiveness', null, 'ref:CoveragesAA.PolicyCoverage.AccidentForgiveness'],
+      [{ type: 'radio', id: 'CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_Y', name: 'CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness' }, 'CoveragesAA.PolicyCoverage.AccidentForgiveness', null, 'ref:CoveragesAA.PolicyCoverage.AccidentForgiveness'],
+      [{ type: 'radio', id: 'ProductsAA_Embedded_Questions_List_SingleWord', name: 'viewModel_Embedded_Questions_List_9' }, 'ProductsAA.SingleWord', null, 'ref:ProductsAA.SingleWord'],
+      [{ type: 'radio', id: 'mat-radio-1', name: 'ProductsAA_Embedded_Questions_List_NamedOperatorIndicator' }, 'ProductsAA.NamedOperatorIndicator', null, 'ref:ProductsAA.NamedOperatorIndicator'],
+      [{ type: 'radio', id: 'mat-radio-2', name: 'viewModel_Embedded_Questions_List_1' }, null, null, 'viewModel_Embedded_Questions_List_1'],
       [{ type: 'tel', id: 'mat-input-21', name: 'pickerInput' }, null, null, 'pickerInput'],
       [{ type: 'text', id: 'mat-input-99' }, null, null, 'mat-input-99'],
       [{ tag: 'button', id: 'product_tab_AA' }, null, null, 'product_tab_AA'],
@@ -491,15 +502,113 @@ test('field keys match the decided ref, row, and picker:special mapping across f
     page.close();
   }
 
-  // Actual DOM elements inside fixtures produce the exact decided keys (including picker:ProductsAA.PolicyEffectiveDate).
+  // Actual DOM elements inside fixtures produce the exact decided keys (including picker:ProductsAA.PolicyEffectiveDate
+  // and live viewModel_ radio groups), kit collectControls groups both radio options into one control, and the recorder
+  // reports a radio flip once under the question's caption.
   const prod = loadPage(readFixture('products.html'));
   try {
     const picker = prod.document.getElementById('mat-input-21');
     assert.equal(prod.adapter.shared.keys.ref(picker), null);
     assert.equal(prod.adapter.shared.keys.special(picker), 'picker:ProductsAA.PolicyEffectiveDate');
     assert.equal(prod.fieldKey(picker), 'picker:ProductsAA.PolicyEffectiveDate');
+
+    const y = /** @type {HTMLInputElement} */ (prod.document.getElementById('ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y'));
+    const n = /** @type {HTMLInputElement} */ (prod.document.getElementById('ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_N'));
+    assert.equal(prod.fieldKey(y), 'ref:ProductsAA.NamedOperatorIndicator');
+    assert.equal(prod.fieldKey(n), 'ref:ProductsAA.NamedOperatorIndicator');
+    withKitGlobals(prod, () => {
+      const radioGroups = collectControls().filter((c) => c.kind === 'radio');
+      assert.equal(radioGroups.length, 1);
+      assert.equal(radioGroups[0].radios?.length, 2);
+      assert.equal(radioGroups[0].ref, 'ProductsAA.NamedOperatorIndicator');
+    });
+    n.checked = false;
+    y.checked = true;
+    prod.recorder.poll();
+    const changes = prod.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+    const radioChanges = changes.filter((c) => c.key === 'ref:ProductsAA.NamedOperatorIndicator');
+    assert.equal(radioChanges.length, 1);
+    assert.equal(radioChanges[0].label, 'Named Non-Owner Policy');
+    assert.equal(radioChanges[0].after, 'Yes');
   } finally {
     prod.close();
+  }
+
+  // Coverages live viewModel_ radio group: both options share the key, kit groups them, recorder reports one change.
+  const cov = loadPage(readFixture('coverages.html'));
+  try {
+    const y = /** @type {HTMLInputElement} */ (cov.document.getElementById('CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_Y'));
+    const n = /** @type {HTMLInputElement} */ (cov.document.getElementById('CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_N'));
+    assert.equal(cov.fieldKey(y), 'ref:CoveragesAA.PolicyCoverage.AccidentForgiveness');
+    assert.equal(cov.fieldKey(n), 'ref:CoveragesAA.PolicyCoverage.AccidentForgiveness');
+    withKitGlobals(cov, () => {
+      const radioGroups = collectControls().filter((c) => c.kind === 'radio');
+      assert.equal(radioGroups.length, 1);
+      assert.equal(radioGroups[0].radios?.length, 2);
+      assert.equal(radioGroups[0].ref, 'CoveragesAA.PolicyCoverage.AccidentForgiveness');
+    });
+    n.checked = false;
+    y.checked = true;
+    cov.recorder.poll();
+    const changes = cov.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+    const radioChanges = changes.filter((c) => c.key === 'ref:CoveragesAA.PolicyCoverage.AccidentForgiveness');
+    assert.equal(radioChanges.length, 1);
+    assert.equal(radioChanges[0].label, 'Accident Forgiveness');
+    assert.equal(radioChanges[0].after, 'Yes');
+  } finally {
+    cov.close();
+  }
+
+  // Test-only fragment covering saved radio shape (name = id stem), driver 3 (@3), multi-segment option suffix
+  // matching <question property>, and a non-matching id with a viewModel name (must not get a ref: key).
+  const radioShapesHtml = `<!doctype html><html><body>
+    <question property="StateFiling" class="box-row question">
+      <div class="left"><div class="question-label"><label>State Filing <span aria-hidden="true">*</span></label></div></div>
+      <div class="right">
+        <label><input type="radio" id="People_Drivers_List_2_Embedded_Questions_List_StateFiling_Y" name="People_Drivers_List_2_Embedded_Questions_List_StateFiling" value="Y">Yes</label>
+        <label><input type="radio" id="People_Drivers_List_2_Embedded_Questions_List_StateFiling_N" name="People_Drivers_List_2_Embedded_Questions_List_StateFiling" value="N" checked>No</label>
+      </div>
+    </question>
+    <question property="Coverage_Tier" class="box-row question">
+      <div class="left"><div class="question-label"><label>Coverage Tier *</label></div></div>
+      <div class="right">
+        <label><input type="radio" id="ProductsAA_Embedded_Questions_List_Coverage_Tier_Opt_A" name="viewModel_Embedded_Questions_List_5" value="A">Option A</label>
+        <label><input type="radio" id="ProductsAA_Embedded_Questions_List_Coverage_Tier_Opt_B" name="viewModel_Embedded_Questions_List_5" value="B" checked>Option B</label>
+      </div>
+    </question>
+    <question property="UnknownRadio" class="box-row question">
+      <div class="left"><div class="question-label"><label>Unknown Radio *</label></div></div>
+      <div class="right">
+        <label><input type="radio" id="mat-radio-10" name="viewModel_Embedded_Questions_List_99" value="Y">Yes</label>
+        <label><input type="radio" id="mat-radio-11" name="viewModel_Embedded_Questions_List_99" value="N" checked>No</label>
+      </div>
+    </question>
+  </body></html>`;
+  const radioShapes = loadPage(radioShapesHtml);
+  try {
+    const sfY = /** @type {HTMLInputElement} */ (radioShapes.document.getElementById('People_Drivers_List_2_Embedded_Questions_List_StateFiling_Y'));
+    const sfN = /** @type {HTMLInputElement} */ (radioShapes.document.getElementById('People_Drivers_List_2_Embedded_Questions_List_StateFiling_N'));
+    assert.equal(radioShapes.fieldKey(sfY), 'ref:People.Drivers.StateFiling@3');
+    assert.equal(radioShapes.fieldKey(sfN), 'ref:People.Drivers.StateFiling@3');
+    sfN.checked = false;
+    sfY.checked = true;
+    radioShapes.recorder.poll();
+    const sfChanges = radioShapes.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes)
+      .filter((c) => c.key === 'ref:People.Drivers.StateFiling@3');
+    assert.equal(sfChanges.length, 1);
+    assert.equal(sfChanges[0].label, 'State Filing');
+
+    const tierA = radioShapes.document.getElementById('ProductsAA_Embedded_Questions_List_Coverage_Tier_Opt_A');
+    const tierB = radioShapes.document.getElementById('ProductsAA_Embedded_Questions_List_Coverage_Tier_Opt_B');
+    assert.equal(radioShapes.fieldKey(tierA), 'ref:ProductsAA.Coverage_Tier');
+    assert.equal(radioShapes.fieldKey(tierB), 'ref:ProductsAA.Coverage_Tier');
+
+    const unk = radioShapes.document.getElementById('mat-radio-10');
+    assert.equal(radioShapes.adapter.shared.keys.ref(unk), null);
+    assert.equal(radioShapes.adapter.shared.keys.row(unk), null);
+    assert.ok(!radioShapes.fieldKey(unk).startsWith('ref:'), `viewModel fallback must not produce a ref: key, got "${radioShapes.fieldKey(unk)}"`);
+  } finally {
+    radioShapes.close();
   }
 
   // Repeated entity date pickers get distinct keys via their sibling Embedded control (`picker:<ref>@<row>`),

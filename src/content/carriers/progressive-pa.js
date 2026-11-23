@@ -28,12 +28,21 @@
   /** @param {unknown} s */
   const squash = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
-  // Radios carry the question stem in `name` (their `id` appends `_Y`/`_N`); every other control
-  // carries it in `id` (selects and text boxes have no `name`, and repeated checkboxes share one).
   /** @param {Element | null | undefined} el */
-  const controlId = (el) => {
-    const input = /** @type {HTMLInputElement | null | undefined} */ (el);
-    return input?.type?.toLowerCase() === 'radio' ? String(input.name ?? '') : String(el?.id ?? '');
+  const isRadio = (el) => /** @type {HTMLInputElement | null | undefined} */ (el)?.type?.toLowerCase() === 'radio';
+
+  // Match the data-model path from `id` for every control (radios included: on live pages Angular
+  // may render a radio group's `name` as a positional `viewModel_..._<n>` path while `id` stays
+  // stable). Fall back to `name` only when `id` does not match and `name` does not start with
+  // `viewModel`.
+  /** @param {Element | null | undefined} el */
+  const matchEmbedded = (el) => {
+    const idMatch = String(el?.id ?? '').match(EMBEDDED);
+    if (idMatch) return { match: idMatch, fromId: true };
+    const name = String(/** @type {HTMLInputElement | null | undefined} */ (el)?.name ?? '');
+    if (!name || name.startsWith('viewModel')) return null;
+    const nameMatch = name.match(EMBEDDED);
+    return nameMatch ? { match: nameMatch, fromId: false } : null;
   };
 
   /** @param {Element | null | undefined} el */
@@ -41,16 +50,27 @@
 
   /** @param {Element | null | undefined} el */
   const refOf = (el) => {
-    const m = controlId(el).match(EMBEDDED);
-    if (!m) return null;
-    return `${m[1].replace(/_List_\d+/g, '').replace(/_/g, '.')}.${m[2]}`;
+    const hit = matchEmbedded(el);
+    if (!hit) return null;
+    const [, prefix, raw] = hit.match;
+    let question = raw;
+    if (hit.fromId && isRadio(el)) {
+      const prop = el?.closest?.('question')?.getAttribute?.('property');
+      if (prop && raw.startsWith(`${prop}_`)) {
+        question = prop;
+      } else {
+        const cut = raw.lastIndexOf('_');
+        if (cut > 0) question = raw.slice(0, cut);
+      }
+    }
+    return `${prefix.replace(/_List_\d+/g, '').replace(/_/g, '.')}.${question}`;
   };
 
   /** @param {Element | null | undefined} el */
   const rowOf = (el) => {
-    const m = controlId(el).match(EMBEDDED);
-    if (!m) return null;
-    const parts = [...m[1].matchAll(/_List_(\d+)/g)].map((x) => Number(x[1]) + 1);
+    const hit = matchEmbedded(el);
+    if (!hit) return null;
+    const parts = [...hit.match[1].matchAll(/_List_(\d+)/g)].map((x) => Number(x[1]) + 1);
     if (!parts.length) return null;
     while (parts.length > 1 && parts.at(-1) === 1) parts.pop();
     return parts.join('.');
