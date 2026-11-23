@@ -4,6 +4,7 @@
 import { ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE, ntlWithPrimary, NTL_PRIMARY_MESSAGE } from '../../src/normalize.js';
 import { redactionTerms } from '../../src/plan.js';
 import { get } from '../../src/shared/record-paths.js';
+import { partsOf } from '../../src/product-parts.js';
 import { redactor } from '../../src/usage.js';
 import * as usage from '../usage-log.js';
 import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
@@ -142,6 +143,8 @@ function claimsContext(record) {
 
 async function reviewClaimsBox({ retry = false } = {}) {
   const intake = state.intake;
+  // Only for a product whose intake Luna's review was written for (ProductParts.aiReviews).
+  if (intake && !partsOf(intake.record).aiReviews) return;
   // A finished review stands while what it read is unchanged (older records didn't keep that).
   // Once the agent has edited it, Luna's items for the old text are retired right away, whether or
   // not a new review can run now (assistant off, no key, a failure).
@@ -224,6 +227,7 @@ function supersedeGenderItems(intake) {
 
 async function reviewDriverGender({ retry = false } = {}) {
   const intake = state.intake;
+  if (intake && !partsOf(intake.record).aiReviews) return;
   if (intake?.namesReview?.done && intake.namesReview.context !== driverNamesContext(intake.record)) {
     supersedeGenderItems(intake);
     intake.namesReview = null;

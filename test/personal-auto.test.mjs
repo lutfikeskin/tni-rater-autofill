@@ -123,6 +123,9 @@ test('the panel draws and edits a personal-auto record with its own sections, ne
   assert.equal(fieldInfo('applicant.name', { product: 'commercial-auto' }).label, 'Company name');
   assert.equal(fieldInfo('vehicles[1].lienholder.state', record).kind, 'state');
   assert.equal(partsOf(record).unnamed, 'Unnamed client');
+  // Luna's intake reviews are commercial auto's (NTL, GL, gender values): not run on a personal-auto intake.
+  assert.equal(partsOf(record).aiReviews, false);
+  assert.equal(partsOf({ product: 'commercial-auto' }).aiReviews, true);
   // An edit recomputes nothing, and adds none of commercial auto's answers to the record.
   const before = JSON.stringify(record);
   assert.deepEqual(rederive(record, 'notes.text', { intake: { warnings: [] } }), []);

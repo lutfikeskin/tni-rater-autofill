@@ -82,6 +82,7 @@
  * @property {(path: string) => any} fieldInfo  a field by its path: `{ path, label, kind, options?, section? }` (src/schema.js fieldInfo)
  * @property {(record: ClientRecord, path: string, options?: any) => string[]} rederive  the answers an edit of `path` recomputes
  * @property {string} unnamed  the panel's name for a client the intake doesn't name
+ * @property {boolean} aiReviews  whether Luna reviews the intake once loaded (its claims box and notes, its drivers' first names): written for commercial auto's intake (src/ai/luna.js)
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */

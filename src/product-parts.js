@@ -13,7 +13,7 @@ import { productOf } from './products.js';
 
 /** @type {Record<string, ProductParts>} */
 const PARTS = {
-  'commercial-auto': { sections: SECTIONS, fieldInfo: commercialFieldInfo, rederive: commercialRederive, unnamed: 'Unnamed business' },
+  'commercial-auto': { sections: SECTIONS, fieldInfo: commercialFieldInfo, rederive: commercialRederive, unnamed: 'Unnamed business', aiReviews: true },
   'personal-auto': PERSONAL_AUTO_PARTS,
 };
 

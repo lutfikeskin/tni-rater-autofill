@@ -25,4 +25,7 @@ export const PERSONAL_AUTO_PARTS = {
   // No answer of the record is read from another one yet: an edit recomputes nothing.
   rederive: () => [],
   unnamed: 'Unnamed client',
+  // Luna's intake reviews read commercial auto's claims box and coverages (NTL, GL) and set its
+  // gender values: none for personal auto, whose form asks each driver's gender, until it has its own.
+  aiReviews: false,
 };

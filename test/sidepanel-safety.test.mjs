@@ -3889,7 +3889,7 @@ function claimsHarness() {
       if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
       return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
-    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {}, partsOf: () => ({ aiReviews: true }),
   };
   vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('spentOf') + extractFunction('reviewClaimsBox'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
@@ -8166,7 +8166,7 @@ function namesHarness() {
       if (reply === 'fail') throw new AssistError('Luna returned an invalid driver-name review.');
       return { warnings: [{ code: 'ai.driver-gender', path: 'drivers[0].gender', level: 'check', msg: 'x', choices: [] }], names: 2, flagged: 1, modelCalls: 1, tokensIn: 5, tokensOut: 1, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
     },
-    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {},
+    usage: { log: (e) => logs.push(e), currentSession: () => t.session }, save: async () => {}, render: () => {}, partsOf: () => ({ aiReviews: true }),
   };
   vm.runInNewContext(extractFunction('driverNamesContext') + extractFunction('supersedeGenderItems') + extractFunction('spentOf') + extractFunction('reviewDriverGender'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
