@@ -28,8 +28,8 @@ export function watchedRun(msg) {
  * @param {any} api
  */
 export function createFillWatch(api) {
-  /** Stops one run in every frame of its tab. @param {WatchedRun} w */
-  const stopRun = (w) => api.scripting.executeScript({ target: { tabId: w.tabId, allFrames: true }, world: w.world,
+  /** Stops one run in every frame of its tab, at once: a frame still loading holds no call then. @param {WatchedRun} w */
+  const stopRun = (w) => api.scripting.executeScript({ target: { tabId: w.tabId, allFrames: true }, world: w.world, injectImmediately: true,
     func: (run) => globalThis.__raterKit?.stopRun?.(run) ?? false, args: [w.run] }).catch(() => { /* the tab closed or navigated: the fill ended with it */ });
   /** @param {any} port */
   const watch = (port) => {

@@ -37,6 +37,8 @@ test('a panel that goes while its fill runs: the worker stops that run in every 
   assert.equal(api.ran.length, 1);
   const [call] = api.ran;
   assert.deepEqual([call.target, call.world, call.args], [{ tabId: 7, allFrames: true }, 'MAIN', ['run-1']]);
+  // At once: a frame still loading holds no call of Chrome's then, so the stop reaches the others.
+  assert.equal(call.injectImmediately, true);
   // What it runs in the page: the kit's stopRun with that run, nothing broader.
   let asked = null;
   globalThis.__raterKit = { stopRun: (run) => { asked = run; return true; }, stop: () => { throw new Error('stop() halts any run'); } };

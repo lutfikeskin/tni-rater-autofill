@@ -7,7 +7,7 @@ import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usa
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { logCrash, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
+import { framesReady, logCrash, noteFrameTimeout, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
 import { releaseDiscardedForms } from './record.js';
 import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
@@ -224,15 +224,44 @@ async function ensureRecorder() {
   // (field-key.js) and its pages drawn (the recorder) are its own. The kit's world gets its own copy
   // (injectKit): on Progressive that is the page's world, which this one can't see.
   const adapter = state.tab.carrier.pageAdapter ? [state.tab.carrier.pageAdapter] : [];
+  const files = [...adapter, 'src/content/field-key.js', 'src/content/recorder.js', ...trace];
+  const inject = (target) => {
+    const p = chrome.scripting.executeScript({ target, files });
+    if (typeof setTimeout !== 'function') return p;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('recorder timeout')), 2500);
+      Promise.resolve(p).then((v) => { clearTimeout(timer); resolve(v); }, (e) => { clearTimeout(timer); reject(e); });
+    });
+  };
+  // Every frame, less those whose document hasn't loaded and isn't waited for (framesReady).
+  let ready = await framesReady(tabId);
   try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: [...adapter, 'src/content/field-key.js', 'src/content/recorder.js', ...trace] });
-  } catch { return; /* page not ready or not allowed; tried again on the next tab update */ }
+    await inject(ready ? { tabId, frameIds: ready } : { tabId, allFrames: true });
+  } catch (e) {
+    // A frame named here went meanwhile, and Chrome refuses the whole call then (runKit): the frames
+    // as they are now, once.
+    if (ready && /No frame with id/i.test(String(e?.message))) {
+      ready = await framesReady(tabId);
+      try { await inject(ready ? { tabId, frameIds: ready } : { tabId, allFrames: true }); } catch { return; }
+    } else if (e?.message === 'recorder timeout') {
+      // Said in the usage log with the tab's next fill (noteFrameTimeout).
+      noteFrameTimeout(tabId, 'recorder injection');
+      try { await inject({ tabId, frameIds: [0] }); } catch { return; }
+    } else {
+      return; /* page not ready or not allowed; tried again on the next tab update */
+    }
+  }
   if (!state.filling) await tellRecorder('resume', tabId);
 }
 
 function tellRecorder(cmd, tabId = state.tab?.id) {
   if (!Number.isInteger(tabId)) return Promise.resolve();
-  return chrome.tabs.sendMessage(tabId, { ra: 'recorder', cmd }).catch(() => {});
+  const p = chrome.tabs.sendMessage(tabId, { ra: 'recorder', cmd }).catch(() => {});
+  if (typeof setTimeout !== 'function') return p;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { noteFrameTimeout(tabId, `recorder ${cmd}`); resolve(undefined); }, 1500);
+    p.finally(() => { clearTimeout(timer); resolve(undefined); });
+  });
 }
 
 // `sendResponse`: field changes this panel took are answered ({ ok: true }); the recorder keeps the

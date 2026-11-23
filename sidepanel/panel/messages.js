@@ -107,6 +107,8 @@ export const REPORT = {
   // Buttons not clicked for something open over them (their words).
   covered: (names) => ({ title: `${names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)} weren\u2019t` : `${names[0]} wasn\u2019t`} clicked`,
     text: `Close what is open over ${names.length > 1 ? 'them' : 'it'}, then fill again.` }),
+  // A frame of the page that hadn't loaded was left out of the fill (fill.js runKit `leftOut`).
+  leftOut: { title: 'Part of this page wasn’t filled', text: 'A part of the page hadn’t loaded, so its questions weren’t read or filled. Check the page, then fill again.' },
   youStopped: { title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' },
   fillStopped: (reason) => ({ title: 'Filling stopped', text: `${reason ?? ''} Check the page, then fill again.`.trim() }),
   // The carrier probably changed this page: `unknown` questions it doesn't know, `renamed` fields moved.
