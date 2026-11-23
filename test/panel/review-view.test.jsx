@@ -428,6 +428,37 @@ test("a pending AI pick the agent answered on the page shows the agent's answer 
   expect(row.textContent).not.toContain('LLC');
 });
 
+test('settling or closing the one need on screen keeps keyboard focus in view: it moves to the Review title (#595 review)', async () => {
+  for (const how of ['settle', 'close']) {
+    const need = mkNeed('USDOT Information');
+    const entry = { key: '1|/BusinessInfo||Business Info', step: 'Business Info', filled: 1, list: [need, mkAnswer('standard', 'Medical payments', '$5,000')], drawn: 0 };
+    state.reportFor = entry;
+    state.reports.set(entry.key, entry);
+    mountScreen(/** @type {HTMLElement} */ (document.getElementById('screen-root')), { scrollBehavior: () => 'auto' });
+    mountFeed(/** @type {HTMLElement} */ (document.getElementById('feed-root')), { setFilter: () => {}, showPast: () => {}, toggleKey: () => {}, clearMarks: () => {} });
+    const rowsHost = document.createElement('div');
+    rowsHost.className = 'rows';
+    document.getElementById('report')?.appendChild(rowsHost);
+    const unmountRows = mountRows(rowsHost, entry, { tabId: 1, page: '/BusinessInfo', carrier: null }, {
+      toggleRow: (rec) => toggleRow(rec), markRow: vi.fn(), showRow: vi.fn(), pickRow: vi.fn(), changeRow: vi.fn(), seeRow: vi.fn(), node: () => {},
+    });
+    mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), { openRow: () => {}, showAll: () => {}, showReview: () => {} });
+    // toggleRow draws the dock again (a preview's, outside the extension): the review's, as on a rater.
+    const ready = { phase: 'ready-continue', tone: 'good', title: 'Ready for Continue' };
+    act(() => { toggleRow(need, true); state.dock = ready; });
+    expect(document.getElementById('report')?.getAttribute('data-focus'), how).toBe('need');
+    /** @type {HTMLElement} */ (document.querySelector('#report .row.need.open .row-head')).focus();
+    await act(async () => {
+      if (how === 'settle') { settleRow(need, 'marked'); state.rowsDrawn += 1; } else toggleRow(need, false);
+      state.dock = ready;
+    });
+    expect(document.getElementById('report')?.hasAttribute('data-focus'), how).toBe(false);
+    expect(document.activeElement?.id, how).toBe('review-title');
+    act(() => unmountRows());
+    cleanup();
+  }
+});
+
 test('grouped Review, focus-need, and All answers keep DOM focus order matching top-to-bottom visual order', () => {
   const isBefore = (a, b) => Boolean(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
   const need = mkNeed('USDOT Information');

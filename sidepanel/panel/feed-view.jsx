@@ -11,7 +11,7 @@
 
 /** @import { PanelState } from '../../types.js' */
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createPortal, flushSync } from 'react-dom';
 import { useStore } from 'zustand';
@@ -112,6 +112,17 @@ function Feed({ act, host }) {
   const grouped = hasReport && !past && !inAll;
   const allOpen = hasReport && !past && inAll;
   const showFocus = focusNeed && !past && !!f.report;
+  // Leaving one-need-per-screen (the need settled, or its card closed) hides the list under the
+  // grouped Review (sidepanel.css): keyboard focus left on its row would fall to the page, so it
+  // goes to the Review's title.
+  const wasFocus = useRef(false);
+  useEffect(() => {
+    const left = wasFocus.current && !showFocus;
+    wasFocus.current = showFocus;
+    if (!left || !grouped || typeof document === 'undefined') return;
+    const active = document.activeElement;
+    if (!active || active === document.body || active.closest('#report > .rows')) document.getElementById('review-title')?.focus();
+  }, [showFocus, grouped]);
 
   const tools = (
     <div className="feed-tools" hidden={!f.unmark}>
