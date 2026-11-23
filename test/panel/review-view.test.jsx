@@ -105,6 +105,19 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
+test('a report kept while another page was in front says how old it is under the Review title, and in All answers (#595 review)', () => {
+  state.reportFor = { key: '1|/Rates||Rates', step: 'Rates', filled: 3, list: [mkAnswer('intake', 'DOT number', '1234567')], drawn: 0 };
+  state.dock = { phase: 'ready-continue', tone: 'good', title: 'Ready for Continue' };
+  state.feed = { ...state.feed, age: 'From the fill at 2:15 PM. Fill again if the page changed.' };
+  mountScreen(/** @type {HTMLElement} */ (document.getElementById('screen-root')), { scrollBehavior: () => 'auto' });
+  mountReview(/** @type {HTMLElement} */ (document.getElementById('review-root')), { showAll: () => setAllAnswers(true), showReview: () => setAllAnswers(false) });
+  expect(document.getElementById('report-age')?.textContent).toBe('From the fill at 2:15 PM. Fill again if the page changed.');
+  act(() => setAllAnswers(true));
+  expect(document.getElementById('report-age')?.textContent).toBe('From the fill at 2:15 PM. Fill again if the page changed.');
+  act(() => { setAllAnswers(false); state.feed = { ...state.feed, age: null }; });
+  expect(document.getElementById('report-age')).toBeNull();
+});
+
 test('Review says nothing needs you only when the dock agrees: buttons left, a changed page or a look before Continue (#595 review)', () => {
   state.reportFor = { key: '1|/Rates||Rates', step: 'Rates', filled: 3, list: [mkAnswer('intake', 'DOT number', '1234567')], drawn: 0 };
   mountScreen(/** @type {HTMLElement} */ (document.getElementById('screen-root')), { scrollBehavior: () => 'auto' });

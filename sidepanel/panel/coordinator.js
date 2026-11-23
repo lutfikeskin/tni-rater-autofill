@@ -1302,6 +1302,8 @@ function renderSteps() {
   const emptyShown = !past && !filling && !(filled && (counts[state.filter] ?? 0) > 0);
   // What the tags and the rater page's marks mean: behind the i in the title.
   const keyHere = !filling && (filled || !!past);
+  // A report kept while another page was in front may be out of date.
+  const age = filled && !past && report.restored && report.at ? at(report) : null;
   // The list around the answers (state.feed, drawn by feed-view.jsx).
   state.feed = {
     shown: onRater && (filling || filled || !!earlier.length),
@@ -1315,7 +1317,7 @@ function renderSteps() {
     empty: !emptyShown ? null : !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.',
     keyOpen: keyHere ? !!state.keyOpen : null,
     unmark: filled && !past,
-    age: null,
+    age: age ? `From the fill at ${age}. Fill again if the page changed.` : null,
   };
   renderDock();
 }

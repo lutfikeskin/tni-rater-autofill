@@ -501,7 +501,7 @@ details.fold.cleanup > summary.list-row { padding: 10px 14px; }
 /* Need you and Filled take the amber/yellow and green their answers carry. */
 .filters button[data-filter="needs"] { color: var(--warning-ink); }
 .filters button[data-filter="done"] { color: var(--success-ink); }
-.report-age { padding: 8px 14px 0; font-size: 13px; color: var(--ink-muted); }
+.pane-sub.report-age { margin-top: 4px; font-size: 13px; color: var(--ink-muted); }
 .report { display: grid; min-height: 1px; }
 
 /* Post-fill grouped Review and All answers header (review-view.jsx, canvas screens 10 and 11). */

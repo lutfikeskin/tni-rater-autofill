@@ -4945,13 +4945,13 @@ test('the page\'s list says what it shows: this page\'s report, an earlier one r
   report.list = [{ type: 'answer' }];
   context.renderSteps();
   assert.deepEqual([state.feed.filter, state.feed.empty, state.feed.keyOpen], ['needs', 'Nothing needs you on this page.', true]);
-  // Kept while another page was in front: no age banner noise. Another page filled earlier: the menu, titled.
+  // Kept while another page was in front: its age. Another page filled earlier: the menu, titled.
   Object.assign(state, { filter: 'all', keyOpen: false });
   report.restored = true;
   reports = [earlier];
   context.renderSteps();
   assert.deepEqual([state.feed.title, JSON.parse(JSON.stringify(state.feed.pages)), state.feed.age],
-    ['Answers', [{ key: '1|AddDriver|d1|', title: 'Add Driver · Driver 2' }], null]);
+    ['Answers', [{ key: '1|AddDriver|d1|', title: 'Add Driver · Driver 2' }], `From the fill at ${at(report.at)}. Fill again if the page changed.`]);
   // That page picked: shown read-only in place of this one, with no filters, Clear the marks or age.
   state.pastKey = earlier.key;
   context.renderSteps();
@@ -7159,6 +7159,8 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   // Nothing left and the page not moved on: the main button continues, replacing nothing (W43-40).
   const nothing = said({});
   assert.deepEqual([nothing.phase, nothing.button, nothing.label, nothing.go, nothing.alt, nothing.altLabel], ['ready-continue', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
+  // Where the panel's own Continue is next, it says once that nothing is bound or submitted.
+  assert.equal(nothing.sub, 'Nothing is bound or submitted.');
 });
 
 // Coordinator on the v5 dock: a word that can tell the agent to "Fill this page again to continue"

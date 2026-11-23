@@ -161,6 +161,8 @@ function Review({ act = {}, host } = {}) {
     (/** @type {PanelState} */ s) => Boolean(s.allAnswers && (!s.allAnswersFor || s.allAnswersFor === s.reportFor)),
   );
   const dock = useStore(panelStore, (/** @type {PanelState} */ s) => s.dock);
+  // A report kept while another page was in front: when it was filled (renderSteps' feed.age).
+  const age = useStore(panelStore, (/** @type {PanelState} */ s) => s.feed?.age ?? null);
   const screen = useStore(panelStore, screenFor);
   // Subscribe to row redraws so settling, marking, or AI updates refresh the groups immediately.
   useStore(panelStore, (/** @type {PanelState} */ s) => `${s.reportFor?.drawn ?? 0}|${s.rowsDrawn ?? 0}|${s.rowsAll ?? 0}`);
@@ -202,6 +204,7 @@ function Review({ act = {}, host } = {}) {
           <div className="pane-head">
             <h2 id="review-title" tabIndex={-1}>{REVIEW.allTitle(all.length)}</h2>
             <p id="review-lead" className="pane-sub">{REVIEW.allLead(needs.length, clear)}</p>
+            {age ? <p id="report-age" className="pane-sub report-age">{age}</p> : null}
           </div>
         ) : null}
       </div>
@@ -219,6 +222,7 @@ function Review({ act = {}, host } = {}) {
           <HelpLink topic="page" />
           <h2 id="review-title" tabIndex={-1}>{REVIEW.title(pageName(entry))}</h2>
           <p id="review-lead" className="pane-sub">{REVIEW.lead(filled, needs.length, clear)}</p>
+          {age ? <p id="report-age" className="pane-sub report-age">{age}</p> : null}
         </div>
       ) : null}
       {needs.length > 0 ? (

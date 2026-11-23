@@ -1,7 +1,7 @@
 // @ts-check
 // The page view's list of answers in React, around the lists themselves: its title, the menu of pages
 // filled earlier on this tab, the filters with their counts, what the tags and the rater page's marks
-// mean, which earlier page is shown, how old a kept report is, what an empty list says, and Clear the
+// mean, which earlier page is shown, what an empty list says, and Clear the
 // marks. Drawn from what renderSteps (coordinator.js) says of it (state.feed); what its controls do
 // is the panel's (`act`, wired in sidepanel.js).
 // The lists are not drawn here: #live-root holds the live list (live-view.jsx), #report the report in
