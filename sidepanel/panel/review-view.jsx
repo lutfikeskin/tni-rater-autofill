@@ -8,7 +8,7 @@
 /** @import { PanelState } from '../../types.js' */
 
 import { createRoot } from 'react-dom/client';
-import { useEffect, useId, useRef } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
@@ -135,6 +135,7 @@ function ReviewRow({ rec, group, ctx, rowActs, onOpen, onToggle }) {
         {sub ? <span className="review-row-sub">{sub}</span> : null}
       </span>
       {shownVal ? <span className="review-row-val">{shownVal}</span> : null}
+      <span className="review-chev" aria-hidden="true">{'\u203a'}</span>
     </button>
   );
 }
@@ -167,6 +168,12 @@ function Review({ act = {}, host } = {}) {
   // Subscribe to row redraws so settling, marking, or AI updates refresh the groups immediately.
   useStore(panelStore, (/** @type {PanelState} */ s) => `${s.reportFor?.drawn ?? 0}|${s.rowsDrawn ?? 0}|${s.rowsAll ?? 0}`);
   const focusNextRef = useRef(/** @type {string | null} */ (null));
+  const [worthOpen, setWorthOpen] = useState(true);
+  const [restOpen, setRestOpen] = useState(/** @type {boolean | null} */ (null));
+  useEffect(() => {
+    setWorthOpen(true);
+    setRestOpen(null);
+  }, [entry]);
   useEffect(() => {
     const id = focusNextRef.current;
     if (!id) return;
@@ -177,6 +184,7 @@ function Review({ act = {}, host } = {}) {
   if (!entry || !Array.isArray(entry.list) || filling || pastOpen) return null;
 
   const { needs, worth, rest, intakeCount, all } = reviewGroups(entry.list);
+  const isRestOpen = restOpen ?? (needs.length === 0 && worth.length === 0);
   const hasStandard = worth.some((r) => !r.changed && (r.kind === 'standard' || reviewRowHead(r).tag?.text === SOURCE.tag.standard.text));
   const rowCtx = entry.ctx ?? { tabId: tab?.id ?? null, page: entry.page ?? '', carrier: tab?.carrier ?? null };
   const ownHead = !dock || screen === 'review' || screen === 'ai';
@@ -227,7 +235,10 @@ function Review({ act = {}, host } = {}) {
       {needs.length > 0 ? (
         <section className="review-group" id="review-needs" aria-labelledby="review-needs-head">
           <div className="primary-card-head">
-            <h3 id="review-needs-head" className="review-group-head">{REVIEW.needsGroup}</h3>
+            <span className="group-head-left">
+              <span className="group-dot amber" aria-hidden="true" />
+              <h3 id="review-needs-head" className="review-group-head">{REVIEW.needsGroup}</h3>
+            </span>
             <span className="card-count">{needs.length}</span>
           </div>
           <div className="review-rows">
@@ -240,10 +251,21 @@ function Review({ act = {}, host } = {}) {
       {worth.length > 0 ? (
         <section className="review-group reference-card" id="review-worth" aria-labelledby="review-worth-head">
           <div className="reference-head">
-            <h3 id="review-worth-head" className="review-group-head">{REVIEW.worthGroup}</h3>
-            {hasStandard ? <span className="reference-badge">{SOURCE.tag.standard.text}</span> : null}
+            <button
+              type="button"
+              className="group-toggle"
+              aria-expanded={worthOpen}
+              aria-controls="review-worth-rows"
+              onClick={() => setWorthOpen((v) => !v)}
+            >
+              <span className="group-chev" aria-hidden="true">{worthOpen ? '\u25be' : '\u25b8'}</span>
+              <span className="group-dot blue" aria-hidden="true" />
+              <h3 id="review-worth-head" className="review-group-head">{REVIEW.worthGroup}</h3>
+              {hasStandard ? <span className="reference-badge">{`\u00b7 ${SOURCE.tag.standard.text}`}</span> : null}
+              <span className="reference-count">{worth.length}</span>
+            </button>
           </div>
-          <div className="review-rows">
+          <div id="review-worth-rows" className="review-rows" hidden={!worthOpen}>
             {worth.map((rec, i) => (
               <ReviewRow
                 key={rec.id ?? i}
@@ -261,10 +283,20 @@ function Review({ act = {}, host } = {}) {
       {rest.length > 0 ? (
         <section className="review-group reference-card" id="review-answers" aria-labelledby="review-answers-head">
           <div className="reference-head">
-            <h3 id="review-answers-head" className="review-group-head">{worth.length > 0 ? REVIEW.restGroup : REVIEW.answersGroup}</h3>
-            <span className="reference-count">{rest.length}</span>
+            <button
+              type="button"
+              className="group-toggle"
+              aria-expanded={isRestOpen}
+              aria-controls="review-answers-rows"
+              onClick={() => setRestOpen(!isRestOpen)}
+            >
+              <span className="group-chev" aria-hidden="true">{isRestOpen ? '\u25be' : '\u25b8'}</span>
+              <span className="group-dot green" aria-hidden="true" />
+              <h3 id="review-answers-head" className="review-group-head">{worth.length > 0 ? REVIEW.restGroup : REVIEW.answersGroup}</h3>
+              <span className="reference-count">{rest.length}</span>
+            </button>
           </div>
-          <div className="review-rows">
+          <div id="review-answers-rows" className="review-rows" hidden={!isRestOpen}>
             {rest.map((rec, i) => (
               <ReviewRow
                 key={rec.id ?? i}

@@ -23,11 +23,11 @@ const ratio = (a, b) => {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
-const GROUNDS = ['surface', 'canvas', 'surface-sunken', 'surface-hover', 'surface-selected', 'surface-open', 'ai-soft', 'ai-badge', 'brand-soft', 'brand-faint'];
+const GROUNDS = ['surface', 'canvas', 'surface-sunken', 'surface-hover', 'surface-selected', 'surface-open', 'ai-soft', 'ai-badge', 'brand-soft', 'brand-faint', 'amber-soft', 'warning-faint'];
 
 test('muted text is 4.5:1 on every surface it sits on (WCAG 1.4.3)', () => {
-  // Every light surface token the panel has, the AI's tints too (#ai-note.off sits on --ai-soft;
-  // CodeRabbit on #459).
+  // Every light surface token the panel has, the AI's tints and the blended tab canvases too
+  // (#ai-note.off sits on --ai-soft; CodeRabbit on #459).
   for (const ground of GROUNDS) {
     assert.ok(ratio(token('ink-muted'), token(ground)) >= 4.5, `--ink-muted on --${ground}: ${ratio(token('ink-muted'), token(ground)).toFixed(2)}`);
   }
@@ -39,10 +39,24 @@ test('amber to-check text (--amber) is 4.5:1 on every surface it sits on (WCAG 1
   }
 });
 
+test('blended folder-tab view canvases (--brand-soft, --amber-soft) meet 4.5:1 contrast and have no divider seam', () => {
+  for (const ground of ['brand-soft', 'amber-soft']) {
+    for (const ink of ['ink', 'ink-secondary', 'ink-muted', 'brand', 'amber', 'warning-ink', 'success-ink', 'signal-dark']) {
+      assert.ok(ratio(token(ink), token(ground)) >= 4.5, `--${ink} on --${ground}: ${ratio(token(ink), token(ground)).toFixed(2)}`);
+    }
+  }
+  assert.match(CSS, /\.view:has\(#check-view:not\(\[hidden\]\)\):not\(:has\(#settings:not\(\[hidden\]\)\)\) \{ background: var\(--amber-soft\); \}/);
+  assert.match(CSS, /\.view:has\(#page-view:not\(\[hidden\]\)\):not\(:has\(#settings:not\(\[hidden\]\)\)\) \{ background: var\(--brand-soft\); \}/);
+  assert.doesNotMatch(CSS, /\.view:has\(#(?:check|page)-view[^}]*(?:border-top|box-shadow)/);
+  assert.match(CSS, /\.steps \{[^}]*border-bottom: 1\.5px solid var\(--border-card\);/);
+  assert.match(CSS, /body:not\(:has\(#settings:not\(\[hidden\]\)\)\) \.steps:has\(#step-check\[aria-selected="true"\]\) \{ border-bottom-color: var\(--warning-bar\); \}/);
+  assert.match(CSS, /body:not\(:has\(#settings:not\(\[hidden\]\)\)\) \.steps:has\(#step-fill\[aria-selected="true"\]\) \{ border-bottom-color: var\(--brand\); \}/);
+});
+
 test('an input’s edge and the switch’s off track are 3:1 on white and on what they sit on (WCAG 1.4.11)', () => {
-  // Against the white box inside it and whatever it sits on: the canvas, the sunken surface, a hovered row
-  // (CodeRabbit on #459: a picker's select on the canvas).
-  for (const ground of ['surface', 'canvas', 'surface-sunken', 'surface-hover']) {
+  // Against the white box inside it and whatever it sits on: the canvas, the blended tab canvases,
+  // the sunken surface, a hovered row (CodeRabbit on #459: a picker's select on the canvas).
+  for (const ground of ['surface', 'canvas', 'brand-soft', 'amber-soft', 'surface-sunken', 'surface-hover']) {
     assert.ok(ratio(token('border-control'), token(ground)) >= 3, `--border-control on --${ground}: ${ratio(token('border-control'), token(ground)).toFixed(2)}`);
   }
   // Every input, select and textarea with a grey edge takes the control border, and so does the

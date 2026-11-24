@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="completed" expanded="" type="menu" variation="accordion">
+      <span slot="title">Policyholder</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Policyholder Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Current Insurance</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Vehicles</span>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Vehicle Information</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Drivers</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Information</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div id="Id_GeicoAdaptiveGrid_43562" class="ssp-grid">
+        <div class="count-label">2 vehicles</div>
+        <div class="data-table">
+          <table class="table">
+            <thead>
+              <tr>
+                <td><p><strong>Auto Information</strong></p></td>
+                <td>
+                  <div class="grid-header">
+                    <div><gds-label-legend><span>2020 Example Sedan</span></gds-label-legend></div>
+                    <div class="grid-actions"><span class="icon-trash geico-icon" data-testid="deleteIcon"></span></div>
+                  </div>
+                </td>
+                <td>
+                  <div class="grid-header">
+                    <div><gds-label-legend><span>(Year, Make, Model)</span></gds-label-legend></div>
+                    <div class="grid-actions"><span class="icon-trash geico-icon" data-testid="deleteIcon"></span></div>
+                  </div>
+                </td>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Do you have your VIN?</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_YesNoPreQuoteHaveFullVinActivity_16545Div" class="select-box"><select id="Id_YesNoPreQuoteHaveFullVinActivity_16545" aria-label="Do you have your automobile VIN?"><option value="">Please Select</option><option value="No">No</option><option value="Yes">Yes</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_YesNoPreQuoteHaveFullVinActivity_26545Div" class="select-box"><select id="Id_YesNoPreQuoteHaveFullVinActivity_26545" aria-label="Do you have your automobile VIN?"><option value="">Please Select</option><option value="No">No</option><option value="Yes">Yes</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>VIN</span><gds-tooltip><p>17-character VIN.</p></gds-tooltip></gds-label-legend></div></td>
+                <td><gds-input-wrapper data-testid="vin-input-wrapper" mask-type="vin"><input id="Id_GiveVinPreQuote_32739" name="Id_GiveVinPreQuote_32739maskedField" type="text" slot="input" aria-label="vin"></gds-input-wrapper></td>
+                <td><gds-input-wrapper data-testid="vin-input-wrapper" mask-type="vin"><input id="Id_GiveVinPreQuote_42739" name="Id_GiveVinPreQuote_42739maskedField" type="text" slot="input" aria-label="vin"></gds-input-wrapper></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Year</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveYear_40029Div" class="select-box disabled"><select id="Id_GiveYear_40029" disabled="" aria-label="Year"><option value="">Please Select</option><option value="2020">2020</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveYear_50029Div" class="select-box disabled"><select id="Id_GiveYear_50029" disabled="" aria-label="Year"><option value="">Please Select</option><option value="2022">2022</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Vehicle Ownership</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveVehicleOwnerShip_24527Div" class="select-box"><select id="Id_GiveVehicleOwnerShip_24527" aria-label="Vehicle Ownership"><option value="">Please Select</option><option value="Owned">Owned</option><option value="Financed">Financed</option><option value="Leased">Leased</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveVehicleOwnerShip_34527Div" class="select-box"><select id="Id_GiveVehicleOwnerShip_34527" aria-label="Vehicle Ownership"><option value="">Please Select</option><option value="Owned">Owned</option><option value="Financed">Financed</option><option value="Leased">Leased</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Length of Ownership</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveLengthOfOwnership_45468Div" class="select-box"><select id="Id_GiveLengthOfOwnership_45468" aria-label="When did you or the registered owner purchase the Private Passenger?"><option value="">Please Select</option><option value="1 to 3 years">1 to 3 years</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveLengthOfOwnership_55468Div" class="select-box disabled"><select id="Id_GiveLengthOfOwnership_55468" disabled="" aria-label="When did you or the registered owner purchase the Private Passenger?"><option value="">Please Select</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Estimated Annual Mileage</span><gds-tooltip><p>Mileage help.</p></gds-tooltip></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveAnnualMileage_95079Div" class="select-box"><select id="Id_GiveAnnualMileage_95079" aria-label="We estimate your annual mileage based on your other responses."><option value="">Please Select</option><option value="10,000 - 10,999">10,000 - 10,999</option><option value="12,000 - 12,999">12,000 - 12,999</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveAnnualMileage_85079Div" class="select-box"><select id="Id_GiveAnnualMileage_85079" aria-label="We estimate your annual mileage based on your other responses."><option value="">Please Select</option><option value="10,000 - 10,999">10,000 - 10,999</option><option value="12,000 - 12,999">12,000 - 12,999</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Primary Use</span><gds-tooltip><p>Use help.</p></gds-tooltip></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveVehiclePrimaryUse_42834Div" class="select-box"><select id="Id_GiveVehiclePrimaryUse_42834" aria-label="Primary Use"><option value="">Please Select</option><option value="Commute">Commute</option><option value="Pleasure">Pleasure</option><option value="Business">Business</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveVehiclePrimaryUse_52834Div" class="select-box"><select id="Id_GiveVehiclePrimaryUse_52834" aria-label="Primary Use"><option value="">Please Select</option><option value="Commute">Commute</option><option value="Pleasure">Pleasure</option><option value="Business">Business</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Days Per Week</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveDaysPerWeekCommute_32910Div" class="select-box"><select id="Id_GiveDaysPerWeekCommute_32910" aria-label="Days per Week"><option value="">Please Select</option><option value="5">5</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveDaysPerWeekCommute_42910Div" class="select-box disabled"><select id="Id_GiveDaysPerWeekCommute_42910" disabled="" aria-label="Days per Week"><option value="">Please Select</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>One-way Commute Mileage</span></gds-label-legend></div></td>
+                <td><div class="form-field"><input id="Id_GiveMilesOneWay_78174" name="Id_GiveMilesOneWay_78174" type="tel" inputmode="numeric" maxlength="3" aria-labelledby="Id_GiveMilesOneWay_78174-label"></div></td>
+                <td><div class="form-field"><input id="Id_GiveMilesOneWay_88174" name="Id_GiveMilesOneWay_88174" type="tel" inputmode="numeric" maxlength="3" aria-labelledby="Id_GiveMilesOneWay_88174-label" disabled=""></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Type Of Business Use</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveTypeOfBusinessUse_56648Div" class="select-box disabled"><select id="Id_GiveTypeOfBusinessUse_56648" disabled="" aria-label="What type of business do you use your vehicle for?"><option value="">Please Select</option><option value="Sales Calls">Sales Calls</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveTypeOfBusinessUse_66648Div" class="select-box disabled"><select id="Id_GiveTypeOfBusinessUse_66648" disabled="" aria-label="What type of business do you use your vehicle for?"><option value="">Please Select</option><option value="Sales Calls">Sales Calls</option></select></div></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <gds-sticky-bar class="sales-docked-message">
+        <div class="right-content">
+          <div class="right">
+            <gds-button class="mobile-button" type="button">
+              <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+              Add Vehicle
+            </gds-button>
+            <gds-button class="mobile-button" type="button">
+              <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+              Next
+            </gds-button>
+          </div>
+        </div>
+      </gds-sticky-bar>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

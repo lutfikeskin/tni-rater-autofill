@@ -80,6 +80,7 @@ export const CONTINUE = {
     check: 'Then check the answers and click Looks right.',
     offSteps: 'Then moving on is yours: nothing on this step is clicked for you.',
     offList: 'Then click Continue yourself: this page isn\u2019t one the extension continues on.',
+    editedOnPage: 'You edited an answer on the page \u2014 click Continue yourself when ready.',
     continueHere: 'Then click Continue on this page yourself. Nothing is submitted or bound.',
     manual: 'Then click Continue yourself, and Fill this page on the next one.',
     followUps: 'Then the panel continues to the next page.',
@@ -95,6 +96,7 @@ export const CONTINUE = {
   offSteps: { eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing here is clicked for you.' },
   offList: { eyebrow: 'All answered', title: 'Click Continue yourself', sub: 'This page isn\u2019t one the extension continues on.' },
   ready: { eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Nothing is bound or submitted.', label: 'Continue',
+    editedOnPage: 'You edited an answer on the page \u2014 click Continue yourself when ready.',
     continueHere: 'Click Continue on this page yourself.', manual: 'Click Continue, then fill the next page.' },
 };
 

@@ -18,160 +18,48 @@
 // - Premium is read on Coverages and Portfolio.
 
 import { sameCarrier } from '../util.js';
-import { STATES } from '../states.js';
+import {
+  EXTRA_RESIDENTS,
+  RIDESHARE_OR_DELIVERY,
+  SR22_NOTES,
+  commuteDaysValue,
+  commuteMilesValue,
+  dashedPhone,
+  driverAt,
+  driverFirstMiddle,
+  driverLooksExcluded,
+  insuredDriver,
+  notesOf,
+  oneLineAddress,
+  orderedDrivers,
+  parseAnnualMiles,
+  parseNonEmployedCategory,
+  parseVehicleUse,
+  recentlyMoved,
+  resolveVehicleDeductible,
+  stateFullName,
+  todayMmDdYyyy,
+  vehicleAt,
+} from '../products/personal-auto/answers.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ClientRecord } from '../../types.js' */
 
 const MAX_VEHICLES = 4;
 const MAX_DRIVERS = 5;
 
-const RIDESHARE_OR_DELIVERY = /\b(uber|lyft|rideshare|ride[\s-]*share|tnc|doordash|door\s*dash|instacart|grubhub|ubereats|uber\s*eats|postmates|shipt|spark\s*driver|amazon\s*flex|delivery)\b/i;
-const SR22_NOTES = /\b(sr[\s-]*22|fr[\s-]*44|state\s+filing)\b/i;
-const EXCLUDED_WORD = /\bexclud(?:e|ed|ing)\b/i;
-const EXTRA_RESIDENTS = /\b(roommate|additional\s+resident|other\s+resident|lives?\s+in\s+(?:the\s+)?home|unlisted\s+(?:adult|child|kid|resident))\b/i;
-
-const notesOf = (/** @type {ClientRecord} */ r) => String(r?.notes?.text ?? '').trim();
-const stateFullName = (/** @type {string | null | undefined} */ code) => {
-  const c = String(code ?? '').trim().toUpperCase();
-  if (!c) return null;
-  if (c === 'DC') return 'Dist of Columbia';
-  return STATES[c] ?? code ?? null;
+const PROGRESSIVE_VEHICLE_USE = {
+  pleasure: 'Pleasure/Personal',
+  commute: 'Commute',
+  business: 'Business',
 };
 
-/** @param {Date} [d] */
-const todayMmDdYyyy = (d = new Date()) => `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}/${d.getFullYear()}`;
-
-/** The driver marked Insured, else the first listed driver. @param {ClientRecord} r */
-const insuredDriver = (r) => {
-  const list = r?.drivers ?? [];
-  return list.find((d) => /^insured$/i.test(d?.relation ?? '')) ?? list[0] ?? null;
+const PROGRESSIVE_NON_EMPLOYED = {
+  student: 'Full time student (not employed or part-time employed)',
+  retired: 'Retired (not employed)',
+  homemaker: 'Household Manager/Stay-at-home duties (full-time)',
+  disabled: 'Disabled (not employed)',
+  unemployed: 'Not currently employed',
 };
-
-/**
- * Drivers ordered so index 0 matches Progressive's Driver 0 (the Named Insured), followed by the
- * remaining household members in intake order.
- * @param {ClientRecord} r
- */
-const orderedDrivers = (r) => {
-  const list = r?.drivers ?? [];
-  const primary = insuredDriver(r);
-  if (!primary) return [];
-  return [primary, ...list.filter((d) => d !== primary)];
-};
-
-/** @param {ClientRecord} r @param {number} i */
-const driverAt = (r, i) => orderedDrivers(r)[i] ?? null;
-/** @param {ClientRecord} r @param {number} i */
-const vehicleAt = (r, i) => r?.vehicles?.[i] ?? null;
-
-/**
- * General personal-auto rule: when a driver or named insured has a second name in `first` and no
- * separate `middle`, keep the first word as First Name and use the second word's first letter as
- * Middle Initial (so both newly read intakes and panel-edited/cached records follow the same rule).
- * @param {any} d
- */
-function driverFirstMiddle(d) {
-  if (!d) return { first: null, middle: null };
-  const rawFirst = String(d.first ?? '').trim();
-  const rawMiddle = String(d.middle ?? '').trim();
-  if (!rawFirst) return { first: null, middle: rawMiddle ? rawMiddle[0].toUpperCase() : null };
-  if (!rawMiddle) {
-    const words = rawFirst.split(/\s+/);
-    if (words.length >= 2 && (words[0].match(/\p{L}/gu) ?? []).length >= 2) {
-      const letter = words[1].match(/\p{L}/u)?.[0] ?? null;
-      if (letter) return { first: words[0], middle: letter.toUpperCase() };
-    }
-  }
-  return { first: rawFirst, middle: rawMiddle ? rawMiddle[0].toUpperCase() : null };
-}
-
-/**
- * Format a 10-digit US phone as XXX-XXX-XXXX for Progressive PA's <phone-input> mask
- * (placeholder="XXX-XXX-XXXX"; "(XXX) XXX-XXXX" is rejected and cleared by CurrentWorkflowState).
- * @param {string | null | undefined} raw
- */
-function dashedPhone(raw) {
-  const s = String(raw ?? '').trim();
-  if (!s) return null;
-  let d = s.replace(/\D/g, '');
-  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
-  return d.length === 10 ? `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}` : s;
-}
-
-/** One-line garaging address for Progressive PA's Smarty <mat-autocomplete> input. @param {ClientRecord} r */
-function oneLineAddress(r) {
-  const g = r?.garaging ?? {};
-  if (!g.street) return null;
-  return [g.street, g.city, [g.state, g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-}
-
-/**
- * Sum explicit duration components ("1 year 6 months", "0 years 6 months", "6 weeks", "45 days")
- * into months, or null if none matched.
- * @param {string} s
- * @returns {number | null}
- */
-function exactDurationMonths(s) {
-  const yr = s.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?|y\b)/);
-  const mo = s.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:months?|mos?|m\b)/);
-  const wk = s.match(/(\d+(?:\.\d+)?)\s*(?:weeks?|wks?)/);
-  const dy = s.match(/(\d+(?:\.\d+)?)\s*days?/);
-  if (!yr && !mo && !wk && !dy) return null;
-  return (yr ? Number(yr[1]) * 12 : 0)
-    + (mo ? Number(mo[1]) : 0)
-    + (wk ? Number(wk[1]) / 4.3 : 0)
-    + (dy ? Number(dy[1]) / 30 : 0);
-}
-
-/**
- * Parse intake "time at address" into months when unambiguous for the 2-month move check,
- * or null if blank, unreadable, or an ambiguous bound (e.g. "less than 1 year", "under 6 months").
- * @param {string | null | undefined} text
- * @returns {number | null}
- */
-function addressMonths(text) {
-  const s = String(text ?? '').trim().toLowerCase().replace(/\btwo\b/g, '2').replace(/\bone\b/g, '1');
-  if (!s) return null;
-  if (/\bjust\s+moved\b/.test(s)) return 1;
-  // Upper-bound phrases ("less than ...", "under ...", "< ...", "<= ...", "up to ...", "at most ..."):
-  // only unambiguous when the bound guarantees < 2 months; wider bounds ("less than 1 year") stay null.
-  const upper = s.match(/^(less\s+than|under|up\s+to|at\s+most|<=|<)\s*(.+)$/);
-  if (upper) {
-    const strict = upper[1] === 'less than' || upper[1] === 'under' || upper[1] === '<';
-    const d = exactDurationMonths(upper[2]);
-    if (d == null) return null;
-    return (strict ? d <= 2 : d < 2) ? 1 : null;
-  }
-  // Lower-bound phrases ("more than ...", "over ...", "at least ...", "> ...", ">= ..."):
-  // only unambiguous when the bound guarantees >= 2 months ("over 1 month" stays null).
-  const lower = s.match(/^(more\s+than|over|at\s+least|>=|>)\s*(.+)$/);
-  if (lower) {
-    const d = exactDurationMonths(lower[2]);
-    if (d == null || d < 2) return null;
-    return Math.max(d, 3);
-  }
-  const exact = exactDurationMonths(s);
-  if (exact != null) return exact;
-  const since = s.match(/\bsince\s+((?:19|20)\d{2})\b/);
-  if (since) {
-    const yrs = new Date().getFullYear() - Number(since[1]);
-    return yrs > 0 ? yrs * 12 : null;
-  }
-  // A bare number >= 2 (e.g. "2+", "5") is >= 2 months whether the writer meant months or years.
-  const bare = s.match(/^(\d+(?:\.\d+)?)\s*\+?$/);
-  if (bare && Number(bare[1]) >= 2) return Number(bare[1]);
-  return null;
-}
-
-/** @param {ClientRecord} r */
-function recentlyMoved(r) {
-  if (r?.residence?.priorAddress) return { value: 'Yes', source: /** @type {const} */ ('derived'), note: null };
-  const raw = r?.residence?.timeAtAddress;
-  if (!raw) return { value: 'No', source: /** @type {const} */ ('standard'), note: null };
-  const months = addressMonths(raw);
-  if (months == null) return { value: null, source: /** @type {const} */ ('fact'), note: `Time at address "${raw}" isn't clear: confirm whether the insured moved in the last 2 months.` };
-  return { value: months < 2 ? 'Yes' : 'No', source: /** @type {const} */ ('derived'), note: null };
-}
 
 /** Map intake vehicle ownership duration to Progressive PA's 6 options (D7). @param {string | null | undefined} ownedFor */
 function ownershipBucket(ownedFor) {
@@ -186,20 +74,15 @@ function ownershipBucket(ownedFor) {
 
 /** Map intake vehicle use to Progressive PA's options. @param {string | null | undefined} use */
 function vehicleUseValue(use) {
-  const s = String(use ?? '').trim();
-  if (!s) return null;
-  if (/^pleasure/i.test(s)) return 'Pleasure/Personal';
-  if (/^commute/i.test(s)) return 'Commute';
-  if (/^business$/i.test(s)) return 'Business';
-  return null;
+  const kind = parseVehicleUse(use);
+  return kind ? PROGRESSIVE_VEHICLE_USE[kind] : null;
 }
 
 /** Map intake annual miles to Progressive PA's 14 mileage bands. @param {number | string | null | undefined} miles */
 function annualMileageBand(miles) {
-  if (miles == null || miles === '') return null;
-  if (typeof miles === 'string' && /50,?000\+/.test(miles)) return '30,000 - 99,999';
-  const n = typeof miles === 'number' ? miles : Number(String(miles).replace(/,/g, ''));
-  if (!Number.isFinite(n) || n < 0) return null;
+  const { miles: n, over50k } = parseAnnualMiles(miles);
+  if (over50k) return '30,000 - 99,999';
+  if (n == null) return null;
   if (n <= 3999) return '0 - 3,999';
   if (n <= 5999) return '4,000 - 5,999';
   if (n <= 7999) return '6,000 - 7,999';
@@ -228,31 +111,8 @@ function yearsLicensedBand(yr) {
 
 /** Map clear non-employed occupations (D15); specific occupations stay with the agent. @param {string | null | undefined} occ */
 function nonEmployedStatus(occ) {
-  const s = String(occ ?? '').trim();
-  if (!s) return null;
-  if (/\b(student|college|high\s*school|university)\b/i.test(s)) return 'Full time student (not employed or part-time employed)';
-  if (/\bretired\b/i.test(s)) return 'Retired (not employed)';
-  if (/\b(homemaker|housewife|stay[\s-]*at[\s-]*home|household\s*manager)\b/i.test(s)) return 'Household Manager/Stay-at-home duties (full-time)';
-  if (/\bdisabled\b/i.test(s)) return 'Disabled (not employed)';
-  if (/\b(unemployed|not\s+employed|not\s+currently\s+employed)\b/i.test(s)) return 'Not currently employed';
-  return null;
-}
-
-/** @param {ClientRecord} r @param {number} i */
-function driverLooksExcluded(r, i) {
-  const d = driverAt(r, i);
-  if (!d) return false;
-  if (EXCLUDED_WORD.test(String(d.licenseNumber ?? ''))) return true;
-  const notes = notesOf(r);
-  if (!notes || !EXCLUDED_WORD.test(notes)) return false;
-  const namedInNotes = (drv) => {
-    const first = driverFirstMiddle(drv).first;
-    return !!first && new RegExp(`\\b${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(notes);
-  };
-  // Scope to named driver(s) when the notes name any listed driver; fall back to holding every
-  // driver for the agent only when the exclusion note names no driver.
-  const anyNamed = orderedDrivers(r).some(namedInNotes);
-  return anyNamed ? namedInNotes(d) : true;
+  const cat = parseNonEmployedCategory(occ);
+  return cat ? PROGRESSIVE_NON_EMPLOYED[cat] : null;
 }
 
 /** Map intake prior BI limit to Progressive PA's 4 tiers. @param {string | null | undefined} limit */
@@ -285,28 +145,13 @@ function priorTenureBand(raw) {
   return null;
 }
 
-/** @param {string | null | undefined} ded */
-const normalizeDeductible = (ded) => {
-  const s = String(ded ?? '').trim();
-  if (!s) return null;
-  if (/^no coverage$/i.test(s)) return 'None';
-  return s;
-};
-
 /** @param {ClientRecord} r @param {number} i @param {'compDeductible' | 'collDeductible'} field */
 function vehicleDeductible(r, i, field) {
-  const v = vehicleAt(r, i);
-  if (!v) return { value: null, source: /** @type {const} */ ('derived'), note: null, ignore: true };
-  const ded = normalizeDeductible(r?.coverage?.[field]);
-  if (v.fullCoverage === false) return { value: 'None', source: /** @type {const} */ ('derived'), note: null, ignore: false };
-  if (v.fullCoverage === true) {
-    if (ded && ded !== 'None') return { value: ded, source: /** @type {const} */ ('derived'), note: null, ignore: false };
-    return { value: null, source: /** @type {const} */ ('fact'), note: `Vehicle ${i + 1} asks for Full Coverage, but ${field === 'compDeductible' ? 'Comprehensive' : 'Collision'} deductible is blank or No Coverage.`, ignore: false };
-  }
-  // Full coverage not specified on this vehicle (e.g. old intake form): only fill None when the
-  // quote explicitly says No Coverage; otherwise leave for the agent to confirm per vehicle.
-  if (ded === 'None') return { value: 'None', source: /** @type {const} */ ('derived'), note: null, ignore: false };
-  return { value: null, source: /** @type {const} */ ('fact'), note: `Vehicle ${i + 1}: intake doesn't specify Full Coverage vs Liability Only — confirm deductible.`, ignore: false };
+  const d = resolveVehicleDeductible(r, i, field);
+  if (d.kind === 'ignore') return { value: null, source: d.source, note: null, ignore: true };
+  if (d.kind === 'none') return { value: 'None', source: d.source, note: null, ignore: false };
+  if (d.kind === 'amount') return { value: d.raw, source: d.source, note: null, ignore: false };
+  return { value: null, source: d.source, note: d.note, ignore: false };
 }
 
 const NI = 'NamedInsured_Embedded_Questions_List_';
@@ -413,34 +258,16 @@ function productVehicleRules(i) {
     {
       concept: 'vehicle.use', steps: ['Products'], selector: `${p}CommuteDaysPerWk`, name: `Vehicle ${i + 1}: days commuting per week`, kind: 'choice',
       path: `vehicles[${i}].commuteDays`, ignore: missing,
-      source: (r) => {
-        const d = vehicleAt(r, i)?.commuteDays;
-        return d != null && Number.isFinite(d) && d >= 1 && d <= 7 ? 'derived' : 'fact';
-      },
-      value: (r) => {
-        const d = vehicleAt(r, i)?.commuteDays;
-        return d != null && Number.isFinite(d) && d >= 1 && d <= 7 ? String(Math.round(d)) : null;
-      },
-      note: (r) => {
-        const d = vehicleAt(r, i)?.commuteDays;
-        return d != null && Number.isFinite(d) && d >= 1 && d <= 7 ? null : `Vehicle ${i + 1}: days commuting per week is blank on the intake.`;
-      },
+      source: (r) => (commuteDaysValue(vehicleAt(r, i)) ? 'derived' : 'fact'),
+      value: (r) => commuteDaysValue(vehicleAt(r, i)),
+      note: (r) => (commuteDaysValue(vehicleAt(r, i)) ? null : `Vehicle ${i + 1}: days commuting per week is blank on the intake.`),
     },
     {
       concept: 'vehicle.use', steps: ['Products'], selector: `${p}OneWayCommuteMiles`, name: `Vehicle ${i + 1}: miles driven one-way`,
       path: `vehicles[${i}].commuteMiles`, ignore: missing,
-      source: (r) => {
-        const m = vehicleAt(r, i)?.commuteMiles;
-        return m != null && Number.isFinite(m) && m > 0 ? 'derived' : 'fact';
-      },
-      value: (r) => {
-        const m = vehicleAt(r, i)?.commuteMiles;
-        return m != null && Number.isFinite(m) && m > 0 ? String(Math.round(m)) : null;
-      },
-      note: (r) => {
-        const m = vehicleAt(r, i)?.commuteMiles;
-        return m != null && Number.isFinite(m) && m > 0 ? null : `Vehicle ${i + 1}: one-way commute miles is blank on the intake.`;
-      },
+      source: (r) => (commuteMilesValue(vehicleAt(r, i)) ? 'derived' : 'fact'),
+      value: (r) => commuteMilesValue(vehicleAt(r, i)),
+      note: (r) => (commuteMilesValue(vehicleAt(r, i)) ? null : `Vehicle ${i + 1}: one-way commute miles is blank on the intake.`),
     },
     {
       concept: 'vehicle.rideshare', steps: ['Products'], selector: `${p}VehicleTransportNetworkCompanyIndicator`, name: `Vehicle ${i + 1}: rideshare / TNC`, kind: 'choice',

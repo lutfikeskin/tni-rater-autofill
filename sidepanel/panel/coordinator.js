@@ -22,7 +22,7 @@ import { pageOf, tellRecorder } from './usage.js';
 import { afterFill, appendRows, assistAfterFill, fillPage, noteMissingUnit, pickListItem, renderReport, resumeHeldFill, runKit, worldFor } from './fill.js';
 import { pendingAi } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
-import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
+import { editScope, fillSkip, fillSkipBy, formScoped, hasAgentPageEdit, pageEditScope, stepScope, tabStep, unitNameFor, unitScope } from './scope.js';
 import { fillCurrent, fillErrorMessage, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded } from './fill-checks.js';
 import { DOCK_PHASES, QUIET_MS, fillShown, phaseSaid } from './live.js';
 import { answerSources, currentReportKey, earlierReports, finishLeftOk, finishingAction, groupRows, itemsLeft, quoteFinished, reportKey, reportTitle, stopNoteFor } from './report-model.js';
@@ -139,6 +139,10 @@ const fillOptionsFor = (carrier, extra, autoAdvance, active, unitsListed, fill, 
   // A developer recording runs on this tab: the kit says what it waits for and does (its `trace`,
   // docs/developer-recording.md). A fill is only ever on the tab in front.
   ...(state.recording && !state.recording.stopping && state.recording.tabId === fill.tabId ? { trace: true } : {}),
+  // In MAIN world, clicking a target="_blank" download/proposal link after an async fill has no
+  // user gesture and Chrome's popup blocker swallows it. Ask the kit to hand back the same-origin
+  // URL so the panel opens it via chrome.tabs.create.
+  ...(carrier.world === 'MAIN' && !!globalThis.chrome?.tabs?.create ? { openDownloadInPanel: true } : {}),
   ...extra,
 });
 
@@ -487,6 +491,7 @@ async function autoFill(page) {
     const unseen = !state.reports.has(reportKey(tabId, page, carrier, ctx.active, stepBefore));
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
+    const editedOnPage = hasAgentPageEdit(tabMaps(tabId), ctx.page, carrier, tabStep(carrier, tabId), { active: ctx.active });
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
     if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
     // Continue's switch as now, nothing awaited before the kit gets it; the add clicks follow it.
@@ -495,7 +500,7 @@ async function autoFill(page) {
     const plan = planFor(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     // The panel moved to another tab during that wait: nothing is filled (and the options are this tab's).
     if (!fillCurrent(ctx)) return;
-    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
+    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance && !editedOnPage, ctx.active, ctx.unitsListed, ctx);
     // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
     // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
     // automatic fill showed nothing until it ended).
@@ -887,7 +892,7 @@ function tabMaps(tabId) {
   let saved = state.tabSessions.get(tabId);
   if (!saved) {
     saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
-      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), advanceRetried: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
+      agentKeys: new Map(), agentPageEdits: new Set(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), advanceRetried: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
     state.tabSessions.set(tabId, saved);
   }
   return saved;
@@ -937,6 +942,24 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
   maps.agentKeys.set(editedIn, keys);
   persistAgentKeys(tabId, maps.agentKeys);
+  // Any trusted rater-page edit caught during the fill (protectedKeys) suppresses automatic
+  // Continue on this step/page only, so the agent continues manually.
+  const editedFrames = frames.filter((f) => f.protectedKeys?.length);
+  if (editedFrames.length) {
+    maps.agentPageEdits ??= new Set();
+    const fallbackStep = tabStep(carrier, tabId);
+    if (!carrier?.layoutSteps && scope) maps.agentPageEdits.add(scope);
+    for (const f of editedFrames) {
+      const frameStep = carrier?.layoutSteps ? knownStep(carrier, f.stepKey) : undefined;
+      const editAt = pageEditScope(page, carrier, frameStep ?? fallbackStep, { active, shown: maps.unitShown });
+      if (editAt) maps.agentPageEdits.add(editAt);
+      if (scoped && unitOk(f.unitForm)) {
+        maps.agentPageEdits.add(`${page}|f:${f.unitForm.id}`);
+        maps.agentPageEdits.add(unitScope(page, f.unitForm.list, active?.[f.unitForm.list] ?? 0));
+      }
+      if (scoped && unitOk(f.unitHeld)) maps.agentPageEdits.add(`${page}|f:${f.unitHeld.id}`);
+    }
+  }
   // A step the kit couldn't read (pagekit stepUnread: GEICO's progress bar and title disagree for a
   // moment right after Next) pauses nothing: an automatic fill there is tried once more shortly,
   // and not again until a fill reads a step. A fill the agent asked for isn't retried.
@@ -1022,6 +1045,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
       const index = active?.[list] ?? 0;
       (maps.unitForms[list] ??= {})[id] = index;
       const own = scoped ? maps.agentKeys.get(`${page}|f:${id}`) : null;
+      if (scoped && maps.agentPageEdits?.has(`${page}|f:${id}`)) maps.agentPageEdits.add(unitScope(page, list, index));
       if (!own?.size) continue;
       const unit = unitScope(page, list, index);
       const keys = maps.agentKeys.get(unit) ?? new Set();
@@ -1329,18 +1353,24 @@ function renderSteps() {
 // done but held Continue for the agent's check ('check'), or the page changed after they clicked
 // Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
 // Fill again and continue.
-function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, unlisted, tabId }, carrier = state.tab?.carrier) {
+function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, step: reportStep = undefined, settled, held, unlisted, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
   const advance = carrier?.advance;
+  const tab = tabId ?? state.tab?.id;
+  const step = tabStep(carrier, tab) ?? (carrier?.layoutSteps ? reportStep : undefined);
   // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
-  const offSteps = !!advance?.steps?.length && !advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
+  const offSteps = !!advance?.steps?.length && !advance.steps.includes(step);
   const exceptPage = !!advance?.exceptPages?.includes(page);
   // A page the carrier's advance doesn't list (`pages`, else the fill found a step it doesn't list,
   // `unlisted`), or an advance that lists none: no Continue is clicked there, and the agent is told
   // the page isn't one the extension continues on (the maintainer, 2026-11-07, audit ENG-01).
   const offList = !!advance && !offSteps && !exceptPage && switchOn('autoAdvance', 'auto-advance')
     && (!!unlisted || (!!advance.pages?.length && !advance.pages.includes(page)) || (!advance.pages?.length && !advance.steps?.length));
-  const autoAdvance = !!advance && switchOn('autoAdvance', 'auto-advance') && !exceptPage && !offSteps && !offList;
+  // An edit directly on the rater page keeps automatic mode from advancing on this step/page:
+  // Continue is the agent's, and the dock never claims the panel will continue for them.
+  const editedOnPage = !!advance && !offSteps && !exceptPage && !offList && switchOn('autoAdvance', 'auto-advance')
+    && hasAgentPageEdit(tabMaps(tab), page, carrier, step);
+  const autoAdvance = !!advance && switchOn('autoAdvance', 'auto-advance') && !exceptPage && !offSteps && !offList && !editedOnPage;
   const check = autoAdvance && switchOn('checkBeforeContinue', 'check-continue');
   // The words are CONTINUE's (messages.js); which are said, and with which button, is decided here.
   const looks = { button: 'look-right', label: CONTINUE.looksRight };
@@ -1352,6 +1382,7 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     const then = check ? CONTINUE.next.check
       : offSteps ? CONTINUE.next.offSteps
       : offList ? CONTINUE.next.offList
+      : editedOnPage ? CONTINUE.next.editedOnPage
       : !autoAdvance ? (carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? CONTINUE.next.continueHere : CONTINUE.next.manual)
       : switchOn('autoFollowUps', 'auto-followups') ? CONTINUE.next.followUps
       : CONTINUE.next.fillAgain;
@@ -1372,13 +1403,13 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     return { phase: 'needs', tone: 'warn', eyebrow: CONTINUE.needs.eyebrow(filled, left),
       title: CONTINUE.needs.title(left), sub: then, button: 'dock-next', label: CONTINUE.needs.label, ...again };
   }
-  if (held === 'changed') return { phase: 'check', tone: 'warn', ...CONTINUE.changed, ...looks };
-  if (held || (check && settled)) return { phase: 'check', tone: 'good', ...CONTINUE.check, ...looks };
+  if (!editedOnPage && held === 'changed') return { phase: 'check', tone: 'warn', ...CONTINUE.changed, ...looks };
+  if (!editedOnPage && (held || (check && settled))) return { phase: 'check', tone: 'good', ...CONTINUE.check, ...looks };
   if (offSteps) return { phase: 'yours', tone: 'good', ...CONTINUE.offSteps, ...again };
   if (offList) return { phase: 'yours', tone: 'good', ...CONTINUE.offList, ...again };
   if (!autoAdvance) {
     return { phase: 'ready-continue', tone: 'good', eyebrow: CONTINUE.ready.eyebrow, title: CONTINUE.ready.title, ...again,
-      sub: carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? CONTINUE.ready.continueHere : CONTINUE.ready.manual };
+      sub: editedOnPage ? CONTINUE.ready.editedOnPage : carrier?.advance && switchOn('autoAdvance', 'auto-advance') ? CONTINUE.ready.continueHere : CONTINUE.ready.manual };
   }
   // Nothing left and the page not moved on: the main button continues (a fill, which clicks the
   // page's Continue once nothing is left: W43-40). The same once the agent settled what was left,

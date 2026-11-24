@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="completed" expanded="" type="menu" variation="accordion">
+      <span slot="title">Discounts</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Groups or Organizations</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Quote</span>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Quote Summary</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Finalize</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Details</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Communication Options</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Payment</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Payment Plan</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Payment Type</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div class="heading-alignment-center"><gds-section-header>Quote Summary</gds-section-header></div>
+
+      <div class="pricing-cards-wrapper">
+        <div class="pricing-card">
+          <div class="pricing-card-content">
+            <div class="description-text"><span>--.--</span></div>
+            <div class="inline-formatted-text-block"><span class="monetary-text">--.--</span></div>
+            <div class="details"><div class="inline-formatted-text-block"><span>6 Month Total Premium:</span><span>--.--</span></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="button-group-center-stacked">
+        <gds-button class="mobile-button" type="button">
+          <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+          Recalculate
+        </gds-button>
+      </div>
+
+      <div class="hide" style="display: none;">
+        <gds-sticky-bar class="sales-docked-message">
+          <div class="left-content">
+            <div class="left"><h3>Quote</h3></div>
+            <div class="right"><p>$175.10</p><h5>Due Today</h5></div>
+          </div>
+          <div class="right-content">
+            <div class="left"><p>$1,051.00</p><h5>Total</h5></div>
+            <div class="right">
+              <gds-button class="mobile-button" type="button" target="_blank" href="/PrintQuote?auth=t">
+                <template shadowrootmode="open"><a href="https://sales.geico.com/PrintQuote?auth=t" target="_blank" rel="noopener noreferrer" aria-disabled="false"><span><slot></slot></span></a></template>
+                Print Quote Proposal
+              </gds-button>
+            </div>
+          </div>
+        </gds-sticky-bar>
+      </div>
+
+      <div>
+        <gds-sticky-bar class="sales-docked-message">
+          <div class="left-content">
+            <div class="left"><h3>Quote</h3></div>
+            <div class="right"><p>$ --.--</p><h5>Due Today</h5></div>
+          </div>
+          <div class="right-content">
+            <div class="left"><p>$ --.--</p><h5>Total</h5></div>
+            <div class="right">
+              <gds-button class="mobile-button" type="button">
+                <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+                Recalculate
+              </gds-button>
+            </div>
+          </div>
+        </gds-sticky-bar>
+      </div>
+
+      <div>
+        <h3>6 Month GEICO Auto Policy</h3>
+        <div class="cards-container content-card">
+          <div class="card">
+            <div class="card-header"><div class="card-header-title"><h3>Auto Coverages</h3></div></div>
+            <div class="card-content">
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_ab4a17c1-cf24-4a51-8458-17b45ce45359_77043">
+                    <span>Bodily Injury Liability (BI)</span>
+                    <gds-tooltip><p>BI tooltip.</p></gds-tooltip>
+                  </gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_ab4a17c1-cf24-4a51-8458-17b45ce45359_77043">
+                      <option value="">Please Select</option>
+                      <option value="$25,000/$50,000">$25,000/$50,000</option>
+                      <option value="$50,000/$100,000">$50,000/$100,000</option>
+                      <option value="$100,000/$300,000">$100,000/$300,000</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_2bfe9fd7-5909-40af-8cd5-fc7ed8a41b61_67623"><span>Property Damage Liability (PD)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_2bfe9fd7-5909-40af-8cd5-fc7ed8a41b61_67623">
+                      <option value="">Please Select</option>
+                      <option value="$25,000">$25,000</option>
+                      <option value="$50,000">$50,000</option>
+                      <option value="$100,000">$100,000</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_a167ca5c-586c-4c6a-a7fe-4619ad15ea31_91007"><span>Medical Payments (MED)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_a167ca5c-586c-4c6a-a7fe-4619ad15ea31_91007">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$5,000">$5,000</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_6758132b-a9a7-4b2f-9af4-0a44464d4071_78258"><span>Uninsured Motorist Bodily Injury</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_6758132b-a9a7-4b2f-9af4-0a44464d4071_78258">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$25,000/$50,000">$25,000/$50,000</option>
+                      <option value="$50,000/$100,000">$50,000/$100,000</option>
+                      <option value="$100,000/$300,000">$100,000/$300,000</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_c44e63a4-b388-4485-b44e-cf901f39e7ec_98950"><span>Uninsured Motorist Property Damage</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_c44e63a4-b388-4485-b44e-cf901f39e7ec_98950">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$25,000">$25,000</option>
+                      <option value="$50,000">$50,000</option>
+                      <option value="$100,000">$100,000</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_b90b8588-4ade-4a62-8ac9-c66e60c3881a_98410"><span>Purchased Claim Forgiveness</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_b90b8588-4ade-4a62-8ac9-c66e60c3881a_98410">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="I accept">I accept</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div><gds-section-header><strong>2020 Example Sedan<br><span>xxxxxxxxxxxxx0001</span></strong></gds-section-header></div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_74f8bdf2-2024-445b-9234-a9b3abf2c33f_24215"><span>Comprehensive (Excluding Collision)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_74f8bdf2-2024-445b-9234-a9b3abf2c33f_24215">
+                      <option value="">Please Select</option>
+                      <option value="$500 deductible">$500 deductible</option>
+                      <option value="$1,000 deductible">$1,000 deductible</option>
+                      <option value="I decline">I decline</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_14f9f14e-2f28-4f4e-ba12-a521b2a662c6_34918"><span>Collision (COLL)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_14f9f14e-2f28-4f4e-ba12-a521b2a662c6_34918">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$500 deductible">$500 deductible</option>
+                      <option value="$1,000 deductible">$1,000 deductible</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_bf54ecf1-8404-44a1-987f-4ab2115d9796_60086"><span>Emergency Road Service (ERS)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_bf54ecf1-8404-44a1-987f-4ab2115d9796_60086">
+                      <option value="">Please Select</option>
+                      <option value="I accept this coverage">I accept this coverage</option>
+                      <option value="I decline">I decline</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_8c7eb00d-91fa-4853-9a24-e3e3fd05c34c_23015"><span>Rental Reimbursement (RR)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_8c7eb00d-91fa-4853-9a24-e3e3fd05c34c_23015">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$35/day, $1,050 max per claim">$35/day, $1,050 max per claim</option>
+                      <option value="$50/day, $1,500 max per claim">$50/day, $1,500 max per claim</option>
+                      <option value="$75/day, $2,250 max per claim">$75/day, $2,250 max per claim</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div><gds-section-header><strong>2022 Example Coupe<br><span>xxxxxxxxxxxxx0002</span></strong></gds-section-header></div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_3cccc40d-86e8-4c75-ad87-e85ab0e13ec7_70166"><span>Comprehensive (Excluding Collision)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_3cccc40d-86e8-4c75-ad87-e85ab0e13ec7_70166">
+                      <option value="">Please Select</option>
+                      <option value="$500 deductible">$500 deductible</option>
+                      <option value="$1,000 deductible">$1,000 deductible</option>
+                      <option value="I decline">I decline</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_33073eea-90ec-4105-ae8a-8a8e8e706072_75828"><span>Collision (COLL)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_33073eea-90ec-4105-ae8a-8a8e8e706072_75828">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$500 deductible">$500 deductible</option>
+                      <option value="$1,000 deductible">$1,000 deductible</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_6791eff2-c72c-45b3-9d15-105115fa6b8b_57381"><span>Emergency Road Service (ERS)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_6791eff2-c72c-45b3-9d15-105115fa6b8b_57381">
+                      <option value="">Please Select</option>
+                      <option value="I accept this coverage">I accept this coverage</option>
+                      <option value="I decline">I decline</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <div class="coverage-form-field-wrapper">
+                <div class="form-field">
+                  <gds-label-legend for="Id_5b54fa86-d989-4216-b4ab-fca21b5d2223_15773"><span>Rental Reimbursement (RR)</span></gds-label-legend>
+                  <div class="select-box">
+                    <select id="Id_5b54fa86-d989-4216-b4ab-fca21b5d2223_15773">
+                      <option value="">Please Select</option>
+                      <option value="I decline">I decline</option>
+                      <option value="$35/day, $1,050 max per claim">$35/day, $1,050 max per claim</option>
+                      <option value="$50/day, $1,500 max per claim">$50/day, $1,500 max per claim</option>
+                      <option value="$75/day, $2,250 max per claim">$75/day, $2,250 max per claim</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

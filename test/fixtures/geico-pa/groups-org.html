@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Discounts</span>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Groups or Organizations</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Quote</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Quote Summary</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div><gds-section-header>Feel free to make corrections below:</gds-section-header></div>
+
+      <gds-list-wrapper type="symbol-list" role="list">
+        <gds-simple-list-item type="symbol-list" role="listitem"><span>Alumni Associations</span></gds-simple-list-item>
+        <gds-simple-list-item type="symbol-list" role="listitem"><span>Business and Professional Groups</span></gds-simple-list-item>
+      </gds-list-wrapper>
+
+      <div class="form-field">
+        <gds-label-legend for="Id_GiveSponsoredMarketing_84701">
+          <span>Select your group or organization</span>
+          <gds-tooltip><p>Affiliate discount info.</p></gds-tooltip>
+        </gds-label-legend>
+        <div>
+          <select id="Id_GiveSponsoredMarketing_84701" class="select2-hidden-accessible" aria-label="Select your group or organization" data-select2-id="Id_GiveSponsoredMarketing_84701" tabindex="-1" aria-hidden="true">
+            <option value="NotAMember" selected="">Not a member of any of these organizations</option>
+            <option value="006597">Berkshire Hathaway Shareholder</option>
+          </select>
+          <span class="select2 select2-container select2-container--default" data-select2-id="362">
+            <span class="selection"><span class="select2-selection select2-selection--single" role="combobox" aria-expanded="false"><span id="select2-Id_GiveSponsoredMarketing_84701-container" class="select2-selection__rendered" role="textbox">Not a member of any of these organizations</span></span></span>
+          </span>
+        </div>
+        <span id="form-message-error-Id_GiveSponsoredMarketing_84701" class="form-message"></span>
+      </div>
+
+      <div id="Id_SponsoredMarketingComboDataActions_79943">
+        <div class="button-group-right">
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Save and Continue
+          </gds-button>
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Discard Changes
+          </gds-button>
+        </div>
+      </div>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

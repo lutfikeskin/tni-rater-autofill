@@ -14,12 +14,12 @@ import { $, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrent
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
-import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout, viewOf } from './coordinator.js';
+import { announce, noteChangedAfterDone, recount, renderSteps, scheduleAutoFill, scheduleLayout, tabMaps, viewOf } from './coordinator.js';
 import { drawRow, fillPage, resumeHeldFill, runKit } from './fill.js';
 import { aiHolder } from './ai-view.jsx';
 import { needId, setHead } from './report-rows.js';
 import { renderUsage } from './usage-panel.js';
-import { agentEdited, editScope, tabStep } from './scope.js';
+import { agentEdited, editScope, hasAgentPageEdit, pageEditScope, tabStep } from './scope.js';
 
 // ---------------------------------------------------------------------------------------------
 // Luna assistant: after a fill, suggests answers for the questions left for the agent.
@@ -635,6 +635,12 @@ async function applyAi(list, ctx, decision) {
     // On the quote's finishing step after its action was clicked: the printed proposal is no longer
     // the quote on the page (noteChangedAfterDone), approved or not; so is an edit of the agent's meanwhile.
     if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
+    if (protectedKeys.length) {
+      const maps = tabMaps(ctx.tabId);
+      maps.agentPageEdits ??= new Set();
+      const editAt = pageEditScope(ctx.page, ctx.carrier, tabStep(ctx.carrier, ctx.tabId), { active: maps.active, shown: maps.unitShown });
+      if (editAt) maps.agentPageEdits.add(editAt);
+    }
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit?.decisionSnapshot() ?? null));
@@ -753,7 +759,8 @@ function renderAi(holder, suggestions, ctx) {
   const rejectedPending = pending.filter((x) => x.rejected);
   const current = assistContextKey(state.intake?.record, state.active, ctx.carrier?.id);
   const currentHash = aiFingerprint(current);
-  const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance;
+  const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance
+    && !hasAgentPageEdit(tabMaps(ctx.tabId), ctx.page, ctx.carrier, tabStep(ctx.carrier, ctx.tabId));
   // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
   // switch can keep that pick pending; replacing the intake or page invalidates the callback.
   const decide = async (list, decision) => {

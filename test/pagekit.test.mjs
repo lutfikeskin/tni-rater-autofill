@@ -446,6 +446,7 @@ function harness({ ext = false, progressive = ext, adapter = progressive ? 'prog
   const context = {
     document,
     location,
+    URL,
     URLSearchParams,
     crypto,
     window: null,
@@ -6474,7 +6475,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
     const source = PANEL_SOURCE;
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
-      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'pageEditScope', 'formScoped', 'stepScope', 'tabStep', 'tabMaps', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
     vm.runInNewContext(functions.map(name => {
       const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
       assert.ok(match, name);
@@ -11488,4 +11489,67 @@ test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswer
   const glNotes = staleReport.noData.filter((x) => x.label === 'General liability');
   assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
   assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
+});
+
+test('openDownloadInPanel returns same-origin target=_blank link URLs instead of clicking in MAIN world, and falls back otherwise', async () => {
+  const printStep = {
+    id: 'action:printProposal', kind: 'action', action: 'printProposal', baseAction: 'printProposal',
+    path: 'action:printProposal', name: 'Print Quote Proposal', pages: [], steps: null,
+    text: '^print quote proposal$', token: null, near: null, within: null, moveOn: false, loads: false,
+    unique: false, label: 'Print Quote Proposal', missing: null, markable: false, heldBy: [],
+    resolvedBy: null, settledByPages: [], opener: null, nudge: null, immediate: false, inFrame: false,
+    skipIfProtected: false, after: [], afterAny: [], unless: [], unlessSelector: null, doneWhen: [],
+    waitRequired: false, whenClear: false, quietMs: null, once: true, keepAnswers: false, reopen: null,
+    kitClick: true, onBlankPage: false, unfinished: null, unlessActions: [], afterActions: [],
+    afterPages: [], afterValue: null, needsPremium: false, needsRecalculation: false, verify: 'download',
+    ratedBy: null, shownBy: null, scope: null, scopeIndex: null, value: null,
+  };
+
+  // 1. Shadow <a href="/PrintQuote?quote=1" target="_blank"> inside <gds-button>: with openDownloadInPanel,
+  //    returns openDocumentUrl and does not call click() in page world.
+  {
+    const h = harness({ pathname: '/quote' });
+    const host = new FakeNode('gds-button', { attrs: { target: '_blank', href: '/PrintQuote?quote=1' } });
+    const sr = host.attachShadow({ mode: 'open' });
+    const link = new FakeNode('a', { attrs: { href: '/PrintQuote?quote=1', target: '_blank' }, textContent: 'Print Quote Proposal' });
+    let clicked = 0;
+    link.onclick = () => { clicked++; };
+    sr.append(link);
+    h.document.body.append(host);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: true });
+    assert.equal(report.openDocumentUrl, 'https://synthetic.example/PrintQuote?quote=1');
+    assert.equal(report.documentPending, true);
+    assert.equal(clicked, 0, 'must not click link in MAIN world when handing URL to side panel');
+    assert.equal(report.actions.some((a) => a.id === 'printProposal'), true);
+  }
+
+  // 2. Without openDownloadInPanel, clicks the link in-page and leaves openDocumentUrl unset.
+  {
+    const h = harness({ pathname: '/quote' });
+    const link = new FakeNode('a', { attrs: { href: '/PrintQuote?quote=2', target: '_blank' }, textContent: 'Print Quote Proposal' });
+    let clicked = 0;
+    link.onclick = () => { clicked++; };
+    h.document.body.append(link);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: false });
+    assert.equal(report.openDocumentUrl, undefined);
+    assert.equal(report.documentPending, true);
+    assert.equal(clicked, 1);
+  }
+
+  // 3. Cross-origin, javascript:, non-_blank, or plain <button> without href fall back to pressButton.
+  for (const [label, makeEl] of [
+    ['cross-origin', () => new FakeNode('a', { attrs: { href: 'https://evil.example/PrintQuote', target: '_blank' }, textContent: 'Print Quote Proposal' })],
+    ['javascript', () => new FakeNode('a', { attrs: { href: 'javascript:void(0)', target: '_blank' }, textContent: 'Print Quote Proposal' })],
+    ['same-tab', () => new FakeNode('a', { attrs: { href: '/PrintQuote?quote=3' }, textContent: 'Print Quote Proposal' })],
+    ['plain-button', () => new FakeNode('button', { textContent: 'Print Quote Proposal' })],
+  ]) {
+    const h = harness({ pathname: '/quote' });
+    const el = makeEl();
+    let clicked = 0;
+    el.onclick = () => { clicked++; };
+    h.document.body.append(el);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: true });
+    assert.equal(report.openDocumentUrl, undefined, `${label}: must not set openDocumentUrl`);
+    assert.equal(clicked, 1, `${label}: must fall back to pressButton`);
+  }
 });

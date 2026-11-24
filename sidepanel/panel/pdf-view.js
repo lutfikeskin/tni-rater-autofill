@@ -390,6 +390,7 @@ async function newQuote() {
     state.staleFills = [];
     state.cards = { ...state.cards, stale: null };
     state.agentKeys = new Map();
+    state.agentPageEdits = new Set();
     state.doneActions = new Set();
     state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
     try {
@@ -439,6 +440,8 @@ async function clearClient() {
     holdLayouts();
     resetViews();
     state.intake = null;
+    state.tabSessions?.clear?.();
+    state.agentPageEdits = new Set();
     state.fileConfirm = null;
     state.view = 'check';
     state.filter = 'all';

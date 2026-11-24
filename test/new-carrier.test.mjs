@@ -68,11 +68,13 @@ const LEFT_OUT = {
   // src/util.js CARRIER_NAMES: the words of a carrier's name, for "currently insured with this carrier".
   names: {
     amwins: 'AmWINS asks no same-carrier question (src/carriers/amwins.js uses no sameCarrier)',
+    'geico-pa': "GEICO Personal Auto maps prior providers with its own 90-carrier list (src/carriers/geico-pa.js) so commercial auto's quotedCarriersOf does not list GEICO twice",
     'progressive-pa': "Progressive Personal Auto checks sameCarrier(carrier, 'progressive') directly so commercial auto's quotedCarriersOf does not list Progressive twice",
   },
   // scripts/intake-mocks.mjs: the synthetic-intake runs drive the AmWINS mock and the Progressive replays.
   intakeMocks: {
     geico: 'GEICO\'s mock is its one fixture run, npm run mock:geico',
+    'geico-pa': 'GEICO Personal Auto\'s mock is its own fixture run, npm run mock:geico-pa',
     'progressive-pa': 'Progressive Personal Auto\'s mock is its own fixture run, npm run mock:progressive-pa',
   },
   // package.json: a mock:<carrier> command.

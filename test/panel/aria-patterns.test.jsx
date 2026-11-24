@@ -154,8 +154,10 @@ test('Settings checkboxes, #steps tabs, client & filter toolbars, #file-confirm 
   })} />);
   await checkPattern(confirmView.container.querySelector('#file-confirm'), 'alertdialog');
   cleanup();
+});
 
-  // Inline Worth a look and Other answers rows in Review and AnswerRow in ReportRows as APG disclosures with aria-controls.
+test('Review section & row disclosures and ReportRows AnswerRow pass APG disclosure pattern', async () => {
+  // Collapsible Worth a look / Other answers sections, their inline rows, and AnswerRow in ReportRows.
   const rec = { id: 10, type: 'answer', kind: 'standard', label: 'Is non profit', value: 'No', open: false, v: 0, source: { title: 'TNI standard answer', tag: { kind: 'standard', text: 'TNI standard' } } };
   const intakeRec = { id: 11, type: 'answer', kind: 'intake', label: 'DOT number', value: '1234567', open: false, v: 0, source: { title: 'From the intake', tag: { kind: 'intake', text: 'Intake (p. 1)' } } };
   const entry = { key: '1|/Info||Info', step: 'Insured Info', filled: 2, list: [rec, intakeRec], drawn: 0 };
@@ -167,9 +169,14 @@ test('Settings checkboxes, #steps tabs, client & filter toolbars, #file-confirm 
     state.rowsDrawn = (state.rowsDrawn ?? 0) + 1;
   });
   const reviewView = render(<Review act={quiet({ toggleWorth: toggle, rowActs: quiet() })} />);
+  const worthToggle = reviewView.container.querySelector('#review-worth .group-toggle');
+  await checkPattern(worthToggle, 'disclosure');
   const worthRow = reviewView.container.querySelector('#review-worth .review-row');
   expect(worthRow.getAttribute('aria-controls')).toBeTruthy();
   await checkPattern(worthRow, 'disclosure');
+  const restToggle = /** @type {HTMLButtonElement} */ (reviewView.container.querySelector('#review-answers .group-toggle'));
+  await checkPattern(restToggle, 'disclosure');
+  act(() => { restToggle.click(); });
   const restRow = reviewView.container.querySelector('#review-answers .review-row');
   expect(restRow.getAttribute('aria-controls')).toBeTruthy();
   await checkPattern(restRow, 'disclosure');
