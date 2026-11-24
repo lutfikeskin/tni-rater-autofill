@@ -66,9 +66,15 @@ test('the template has a box for the correction keys, the agent\'s stops and whe
 // (the dashboard showing its raw id, a defaults choice list missing) fails here instead.
 const LEFT_OUT = {
   // src/util.js CARRIER_NAMES: the words of a carrier's name, for "currently insured with this carrier".
-  names: { amwins: 'AmWINS asks no same-carrier question (src/carriers/amwins.js uses no sameCarrier)' },
+  names: {
+    amwins: 'AmWINS asks no same-carrier question (src/carriers/amwins.js uses no sameCarrier)',
+    'progressive-pa': "Progressive Personal Auto checks sameCarrier(carrier, 'progressive') directly so commercial auto's quotedCarriersOf does not list Progressive twice",
+  },
   // scripts/intake-mocks.mjs: the synthetic-intake runs drive the AmWINS mock and the Progressive replays.
-  intakeMocks: { geico: 'GEICO\'s mock is its one fixture run, npm run mock:geico' },
+  intakeMocks: {
+    geico: 'GEICO\'s mock is its one fixture run, npm run mock:geico',
+    'progressive-pa': 'Progressive Personal Auto\'s mock is its own fixture run, npm run mock:progressive-pa',
+  },
   // package.json: a mock:<carrier> command.
   mock: { progressive: 'Progressive\'s fixture replays are npm run e2e' },
   // The carrier's own `premiumPages`: where its premium is quoted, for the quoting history (src/premium.js).
@@ -100,8 +106,10 @@ test('every registry names each carrier with rules, or says here why not', async
   for (const c of carriers) {
     assert.ok(RULE_FILES.includes(`src/carriers/${c.id}.js`), `${c.id}: in RULE_FILES (src/usage.js)`);
     assert.ok(CARRIER_PARTS[c.id], `${c.id}: a rulebook part`);
-    assert.ok(dashboard.includes(`${c.id}: '${c.name}'`), `${c.id}: the dashboard's name for it is "${c.name}" (server/dashboard.mjs)`);
-    for (const entry of REGISTRY) assert.ok(entry.choices?.[c.id], `${c.id}: agents' defaults ${entry.id} lists its choices`);
+    assert.ok(new RegExp(`['"]?${c.id}['"]?: '${c.name}'`).test(dashboard), `${c.id}: the dashboard's name for it is "${c.name}" (server/dashboard.mjs)`);
+    for (const entry of REGISTRY) {
+      if (c.product === 'commercial-auto') assert.ok(entry.choices?.[c.id], `${c.id}: agents' defaults ${entry.id} lists its choices`);
+    }
     assert.ok(ratersSaid().includes(c.name), `${c.id}: named on the panel's "Open the client's quote" line`);
     has('names', c.id, nameKeys.includes(c.id));
     has('premiumPages', c.id, c.premiumPages?.length > 0);

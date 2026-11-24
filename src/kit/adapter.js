@@ -42,6 +42,7 @@ export const NO_ADAPTER = {
   onRequest: () => {},
   offRequest: () => {},
   listOwner: () => null,
+  order: (controls) => controls,
   components: null,
 };
 

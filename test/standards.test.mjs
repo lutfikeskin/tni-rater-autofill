@@ -7,8 +7,8 @@ import assert from 'node:assert/strict';
 import { STANDARDS, usd, usdK } from '../src/standards.js';
 import { CARRIERS as REGISTERED } from '../src/carriers.js';
 
-// Every carrier with rules of its own (a new one is checked once registered: audit 2026-11-07, CARR-10).
-const CARRIERS = REGISTERED.filter((c) => c.rules.length);
+// Every commercial-auto carrier with rules of its own (a new one is checked once registered: audit 2026-11-07, CARR-10).
+const CARRIERS = REGISTERED.filter((c) => c.rules.length && c.product === 'commercial-auto');
 
 const record = () => ({
   applicant: { name: 'Synthetic Expediter LLC', dot: '1234567', owner1: 'Amina Kone', ownerDrives: true },

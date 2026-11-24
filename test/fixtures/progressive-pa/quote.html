@@ -1,0 +1,610 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Progressive PA Mock Quote</title>
+  <style>
+    body { font-family: sans-serif; margin: 16px; }
+    nav { display: flex; gap: 10px; margin-bottom: 16px; border-bottom: 1px solid #ccc; padding-bottom: 8px; }
+    a.navigation-link { padding: 4px 8px; cursor: pointer; }
+    a.navigation-link[aria-current="step"] { font-weight: bold; background: #e8f1ff; }
+    .step-pane { display: none; }
+    .step-pane.active { display: block; }
+    .question { display: flex; gap: 12px; margin: 6px 0; align-items: center; }
+    .question-label { min-width: 240px; }
+    .add-new.btn { display: inline-block; padding: 6px 12px; border: 1px solid #0b57d0; cursor: pointer; margin: 8px 0; }
+    .verify-button { width: 24px; height: 24px; margin-left: 6px; }
+    .ui-blocker-spinner-outer-wrapper { display: none; }
+  </style>
+</head>
+<body>
+  <div class="ui-blocker-spinner-outer-wrapper"></div>
+  <div class="help-toggle">
+    <span id="helpTextToggleLabel" class="sr-only">Keyboard Access to Help Buttons</span>
+    <input type="checkbox" role="switch" aria-labelledby="helpTextToggleLabel" checked>
+  </div>
+  <div class="cdk-overlay-container" id="address-overlay"></div>
+  <nav aria-label="Quote Steps">
+    <a class="navigation-link" data-step="Named Insured" aria-current="step">NAMED INSURED</a>
+    <a class="navigation-link" data-step="Products">PRODUCTS</a>
+    <a class="navigation-link" data-step="Household Members">HOUSEHOLD MEMBERS</a>
+    <a class="navigation-link" data-step="Additional Details">ADDITIONAL DETAILS</a>
+    <a class="navigation-link" data-step="Coverages">COVERAGES/BILL PLANS</a>
+    <a class="navigation-link" data-step="Portfolio">PORTFOLIO</a>
+    <a class="navigation-link" data-step="Point of Sale">POINT OF SALE</a>
+    <a class="navigation-link" data-step="Final Sale">FINAL SALE</a>
+  </nav>
+
+  <main>
+    <!-- STEP 1: NAMED INSURED -->
+    <section class="step-pane active" data-pane="Named Insured">
+      <question property="AgentCode" class="box-row question">
+        <div class="question-label"><label id="AgentCode_Label" for="NamedInsured_Embedded_Questions_List_AgentCode">PGR Agent Code</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_AgentCode" value="99999">
+      </question>
+      <question property="FirstName" class="box-row question">
+        <div class="question-label"><label id="FirstName_Label" for="NamedInsured_Embedded_Questions_List_FirstName">First Name *</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_FirstName" required>
+      </question>
+      <question property="MiddleInitial" class="box-row question">
+        <div class="question-label"><label id="MiddleInitial_Label" for="NamedInsured_Embedded_Questions_List_MiddleInitial">Middle Initial</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_MiddleInitial">
+      </question>
+      <question property="LastName" class="box-row question">
+        <div class="question-label"><label id="LastName_Label" for="NamedInsured_Embedded_Questions_List_LastName">Last Name *</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_LastName" required>
+      </question>
+      <question property="DateOfBirth" class="box-row question">
+        <div class="question-label"><label id="DateOfBirth_Label" for="NamedInsured_Embedded_Questions_List_DateOfBirth">Date of Birth *</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_DateOfBirth" required>
+      </question>
+      <question property="Gender" class="box-row question">
+        <div class="question-label"><label id="Gender_Label" for="NamedInsured_Embedded_Questions_List_Gender">Gender *</label></div>
+        <select id="NamedInsured_Embedded_Questions_List_Gender" required>
+          <option value="">Select</option><option value="F">Female</option><option value="M">Male</option>
+        </select>
+      </question>
+      <question property="PrimaryEmailAddress" class="box-row question">
+        <div class="question-label"><label id="PrimaryEmailAddress_Label" for="NamedInsured_Embedded_Questions_List_PrimaryEmailAddress">Customer Email</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_PrimaryEmailAddress">
+      </question>
+      <question property="PhoneNumbers" class="box-row question">
+        <div class="question-label"><label id="PhoneNumbers_Label">Phone Type/Number *</label></div>
+        <select id="NamedInsured_PhoneNumbers_List_0_Embedded_Questions_List_PhoneType" required>
+          <option value="">Select</option><option value="C">Cell</option><option value="H">Home</option><option value="W">Work</option><option value="O">Other</option>
+        </select>
+        <input type="text" id="NamedInsured_PhoneNumbers_List_0_Embedded_Questions_List_PhoneNumber" required>
+      </question>
+      <question property="MailingAddress" class="box-row question">
+        <div class="question-label"><label id="MailingAddress_Label" for="NamedInsured_Embedded_Questions_List_MailingAddress">Mailing Address Line 1 *</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_MailingAddress" required>
+      </question>
+      <question property="ApartmentUnit" class="box-row question">
+        <div class="question-label"><label id="ApartmentUnit_Label" for="NamedInsured_Embedded_Questions_List_ApartmentUnit">Mailing Address Line 2</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_ApartmentUnit">
+      </question>
+      <question property="City" class="box-row question">
+        <div class="question-label"><label id="City_Label" for="NamedInsured_Embedded_Questions_List_City">City *</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_City" required>
+      </question>
+      <question property="State" class="box-row question">
+        <div class="question-label"><label id="State_Label" for="NamedInsured_Embedded_Questions_List_State">State *</label></div>
+        <select id="NamedInsured_Embedded_Questions_List_State" required>
+          <option value="">Select</option><option value="TN">Tennessee</option><option value="TX">Texas</option>
+        </select>
+      </question>
+      <question property="ZipCode" class="box-row question">
+        <div class="question-label"><label id="ZipCode_Label" for="NamedInsured_Embedded_Questions_List_ZipCode">ZIP Code *</label></div>
+        <input type="text" id="NamedInsured_Embedded_Questions_List_ZipCode" required>
+      </question>
+      <question property="RecentlyMoved" class="box-row question">
+        <div class="question-label"><label id="RecentlyMoved_Label" for="NamedInsured_Embedded_Questions_List_RecentlyMoved">Has the insured moved in the last 2 months? *</label></div>
+        <select id="NamedInsured_Embedded_Questions_List_RecentlyMoved" required>
+          <option value="">Select</option><option value="N">No</option><option value="Y">Yes</option>
+        </select>
+      </question>
+      <question property="DisclosureProvided" class="box-row question">
+        <div class="question-label"><label id="DisclosureProvided_Label" for="NamedInsured_Embedded_Questions_List_DisclosureProvided">Was the above disclosure read or provided to the consumer? *</label></div>
+        <select id="NamedInsured_Embedded_Questions_List_DisclosureProvided" required>
+          <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+        </select>
+      </question>
+      <button type="button" id="btnNextNI">PRODUCTS (submit and move to next step)</button>
+    </section>
+
+    <!-- STEP 2: PRODUCTS -->
+    <section class="step-pane" data-pane="Products">
+      <question property="PolicyEffectiveDate" class="box-row question">
+        <div class="question-label"><label id="PolicyEffectiveDate_Label" for="ProductsAA_Embedded_Questions_List_PolicyEffectiveDate">Policy Effective Date *</label></div>
+        <input type="text" id="ProductsAA_Embedded_Questions_List_PolicyEffectiveDate" value="11/25/2026" required>
+      </question>
+      <question property="NamedOperatorIndicator" class="box-row question" role="group" aria-labelledby="NamedOperatorIndicator_Label">
+        <div class="question-label"><label id="NamedOperatorIndicator_Label">Named Operator Policy *</label></div>
+        <label class="radio-label-container" title="Yes" value="Y"><input type="radio" id="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_Y" name="viewModel_Embedded_Questions_List_1" value="Y">Yes</label>
+        <label class="radio-label-container" title="No" value="N"><input type="radio" id="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_N" name="viewModel_Embedded_Questions_List_1" value="N">No</label>
+      </question>
+      <div id="vehicles-host"></div>
+      <div role="button" class="add-new btn bg-white" tabindex="0" id="add-vehicle-btn"><span class="add-column-new-button-title">ADD A NEW VEHICLE</span></div>
+      <div><button type="button" id="btnNextProd">HOUSEHOLD MEMBERS (submit and move to next step)</button></div>
+    </section>
+
+    <!-- STEP 3: HOUSEHOLD MEMBERS -->
+    <section class="step-pane" data-pane="Household Members">
+      <div id="drivers-host"></div>
+      <div role="button" class="add-new btn bg-white" tabindex="0" id="add-driver-btn"><span class="add-column-new-button-title">ADD MORE PEOPLE</span></div>
+      <div><button type="button" id="btnNextHH">ADDITIONAL DETAILS (submit and move to next step)</button></div>
+    </section>
+
+    <!-- STEP 4: ADDITIONAL DETAILS -->
+    <section class="step-pane" data-pane="Additional Details">
+      <question property="InsuranceToday" class="box-row question">
+        <div class="question-label"><label id="InsuranceToday_Label">Insured/Spouse has vehicle liability insurance *</label></div>
+        <select id="AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_InsuranceToday" required>
+          <option value="">Select</option><option value="Y">Yes, currently insured</option><option value="P">Yes, not currently insured</option><option value="N">No</option>
+        </select>
+      </question>
+      <question property="PriorCarrierIsProgressive" class="box-row question">
+        <div class="question-label"><label id="PriorCarrierIsProgressive_Label">Is Progressive the prior insurance company? *</label></div>
+        <select id="AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_PriorCarrierIsProgressive" required>
+          <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+        </select>
+      </question>
+      <question property="BodilyInjuryLimits" class="box-row question">
+        <div class="question-label"><label id="BodilyInjuryLimits_Label">What were the Bodily Injury limits on your most recent policy? *</label></div>
+        <select id="AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_BodilyInjuryLimits" required>
+          <option value="">Select</option>
+          <option value="A">Greater than or Equal to 250/500 or 300 CSL</option>
+          <option value="B">Greater than or Equal to 100/300 or 100 CSL, Less than 250/500 or 300 CSL</option>
+          <option value="C">Greater than State Minimum, Less than 100/300 or 100 CSL</option>
+          <option value="D">State Minimum Limits</option>
+        </select>
+      </question>
+      <question property="RecentAutoInsuranceCompanyPeriod" class="box-row question">
+        <div class="question-label"><label id="RecentAutoInsuranceCompanyPeriod_Label">Number of years with your most recent auto insurance carrier? *</label></div>
+        <select id="AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_RecentAutoInsuranceCompanyPeriod" required>
+          <option value="">Select</option>
+          <option value="1">Less than 1 year</option>
+          <option value="2">At least 1 year but less than 3 years</option>
+          <option value="3">At least 3 years but less than 5 years</option>
+          <option value="4">5 years or more</option>
+        </select>
+      </question>
+      <question property="AllDriversAcknowledgement" class="box-row question">
+        <div class="question-label"><label id="AllDriversAcknowledgement_Label">Have you included all drivers required to be listed? *</label></div>
+        <select id="AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_AllDriversAcknowledgement" required>
+          <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+        </select>
+      </question>
+      <question property="PaperlessPreference" class="box-row question">
+        <div class="question-label"><label id="PaperlessPreference_Label">Apply Paperless? *</label></div>
+        <select id="AdditionalDetails_Embedded_Questions_List_PaperlessPreference" required>
+          <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+        </select>
+      </question>
+      <question property="TotalResidents" class="box-row question">
+        <div class="question-label"><label id="TotalResidents_Label">Total number of residents living in the home *</label></div>
+        <select id="AdditionalDetails_Embedded_Questions_List_TotalResidents" required>
+          <option value="">Select</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option>
+        </select>
+      </question>
+      <question property="PrimaryResidenceDisplay" class="box-row question">
+        <div class="question-label"><label id="PrimaryResidenceDisplay_Label">Primary Residence *</label></div>
+        <select id="AdditionalDetails_Embedded_Questions_List_PrimaryResidenceDisplay" required>
+          <option value="">Select</option><option value="O">Own Home/Condo</option><option value="M">Own Manufactured Home</option><option value="R">Rent</option><option value="X">Other</option>
+        </select>
+      </question>
+      <label><input type="checkbox" id="AdditionalDetails_Embedded_Questions_List_Renters">Renters</label>
+      <label><input type="checkbox" id="AdditionalDetails_Embedded_Questions_List_MultiPolInd">No additional risks apply</label>
+      <div><button type="button" id="btnNextAD">COVERAGES/BILL PLANS (submit and move to next step)</button></div>
+    </section>
+
+    <!-- STEP 5: COVERAGES -->
+    <section class="step-pane" data-pane="Coverages">
+      <div id="coverages-vehicles"></div>
+      <question property="AccidentForgiveness" class="box-row question">
+        <div class="question-label"><label id="AccidentForgiveness_Label">Accident Forgiveness</label></div>
+        <label><input type="radio" id="CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_Y" name="viewModel_PolicyCoverage_0" value="Y" checked>Yes</label>
+        <label><input type="radio" id="CoveragesAA_PolicyCoverage_Embedded_Questions_List_AccidentForgiveness_N" name="viewModel_PolicyCoverage_0" value="N">No</label>
+      </question>
+      <question property="DeductibleSavingsBank" class="box-row question">
+        <div class="question-label"><label id="DeductibleSavingsBank_Label">Deductible Savings Bank</label></div>
+        <label><input type="radio" id="CoveragesAA_PolicyCoverage_Embedded_Questions_List_DeductibleSavingsBank_Y" name="viewModel_PolicyCoverage_1" value="Y" checked>Yes</label>
+        <label><input type="radio" id="CoveragesAA_PolicyCoverage_Embedded_Questions_List_DeductibleSavingsBank_N" name="viewModel_PolicyCoverage_1" value="N">No</label>
+      </question>
+      <div id="recalc-host" style="display:none"><button type="button" id="recalc-btn">Recalculate</button></div>
+      <div id="billplan-host" style="display:none">
+        <label><input type="radio" id="P0100Y_input" name="billplanGroup" value="Pay In Full" checked>Pay In Full Renewal EFT</label>
+        <label><input type="radio" id="P0400Y_input" name="billplanGroup" value="Pay With EFT">Pay With EFT From Checking</label>
+        <label><input type="radio" id="P0400N_input" name="billplanGroup" value="Pay By Mail">Pay By Mail</label>
+      </div>
+      <div>Total Auto Premium:$2,618.00</div>
+      <div><button type="button" id="btnNextCov">PORTFOLIO (submit and move to next step)</button></div>
+    </section>
+
+    <!-- STEP 6: PORTFOLIO -->
+    <section class="step-pane" data-pane="Portfolio">
+      <label><input type="checkbox" id="Portfolio_Embedded_EmbeddedViewModel_ProductSpecificInformation_List_0_Embedded_Questions_List_IsIncluded" checked>Auto</label>
+      <label><input type="checkbox" id="Portfolio_Embedded_Questions_List_SelectAllHvdVehicles">Select All Vehicles</label>
+      <label><input type="checkbox" id="Portfolio_HvdVehicles_List_0_Embedded_Questions_List_IsSelected">2025 Honda Civic</label>
+      <label><input type="checkbox" id="Portfolio_HvdVehicles_List_1_Embedded_Questions_List_IsSelected">2024 Ford F350</label>
+      <div>Total Premium$2,618.00</div>
+      <div><button type="button" id="email-print-btn">Email/Print</button></div>
+      <div><button type="button" id="btnNextPortfolio">POINT OF SALE (submit and move to next step)</button></div>
+    </section>
+
+    <!-- STEP 7: POINT OF SALE (STOP STEP) -->
+    <section class="step-pane" data-pane="Point of Sale">
+      <p>Point of Sale — agent only.</p>
+      <input type="text" id="PointOfSale_Embedded_Questions_List_AccountNumber" aria-label="Account Number">
+    </section>
+  </main>
+
+  <script>
+    const setStep = (name) => {
+      document.querySelectorAll('a.navigation-link').forEach((a) => {
+        if (a.dataset.step === name) a.setAttribute('aria-current', 'step');
+        else a.removeAttribute('aria-current');
+      });
+      document.querySelectorAll('.step-pane').forEach((p) => {
+        p.classList.toggle('active', p.dataset.pane === name);
+      });
+    };
+    window.__setStep = setStep;
+    document.querySelectorAll('a.navigation-link').forEach((a) => a.addEventListener('click', () => setStep(a.dataset.step)));
+
+    // Simulate Angular Material Smarty address autocomplete on Mailing Address Line 1:
+    // requires focusin (as MatAutocompleteTrigger does) and returns suggestions only for street-only
+    // input (no commas/ZIP), matching Progressive PA's Smarty behavior.
+    const addrInput = document.getElementById('NamedInsured_Embedded_Questions_List_MailingAddress');
+    const addrOverlay = document.getElementById('address-overlay');
+    let addrFocused = false;
+    addrInput.addEventListener('focusin', () => { addrFocused = true; });
+    addrInput.addEventListener('input', () => {
+      addrOverlay.innerHTML = '';
+      const raw = addrInput.value.trim();
+      if (!addrFocused || !/^\d+/.test(raw) || raw.includes(',')) return;
+      const opt = document.createElement('mat-option');
+      opt.setAttribute('role', 'option');
+      opt.className = 'mat-mdc-option';
+      opt.textContent = `${raw} Knoxville, TN 37901`;
+      opt.addEventListener('click', () => {
+        addrInput.value = raw.toUpperCase();
+        document.getElementById('NamedInsured_Embedded_Questions_List_City').value = 'KNOXVILLE';
+        document.getElementById('NamedInsured_Embedded_Questions_List_State').value = 'TN';
+        document.getElementById('NamedInsured_Embedded_Questions_List_ZipCode').value = '37901';
+        addrOverlay.innerHTML = '';
+      });
+      addrOverlay.appendChild(opt);
+    });
+
+    const apiDelay = (path, done) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `/api/v1/composite/${path}`);
+      xhr.addEventListener('loadend', () => done());
+      xhr.send('{}');
+    };
+
+    let vehicleCount = 0;
+    const renderVehicle = () => {
+      const i = vehicleCount++;
+      const div = document.createElement('div');
+      div.className = 'vehicle-card';
+      div.innerHTML = `
+        <h3 id="entitydetails${i}">Vehicle ${i + 1}</h3>
+        <question property="TypeCode" class="box-row question">
+          <div class="question-label"><label id="TypeCode_Label">Vehicle Type *</label></div>
+          <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_TypeCode" required>
+            <option value="">Select</option>
+            <option value="1981">1981 & Newer - Autos, Pickups, Vans, and Utility Vehicles</option>
+            <option value="PRE">Pre 1981 - Autos, Pickups, Vans, and Utility Vehicles</option>
+          </select>
+        </question>
+        <question property="Vin" class="box-row question">
+          <div class="question-label"><label id="Vin_Label">VIN</label></div>
+          <div class="vin-input can-verify" data-vin-row="${i}">
+            <input type="text" id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_Vin">
+            <span class="sr-only" id="vinSearchButton_${i}">Search for and verify the VIN for</span>
+            <button type="button" class="icon-search verify-button" aria-labelledby="vinSearchButton_${i} entitydetails${i}"></button>
+          </div>
+        </question>
+        <question property="GaragingZip" class="box-row question">
+          <div class="question-label"><label id="GaragingZip_Label">Garaging Zip Code *</label></div>
+          <input type="text" id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_GaragingZip" required>
+        </question>
+        <question property="LengthOfOwnership" class="box-row question">
+          <div class="question-label"><label id="LengthOfOwnership_Label">How long has the customer had this vehicle? *</label></div>
+          <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_LengthOfOwnership" required>
+            <option value="">Select</option>
+            <option value="1">Less than 1 month</option>
+            <option value="2">At least 1 month but less than 6 months</option>
+            <option value="3">At least 6 months but less than 1 year</option>
+            <option value="4">At least 1 year but less than 3 years</option>
+            <option value="5">At least 3 years but less than 5 years</option>
+            <option value="6">5 years or more</option>
+          </select>
+        </question>
+        <question property="VehicleUse" class="box-row question">
+          <div class="question-label"><label id="VehicleUse_Label">Primary Vehicle Use *</label></div>
+          <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_VehicleUse" required>
+            <option value="">Select</option>
+            <option value="P">Pleasure/Personal</option><option value="B">Business</option><option value="C">Commute</option><option value="F">Farm</option>
+          </select>
+        </question>
+        <div class="commute-followups" style="display:none">
+          <question property="CommuteDaysPerWk" class="box-row question">
+            <div class="question-label"><label>Number of Days Commuting *</label></div>
+            <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_CommuteDaysPerWk" required>
+              <option value="">Select</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option>
+            </select>
+          </question>
+          <question property="OneWayCommuteMiles" class="box-row question">
+            <div class="question-label"><label>Miles Driven One-Way *</label></div>
+            <input type="text" id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_OneWayCommuteMiles" required>
+          </question>
+        </div>
+        <question property="VehicleTransportNetworkCompanyIndicator" class="box-row question">
+          <div class="question-label"><label id="VehicleTransportNetworkCompanyIndicator_Label">Vehicle Used for Rideshare/TNC *</label></div>
+          <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_VehicleTransportNetworkCompanyIndicator" required>
+            <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+          </select>
+        </question>
+        <question property="VehicleUseDelivery" class="box-row question">
+          <div class="question-label"><label id="VehicleUseDelivery_Label">Vehicle Used for Delivery *</label></div>
+          <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_VehicleUseDelivery" required>
+            <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+          </select>
+        </question>
+        <question property="AnnualMileageForRate" class="box-row question">
+          <div class="question-label"><label id="AnnualMileageForRate_Label">Annual Miles *</label></div>
+          <select id="ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_AnnualMileageForRate" required>
+            <option value="">Select</option>
+            <option value="8">8,000 - 9,999</option>
+            <option value="12">12,000 - 13,999</option>
+            <option value="30">30,000 - 99,999</option>
+          </select>
+        </question>
+      `;
+      const useSel = div.querySelector(`#ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_VehicleUse`);
+      const commuteBox = div.querySelector('.commute-followups');
+      const milesSel = div.querySelector(`#ProductsAA_Vehicles_List_${i}_Embedded_Questions_List_AnnualMileageForRate`);
+      useSel.addEventListener('change', () => {
+        const isCommute = useSel.value === 'C';
+        commuteBox.style.display = isCommute ? 'block' : 'none';
+        milesSel.disabled = isCommute;
+      });
+      div.querySelector('button.verify-button').addEventListener('click', () => {
+        apiDelay('SingleVehicleVinOrder', () => {
+          const wrap = div.querySelector('.vin-input');
+          wrap.classList.add('verified');
+          div.querySelector('h3').textContent = `Decoded Vehicle ${i + 1}`;
+        });
+      });
+      document.getElementById('vehicles-host').appendChild(div);
+    };
+    renderVehicle();
+    document.getElementById('add-vehicle-btn').addEventListener('click', () => apiDelay('AddedVehicleCollection', renderVehicle));
+
+    let driverCount = 0;
+    const addDriver = () => {
+      const i = driverCount++;
+      const div = document.createElement('div');
+      div.className = 'driver-card';
+      div.innerHTML = `
+        <h3>Driver ${i + 1}</h3>
+        <question property="FirstName" class="box-row question">
+          <div class="question-label"><label>First Name *</label></div>
+          <input type="text" id="People_Drivers_List_${i}_Embedded_Questions_List_FirstName" required>
+        </question>
+        <question property="LastName" class="box-row question">
+          <div class="question-label"><label>Last Name *</label></div>
+          <input type="text" id="People_Drivers_List_${i}_Embedded_Questions_List_LastName" required>
+        </question>
+        ${i > 0 ? `
+        <question property="Relationship" class="box-row question">
+          <div class="question-label"><label>Relationship *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_Relationship" required>
+            <option value="">Select</option><option value="S">Spouse</option><option value="C">Child</option><option value="P">Parent</option><option value="O">Other</option>
+          </select>
+        </question>
+        <question property="SecondNamedInsured" class="box-row question">
+          <div class="question-label"><label>Auto Second Named Insured</label></div>
+          <select id="People_Drivers_List_${i}_ProductSpecificInformation_List_0_Embedded_Questions_List_SecondNamedInsured">
+            <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+          </select>
+        </question>` : ''}
+        <question property="MaritalStatus" class="box-row question">
+          <div class="question-label"><label>Marital Status *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_MaritalStatus" required>
+            <option value="">Select</option><option value="S">Single</option><option value="M">Married</option>
+          </select>
+        </question>
+        <question property="DateOfBirth" class="box-row question">
+          <div class="question-label"><label>Date of Birth *</label></div>
+          <input type="text" id="People_Drivers_List_${i}_Embedded_Questions_List_DateOfBirth" required>
+        </question>
+        <question property="Gender" class="box-row question">
+          <div class="question-label"><label>Gender *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_Gender" required>
+            <option value="">Select</option><option value="F">Female</option><option value="M">Male</option>
+          </select>
+        </question>
+        <question property="EmploymentStatus" class="box-row question">
+          <div class="question-label"><label>Employment *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_EmploymentStatus" required>
+            <option value="">Select</option>
+            <option value="RET">Retired (not employed)</option>
+            <option value="STU">Full time student (not employed or part-time employed)</option>
+            <option value="EDU">Education/Library</option>
+          </select>
+        </question>
+        <question property="DriverIncluded" class="box-row question">
+          <div class="question-label"><label>Auto Driver Status *</label></div>
+          <select id="People_Drivers_List_${i}_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded" required>
+            <option value="">Select</option><option value="R">Rated</option><option value="E">Excluded</option>
+          </select>
+        </question>
+        <question property="LicenseType" class="box-row question">
+          <div class="question-label"><label>Driver License Type *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_LicenseType" required>
+            <option value="">Select</option><option value="PA">Personal Auto</option><option value="COM">Commercial Vehicle/Business (non-chauffeur)</option>
+          </select>
+        </question>
+        <question property="LicenseStatus" class="box-row question">
+          <div class="question-label"><label>Driver License Status *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_LicenseStatus" required>
+            <option value="">Select</option><option value="V">Valid</option><option value="S">Suspended</option>
+          </select>
+        </question>
+        <question property="LicenseState" class="box-row question">
+          <div class="question-label"><label>License State *</label></div>
+          <select id="People_Drivers_List_${i}_Embedded_Questions_List_LicenseState" required>
+            <option value="">Select</option><option value="TN">Tennessee</option><option value="TX">Texas</option>
+          </select>
+        </question>
+        <question property="LicenseNumber" class="box-row question">
+          <div class="question-label"><label>License Number</label></div>
+          <input type="text" id="People_Drivers_List_${i}_Embedded_Questions_List_LicenseNumber" value="${i === 0 ? 'PREFILLED-99' : ''}">
+        </question>
+        <question property="StateFiling" class="box-row question">
+          <div class="question-label"><label>State Filing *</label></div>
+          <label><input type="radio" id="People_Drivers_List_${i}_Embedded_Questions_List_StateFiling_Y" name="viewModel_Drivers_List_${i}_13" value="Y">Yes</label>
+          <label><input type="radio" id="People_Drivers_List_${i}_Embedded_Questions_List_StateFiling_N" name="viewModel_Drivers_List_${i}_13" value="N">No</label>
+        </question>
+        <question property="DriverYearsLicensed" class="box-row question">
+          <div class="question-label"><label>Years Licensed *</label></div>
+          <select id="People_Drivers_List_${i}_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverYearsLicensed" required>
+            <option value="">Select</option>
+            <option value="3">3 years or more</option>
+            <option value="2">At least 2 years, but less than 3 years</option>
+            <option value="1">At least 1 year, but less than 2 years</option>
+            <option value="0">Less than 1 year</option>
+          </select>
+        </question>
+        ${i === 0 ? `
+        <question property="SeniorDriver" class="box-row question">
+          <div class="question-label"><label>Mature Driver Course</label></div>
+          <select id="People_Drivers_List_${i}_ProductSpecificInformation_List_0_Embedded_Questions_List_SeniorDriver">
+            <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+          </select>
+        </question>` : ''}
+        ${i === 1 ? `
+        <question property="GoodStudent" class="box-row question">
+          <div class="question-label"><label>Good Student</label></div>
+          <select id="People_Drivers_List_${i}_ProductSpecificInformation_List_0_Embedded_Questions_List_GoodStudent">
+            <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+          </select>
+        </question>
+        <question property="StudentLocation" class="box-row question">
+          <div class="question-label"><label>Distant Student</label></div>
+          <select id="People_Drivers_List_${i}_ProductSpecificInformation_List_0_Embedded_Questions_List_StudentLocation">
+            <option value="">Select</option><option value="Y">Yes</option><option value="N">No</option>
+          </select>
+        </question>` : ''}
+      `;
+      document.getElementById('drivers-host').appendChild(div);
+      // Simulate Progressive masking typed LicenseNumber with leading X's after CurrentWorkflowState (e.g. "XXXXXX4321").
+      const dlInput = div.querySelector(`#People_Drivers_List_${i}_Embedded_Questions_List_LicenseNumber`);
+      dlInput.addEventListener('change', () => {
+        const v = dlInput.value.trim();
+        if (!v || /^X{3,}/i.test(v)) return;
+        apiDelay('CurrentWorkflowState', () => {
+          dlInput.value = 'X'.repeat(Math.max(3, v.length - 3)) + v.slice(-3);
+        });
+      });
+    };
+    addDriver();
+    document.getElementById('add-driver-btn').addEventListener('click', () => apiDelay('AddedDriverCollection', addDriver));
+
+    const recalcHost = document.getElementById('recalc-host');
+    const billplanHost = document.getElementById('billplan-host');
+    const markStale = () => {
+      recalcHost.style.display = 'block';
+      billplanHost.style.display = 'none';
+    };
+    document.getElementById('recalc-btn').addEventListener('click', () => {
+      apiDelay('RecalculateRate', () => {
+        recalcHost.style.display = 'none';
+        billplanHost.style.display = 'block';
+      });
+    });
+    window.__emailPrintClicks = 0;
+    document.getElementById('email-print-btn').addEventListener('click', () => { window.__emailPrintClicks++; });
+    window.__pointOfSaleClicks = 0;
+    for (const [id, nextStep] of [
+      ['btnNextNI', 'Products'],
+      ['btnNextProd', 'Household Members'],
+      ['btnNextHH', 'Additional Details'],
+      ['btnNextAD', 'Coverages'],
+      ['btnNextCov', 'Portfolio'],
+    ]) {
+      document.getElementById(id).addEventListener('click', () => apiDelay('NextWorkflowState', () => setStep(nextStep)));
+    }
+    document.getElementById('btnNextPortfolio').addEventListener('click', () => {
+      window.__pointOfSaleClicks++;
+      apiDelay('NextWorkflowState', () => setStep('Point of Sale'));
+    });
+
+    // Coverages: 2 vehicles rendered. When COMP becomes None, COLL & PVP turn into read-only <input>.
+    const covHost = document.getElementById('coverages-vehicles');
+    for (let i = 0; i < 2; i++) {
+      const card = document.createElement('div');
+      card.innerHTML = `
+        <h3>Vehicle ${i + 1} Coverages</h3>
+        ${i === 0 ? `
+        <question property="BIPD" class="box-row question">
+          <div class="question-label"><label>Bodily Injury &amp; Property Damage *</label></div>
+          <select id="CoveragesAA_Vehicles_List_0_Embedded_Questions_List_BIPD" required>
+            <option value="">Select</option><option value="NONE">None</option><option value="25/50/25">25/50/25</option><option value="50/100/50">50/100/50</option><option value="100/300/100">100/300/100</option>
+          </select>
+        </question>` : ''}
+        <question property="UMBI" class="box-row question">
+          <div class="question-label"><label>Uninsured Motorist Bodily Injury</label></div>
+          <select id="CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_UMBI"><option value="25/50" selected>25/50</option><option value="NONE">None</option></select>
+        </question>
+        <question property="COMP" class="box-row question">
+          <div class="question-label"><label>Comprehensive Deductible</label></div>
+          <select id="CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_COMP">
+            <option value="NONE">None</option><option value="500">$500</option><option value="1000" selected>$1,000</option>
+          </select>
+        </question>
+        <question property="COLL" class="box-row question" data-coll-wrap="${i}">
+          <div class="question-label"><label>Collision Deductible</label></div>
+          <select id="CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_COLL">
+            <option value="NONE">None</option><option value="500">$500</option><option value="1000" selected>$1,000</option>
+          </select>
+        </question>
+        <question property="PVP" class="box-row question" data-pvp-wrap="${i}">
+          <div class="question-label"><label>Progressive Vehicle Protection</label></div>
+          <select id="CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_PVP">
+            <option value="NONE">None</option><option value="100" selected>Selected with $100 deductible</option>
+          </select>
+        </question>
+        <question property="SnapshotEnrollmentType" class="box-row question">
+          <div class="question-label"><label>Snapshot Enrollment</label></div>
+          <select id="CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_SnapshotEnrollmentType">
+            <option value="P" selected>Plugin</option><option value="N">Do Not Participate</option>
+          </select>
+        </question>
+      `;
+      card.addEventListener('change', markStale);
+      const compSel = card.querySelector(`#CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_COMP`);
+      compSel.addEventListener('change', () => {
+        if (compSel.value !== 'NONE') return;
+        for (const [wrapAttr, suffix] of [['data-coll-wrap', 'COLL'], ['data-pvp-wrap', 'PVP']]) {
+          const wrap = card.querySelector(`[${wrapAttr}="${i}"]`);
+          const cur = wrap.querySelector(`#CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_${suffix}`);
+          if (cur && cur.tagName === 'SELECT') {
+            const ro = document.createElement('input');
+            ro.type = 'text';
+            ro.readOnly = true;
+            ro.id = `CoveragesAA_Vehicles_List_${i}_Embedded_Questions_List_${suffix}`;
+            ro.value = 'None';
+            cur.replaceWith(ro);
+          }
+        }
+      });
+      covHost.appendChild(card);
+    }
+  </script>
+</body>
+</html>

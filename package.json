@@ -34,6 +34,7 @@
     "e2e": "node scripts/e2e.mjs",
     "mock:amwins": "node scripts/amwins-mock.mjs",
     "mock:geico": "node scripts/geico-mock.mjs",
+    "mock:progressive-pa": "node scripts/progressive-pa-mock.mjs",
     "test:intakes": "node scripts/intake-mocks.mjs",
     "mock:luna": "node scripts/luna-mock.mjs",
     "ai:eval": "node scripts/ai-eval.mjs",

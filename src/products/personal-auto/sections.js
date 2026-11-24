@@ -58,6 +58,7 @@ export const SECTIONS = [
     ['vehicles[].commuteMiles', 'One-way commute miles'],
     ['vehicles[].commuteDays', 'Commute days a week', 'int'],
     ['vehicles[].damage', 'Existing damage', 'bool'],
+    ['vehicles[].fullCoverage', 'Full coverage', 'bool'],
     ['vehicles[].lienholder.name', 'Lienholder'],
     ['vehicles[].lienholder.street', 'Lienholder street'],
     ['vehicles[].lienholder.city', 'Lienholder city'],

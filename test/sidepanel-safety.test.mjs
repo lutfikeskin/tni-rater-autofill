@@ -22,7 +22,7 @@ import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { progressivePa } from '../src/carriers/progressive-pa.js';
-import { quoteProgress, ratersSaid, stopScreen } from '../src/carriers.js';
+import { quoteProgress, ratersFor, ratersSaid, stopScreen } from '../src/carriers.js';
 import { productOf } from '../src/products.js';
 import { quotedCarrierPolicy } from '../src/util.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
@@ -7251,7 +7251,7 @@ function dockHarness({ carrier, switches = {}, background = false, issue = null,
   const ui = { 'auto-advance': { checked: true }, 'check-continue': { checked: false }, 'auto-followups': { checked: true }, report: { querySelector: () => null }, ...switches };
   const state = { intake: { warnings: [], done: [] }, view: 'page', tab: { id: 7, url, carrier, background }, tabSteps: new Map(step ? [[7, step]] : []), autoPages: new Set(), aiDocks: new Map(), filling: false, fillingFor: null };
   const context = { state, $: (id) => ui[id], inExtension: true, pageOf: (u) => u, onQuotePage: () => true, showReport: () => null, quoteProgress: () => null,
-    stateIssue: () => issue, pendingAi: () => [], ...extra };
+    ratersFor, productOf, stateIssue: () => issue, pendingAi: () => [], ...extra };
   vm.runInNewContext(['dockFor', 'continueSaid'].map(extractFunction).join('\n'), context);
   return { dock: () => context.dockFor(), ui, state };
 }

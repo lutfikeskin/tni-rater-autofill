@@ -30,7 +30,17 @@ export const CONCEPTS = Object.freeze({
   'quote.unit-entry': 'How the next vehicle or trailer is added (by VIN, or which unit next).',
   'quote.all-vehicles': "Whether the quote includes all the customer's commercially owned vehicles.",
   'quote.snapshot-pro': "Progressive's Snapshot Pro enrolment.",
+  'quote.snapshot': "Progressive's personal-auto Snapshot telematics enrollment.",
   'quote.telematics-commitment': "The client's commitment to install dashcams or the carrier's telematics devices, and consent to it.",
+  'quote.disclosure': "Whether the carrier's required consumer disclosure was read or provided.",
+  'quote.named-non-owner': 'Whether the policy is a named non-owner / named operator policy.',
+  'quote.all-drivers': 'Whether all required household drivers are listed on the quote.',
+  'quote.paperless': 'Whether the customer opts into paperless document and bill delivery.',
+
+  // Residence (personal auto)
+  'residence.moved': 'Whether the insured moved in the last two months.',
+  'residence.ownership': 'Whether the insured owns or rents their primary residence.',
+  'residence.total-residents': 'Total number of residents living in the household.',
 
   // The business
   'business.name': 'The business or named insured name.',
@@ -108,6 +118,11 @@ export const CONCEPTS = Object.freeze({
   'driver.sr22': 'Whether a driver needs an SR-22 (certificate of financial responsibility).',
   'driver.defensive-course': 'A defensive driving course or discount.',
   'driver.claims': "A driver's accidents, claims or violations.",
+  'driver.second-named-insured': 'Whether a household member is listed as a second named insured.',
+  'driver.license-type': "A driver's license type (personal auto, commercial, permit, etc.).",
+  'driver.license-status': "A driver's license status (valid, suspended, expired, etc.).",
+  'driver.employment': "A driver's employment category and occupation.",
+  'driver.student-discount': 'Good student or distant student discount eligibility.',
 
   // Vehicles
   'vehicle.vin': "A vehicle's VIN.",
@@ -128,6 +143,7 @@ export const CONCEPTS = Object.freeze({
   'vehicle.ownership-length': 'How long the insured has had a vehicle.',
   'vehicle.garaging': 'Where a vehicle is garaged or parked.',
   'vehicle.use': "A vehicle's use in the business (business operations, primary income).",
+  'vehicle.rideshare': 'Whether a vehicle is used for rideshare / TNC (Uber, Lyft, DoorDash, etc.).',
 
   // Trailers
   'trailer.vin': "A trailer's VIN.",
@@ -152,6 +168,9 @@ export const CONCEPTS = Object.freeze({
   'coverage.rental': 'Rental reimbursement.',
   'coverage.rental-downtime': 'Rental reimbursement with downtime.',
   'coverage.roadside': 'Towing, labor and road service.',
+  'coverage.vehicle-protection': 'Mechanical breakdown / Progressive Vehicle Protection coverage.',
+  'coverage.loan-payoff': 'Loan or lease payoff (gap) coverage.',
+  'coverage.policy-addons': 'Policy-level optional endorsements (accident forgiveness, deductible savings bank).',
   'coverage.cargo': 'Motor truck cargo, its limit, deductible and special cargo questions.',
   'coverage.reefer-breakdown': 'Refrigeration breakdown.',
   'coverage.gl': 'General liability, and its limit.',

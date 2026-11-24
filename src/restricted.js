@@ -17,3 +17,25 @@ const WORDS = 'finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard
 export const NEVER_ADVANCE = new RegExp(`\\b(${WORDS})\\b`, 'i');
 // What a helper click never is: those, and the ways on, which only `advance` clicks.
 export const NEVER_CLICK = new RegExp(`\\b(continue|next|start quote|${WORDS})\\b`, 'i');
+
+// Progressive PA embeds an accessibility-only "(submit and move to next step)" caption inside every
+// step button ("PRODUCTS (submit and move to next step)", "POINT OF SALE (submit and move to next
+// step)"). Strip that exact suffix for advance buttons only when the visible step name before it is
+// non-empty and is not a sale step (Point of Sale / Final Sale), so safe quote-step navigation reads
+// as its visible label while Point of Sale, Final Sale, and any commit-worded button stay refused by
+// NEVER_ADVANCE. Helpers (NEVER_CLICK) never strip it.
+const STEP_SUBMIT_SUFFIX = /\s*\(submit and move to next step\)$/i;
+const SALE_STEP = /\b(point of sale|final sale)\b/i;
+
+/**
+ * Strips Progressive PA's accessibility-only "(submit and move to next step)" suffix from a
+ * non-sale step-advance button label while keeping commit words and sale steps intact.
+ * @param {string} s
+ * @returns {string}
+ */
+export function cleanAdvanceLabel(s) {
+  const trimmed = String(s ?? '').trim();
+  if (!STEP_SUBMIT_SUFFIX.test(trimmed)) return trimmed;
+  const visible = trimmed.replace(STEP_SUBMIT_SUFFIX, '').trim();
+  return visible && !SALE_STEP.test(visible) ? visible : trimmed;
+}

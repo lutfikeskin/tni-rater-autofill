@@ -26,7 +26,7 @@ const money = (s) => (s == null ? null : Math.round(Number(String(s).replace(/,/
 // discount". Else any "total/annual/policy/estimated premium $…" (its term unknown).
 const GEICO = new RegExp(String.raw`(\d{1,2})\s*month\s+total\s+premium\s*:?\s*${AMOUNT}(?:[^$]{0,80}?due today\s*${AMOUNT})?(?:[^$]{0,80}?(\d{1,2})\s+additional payments of\s*${AMOUNT})?`, 'i');
 const PROGRESSIVE = new RegExp(String.raw`total\s+premium\s+amount\s*${AMOUNT}\s*per\s+(year|6 months|six months|month)`, 'i');
-const ANY = new RegExp(String.raw`(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*${AMOUNT}`, 'i');
+const ANY = new RegExp(String.raw`(?:total|annual|policy|estimated)\s+(?:auto\s+)?premium(?:\s+amount)?\s*:?\s*${AMOUNT}`, 'i');
 const GEICO_STICKY = new RegExp(String.raw`\bquote\s+${AMOUNT}\s+due today\s+${AMOUNT}\s+total\b`, 'i');
 const TERMS = { year: 12, '6 months': 6, 'six months': 6, month: 1 };
 

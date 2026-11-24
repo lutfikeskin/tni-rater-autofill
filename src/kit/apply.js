@@ -234,6 +234,20 @@ export function agreesWith(step, c) {
       const actual = amount(val), wanted = amount(step.value);
       return actual != null && wanted != null && actual === wanted;
     }
+    if (step.masked) {
+      const shown = oneLine(val);
+      const wanted = oneLine(textFor(step, c));
+      if (shown && wanted) {
+        // Accept leading mask runs ("XXXXXX867", "*****1234", "•••••••••"): Progressive masks
+        // tlPrivate inputs (License Number) with leading X's after CurrentWorkflowState.
+        const m = shown.match(/^([X*•●]{3,})[\s-]*(.*)$/i);
+        if (m) {
+          const tail = m[2].trim();
+          if (!tail) return m[1].length >= 4;
+          if (loose(wanted).endsWith(loose(tail))) return true;
+        }
+      }
+    }
     return oneLine(val) === oneLine(textFor(step, c));
   }
   if (c.kind === 'select' && /** @type {HTMLSelectElement} */ (c.el).multiple) {

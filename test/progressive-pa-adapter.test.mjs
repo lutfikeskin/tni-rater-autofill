@@ -110,13 +110,16 @@ function withKitGlobals(page, fn) {
   }
 }
 
-test('progressive-pa carrier config wires its own adapter, layoutUrl, layoutSteps, stopSteps, and carrierRuleFiles without stopPages, autoFillUrl, rules or display', () => {
+test('progressive-pa carrier config wires its adapter, autoFillUrl, layoutUrl, quoteSteps, stopSteps, advance, display, rules and carrierRuleFiles without stopPages', () => {
   assert.equal(progressivePa.pageAdapter, 'src/content/carriers/progressive-pa.js');
   assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/Quote/Index/'), true);
+  assert.equal(progressivePa.layoutUrl?.test('https://quoting.foragentsonly.com/Quote'), true);
   assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/home/'), false);
   assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/login?ReturnUrl=/Quote/Index/'), false);
   assert.equal(progressivePa.layoutUrl?.test('https://www.foragentsonly.com/Something/Quote/Index/'), false);
-  assert.equal('autoFillUrl' in progressivePa, false);
+  assert.equal(progressivePa.autoFillUrl?.test('https://quoting.foragentsonly.com/Quote/Index/'), true);
+  assert.equal(progressivePa.autoFillUrl?.test('https://quoting.foragentsonly.com/Quote'), true);
+  assert.equal(progressivePa.autoFillUrl?.test('https://www.foragentsonly.com/home/'), false);
   assert.deepEqual(progressivePa.layoutSteps, [
     'Named Insured', 'Products', 'Household Members', 'Additional Details',
     'Coverages', 'Portfolio', 'Point of Sale', 'Final Sale',
@@ -137,24 +140,87 @@ test('progressive-pa carrier config wires its own adapter, layoutUrl, layoutStep
   assert.equal(covEvent.step, 'Coverages');
   assert.equal(carrierRefusal('progressive-pa', 'stop: Point of Sale'), false);
   assert.equal(carrierRefusal('progressive-pa', 'stop: Final Sale'), false);
-  assert.deepEqual(progressivePa.rules, []);
+  assert.ok(progressivePa.rules.length > 50);
   assert.equal(progressivePa.useGenericRules, false);
-  assert.equal('display' in progressivePa, false);
-  assert.equal('advance' in progressivePa, false);
+  assert.equal(progressivePa.display?.product, 'Personal auto');
+  assert.deepEqual(progressivePa.advance?.steps, ['Named Insured', 'Products', 'Household Members', 'Additional Details', 'Coverages']);
+  assert.equal(progressivePa.continueRetry, false);
+  assert.equal(progressivePa.finishedBy, 'emailPrint');
   assert.ok(carrierRuleFiles('progressive-pa').includes('src/content/carriers/progressive-pa.js'));
   assert.ok(!carrierRuleFiles('progressive-pa').includes('src/content/carriers/progressive.js'));
 });
 
-test('adapter shape: registers carrier progressive-pa with shared hooks only (no page, no create)', () => {
+test('adapter shape: registers carrier progressive-pa with shared hooks and create() for XHR tracking and column order', () => {
   const page = loadPage(readFixture('named-insured.html'));
   try {
     assert.equal(page.adapter.carrier, 'progressive-pa');
-    assert.equal(page.adapter.create, undefined);
+    assert.equal(typeof page.adapter.create, 'function');
     assert.equal(page.adapter.shared.page, undefined);
     assert.equal(typeof page.adapter.shared.step, 'function');
     assert.equal(typeof page.adapter.shared.date, 'function');
     assert.deepEqual([...page.adapter.shared.selectors.stepLinks], ['a.navigation-link']);
     assert.deepEqual([...page.adapter.shared.selectors.busy], ['.ui-blocker-spinner-outer-wrapper']);
+    const hooks = page.adapter.create();
+    assert.equal(hooks.serverBacked(), true);
+    assert.equal(hooks.busy(), false);
+    assert.equal(typeof hooks.order, 'function');
+  } finally {
+    page.close();
+  }
+});
+
+test('adapter create().order reorders multi-column entity grids left-to-right while preserving single-column pages', () => {
+  const html = `<!doctype html><html><body>
+    <input id="ProductsAA_Embedded_Questions_List_PolicyEffectiveDate">
+    <select id="ProductsAA_Vehicles_List_0_Embedded_Questions_List_TypeCode"></select>
+    <select id="ProductsAA_Vehicles_List_1_Embedded_Questions_List_TypeCode"></select>
+    <input id="ProductsAA_Vehicles_List_0_Embedded_Questions_List_Vin">
+    <input id="ProductsAA_Vehicles_List_1_Embedded_Questions_List_Vin">
+    <input type="checkbox" aria-labelledby="helpTextToggleLabel">
+  </body></html>`;
+  const page = loadPage(html);
+  try {
+    const { order } = page.adapter.create();
+    const controls = [...page.document.querySelectorAll('input, select')].map((el) => ({ el, id: el.id || 'toggle' }));
+    const ordered = order(controls).map((c) => c.id);
+    assert.deepEqual(ordered, [
+      'ProductsAA_Embedded_Questions_List_PolicyEffectiveDate',
+      'ProductsAA_Vehicles_List_0_Embedded_Questions_List_TypeCode',
+      'ProductsAA_Vehicles_List_0_Embedded_Questions_List_Vin',
+      'ProductsAA_Vehicles_List_1_Embedded_Questions_List_TypeCode',
+      'ProductsAA_Vehicles_List_1_Embedded_Questions_List_Vin',
+      'toggle',
+    ]);
+  } finally {
+    page.close();
+  }
+
+  // Single-column Named Insured (only row 1 for PhoneNumbers) stays in original DOM order.
+  const niHtml = `<!doctype html><html><body>
+    <input id="NamedInsured_Embedded_Questions_List_FirstName">
+    <input id="NamedInsured_PhoneNumbers_List_0_Embedded_Questions_List_PhoneNumber">
+    <input id="NamedInsured_Embedded_Questions_List_MailingAddress">
+  </body></html>`;
+  const ni = loadPage(niHtml);
+  try {
+    const { order } = ni.adapter.create();
+    const controls = [...ni.document.querySelectorAll('input')].map((el) => ({ el, id: el.id }));
+    assert.deepEqual(order(controls).map((c) => c.id), controls.map((c) => c.id));
+  } finally {
+    ni.close();
+  }
+});
+
+test('adapter caption resolves non-_Label aria-labelledby <label> and strips .required-subtext', () => {
+  const html = `<!doctype html><html><body>
+    <label id="PhoneTypeNumber">Phone Type/Number:<span aria-hidden="true">*</span><span class="required-subtext">Cell or Home phone required</span></label>
+    <select-input id="phoneSelecteId0">CellHomeWorkOther</select-input>
+    <input type="text" id="NamedInsured_PhoneNumbers_List_0_Embedded_Questions_List_PhoneNumber" aria-labelledby="PhoneTypeNumber phoneSelecteId0">
+  </body></html>`;
+  const page = loadPage(html);
+  try {
+    const phone = page.document.getElementById('NamedInsured_PhoneNumbers_List_0_Embedded_Questions_List_PhoneNumber');
+    assert.equal(page.adapter.shared.caption(phone), 'Phone Type/Number');
   } finally {
     page.close();
   }
@@ -747,10 +813,11 @@ test('field keys match the decided ref, row, and picker:special mapping across f
   assert.equal(pickerChange.key, 'picker:People.Drivers.DateOfBirth@2');
 });
 
-test('step links, Portfolio btnNextId, Remove, and Clear are never chosen as Continue or allowed helpers, and idle spinner is not busy', () => {
+test('step links, Portfolio btnNextId, Remove, and Clear are never chosen as Continue or allowed helpers; steps 1-5 btnNextId matches advance.text only', () => {
   const NAV_WORDS = '^(named insured|products|household members|additional details|coverages/bill plans|portfolio|point of sale|final sale)$';
+  const ADVANCE_RE = progressivePa.advance.text;
 
-  for (const { file } of FIXTURES) {
+  for (const { file, step } of FIXTURES) {
     const page = loadPage(readFixture(file));
     try {
       withKitGlobals(page, () => {
@@ -766,15 +833,18 @@ test('step links, Portfolio btnNextId, Remove, and Clear are never chosen as Con
         spinner.style.visibility = '';
 
         // No a.navigation-link is ever found as a Continue or a helper.
-        assert.equal(findAdvanceButton(NAV_WORDS), null, `${file}: nav link refused as Continue`);
+        const navFound = findAdvanceButton(NAV_WORDS);
+        if (navFound) assert.equal(navFound.matches('a.navigation-link'), false, `${file}: nav link refused as Continue`);
         assert.equal(findButton({ text: NAV_WORDS }), null, `${file}: nav link refused as helper`);
 
-        // Broad Continue pattern never picks a nav link, btnNextId, Remove, or Clear.
-        const adv = findAdvanceButton('next|continue|step');
-        if (adv) {
-          assert.equal(adv.matches('a.navigation-link'), false, `${file}: not a nav link`);
-          assert.notEqual(adv.id, 'btnNextId', `${file}: btnNextId carries "submit" so never Continue`);
-          assert.doesNotMatch(adv.textContent ?? '', /\b(remove|clear)\b/i, `${file}: never Remove or Clear`);
+        // Carrier's configured advance pattern finds #btnNextId on steps 1-5 and returns null on Portfolio.
+        const adv = findAdvanceButton(ADVANCE_RE);
+        if (step === 'Portfolio') {
+          assert.equal(adv, null, `${file}: Portfolio never matches advance`);
+        } else {
+          assert.ok(adv, `${file}: finds forward step button`);
+          assert.equal(adv.id, 'btnNextId', `${file}: picks #btnNextId`);
+          assert.equal(adv.matches('a.navigation-link'), false, `${file}: never a nav link`);
         }
 
         // Remove is refused as both Continue and helper (src/restricted.js NEVER_ADVANCE / NEVER_CLICK).
