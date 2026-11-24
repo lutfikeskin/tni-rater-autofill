@@ -104,6 +104,7 @@ try {
   const r2 = await fillCurrentStep();
   assert.equal(r2.failed.length, 0, `Products failed: ${JSON.stringify(r2.failed)}`);
   assert.equal(r2.unknown.length, 0, `Products unknown: ${JSON.stringify(r2.unknown)}`);
+  assert.equal(r2.kept.some((k) => k.differs), false, `Prefilled PolicyEffectiveDate must not flag differs: ${JSON.stringify(r2.kept)}`);
   assert.ok(!r2.advanced, 'Products must hold auto-advance while vehicle 2 VIN needs the agent');
   assert.equal(await activeStep(), 'Products');
   const prodVals = await page.evaluate(() => ({

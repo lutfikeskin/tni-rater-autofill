@@ -24,6 +24,7 @@ export function createAddressDriver(kit) {
   const shownSuggestions = () => deepQueryAll(document, suggestionSelector()).filter((el) => el.getClientRects().length && oneLine(el.textContent));
   async function applyAddress(step, c) {
     const text = String(step.value);
+    let typed = text;
     const { el, widget } = c;
     const before = new Set(shownSuggestions());
     // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
@@ -79,7 +80,8 @@ export function createAddressDriver(kit) {
       // string and only suggest once the street alone is typed: retry with `fallback` while still
       // matching against the full address's house number and ZIP.
       if (!first && !halted() && hasFallback) {
-        setAndTrigger(String(step.fallback));
+        typed = String(step.fallback);
+        setAndTrigger(typed);
         first = await pollFor(2400);
       }
     } finally {
@@ -106,7 +108,7 @@ export function createAddressDriver(kit) {
       for (const [key, code] of [['ArrowDown', 40], ['Enter', 13]]) el.dispatchEvent(keyEvent('keydown', key, code));
       await settle({ quietMs: 300, maxMs: 5000, why: 'address' });
       // Still the typed text: Google didn't take the keys; click the suggestion instead.
-      if (el.value !== text) return { ok: true, shown };
+      if (el.value !== typed) return { ok: true, shown };
       if (halted()) return interrupted();
     }
     for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));

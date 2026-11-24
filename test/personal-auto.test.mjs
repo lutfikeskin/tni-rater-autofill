@@ -114,6 +114,32 @@ test("lienholder rows assign by picked vehicle, or unambiguously when blank; unc
   const none = at({ lien_vehicle_1: 'Select*', lien_name_1: '', lien_street_1: '', lien_city_1: '', lien_state_1: 'Select*', lien_zip_1: '' });
   assert.ok(codes(none).includes('check lienholder.missing vehicles[0].lienholder.name'));
   assert.deepEqual(none.record.vehicles[0].lienholder, { name: null, street: null, city: null, state: null, zip: null });
+  // Two lienholder rows targeting the same vehicle (explicit or single-vehicle fallback) keep row 1 and raise lienholder.whose.
+  const dupExplicit = at({
+    lien_vehicle_1: '1',
+    lien_vehicle_2: '1',
+    lien_name_2: 'Second Bank',
+    lien_street_2: '2 Main St',
+    lien_city_2: 'Austin',
+    lien_state_2: 'TX',
+    lien_zip_2: '78701',
+  });
+  assert.equal(dupExplicit.record.vehicles[0].lienholder.name, 'Example Credit Union');
+  assert.deepEqual(dupExplicit.readFrom['vehicles[0].lienholder.name'], ['lien_name_1']);
+  assert.ok(dupExplicit.warnings.some((w) => w.code === 'lienholder.whose' && w.level === 'check' && w.msg.includes('Second Bank')));
+
+  const dupFallback = at({
+    lien_vehicle_1: 'Select*',
+    lien_vehicle_2: 'Select*',
+    lien_name_2: 'Second Bank',
+    lien_street_2: '2 Main St',
+    lien_city_2: 'Austin',
+    lien_state_2: 'TX',
+    lien_zip_2: '78701',
+  });
+  assert.equal(dupFallback.record.vehicles[0].lienholder.name, 'Example Credit Union');
+  assert.deepEqual(dupFallback.readFrom['vehicles[0].lienholder.name'], ['lien_name_1']);
+  assert.ok(dupFallback.warnings.some((w) => w.code === 'lienholder.whose' && w.level === 'check' && w.msg.includes('Second Bank')));
 });
 
 test('State Minimum or less is read as the client chose it, on both limit lists', () => {

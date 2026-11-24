@@ -98,6 +98,25 @@ test('Named Insured maps insured driver, contact, address, and TNI standards (D1
   const ss = bySel(buildPlan(shortStay, progressivePa, {}), '#NamedInsured_Embedded_Questions_List_RecentlyMoved');
   assert.deepEqual([ss.value, ss.source], ['Yes', 'derived']);
 
+  // Comparators & compound durations: "< 2 months" -> Yes, "0 years 6 months" -> No,
+  // "0 years 1 month" -> Yes, "> 2 months" -> No, ambiguous upper/lower bounds -> null (fact).
+  for (const [timeAtAddress, expectedVal, expectedSrc] of [
+    ['< 2 months', 'Yes', 'derived'],
+    ['under 1 month', 'Yes', 'derived'],
+    ['0 years 1 month', 'Yes', 'derived'],
+    ['0 years 6 months', 'No', 'derived'],
+    ['> 2 months', 'No', 'derived'],
+    ['<= 2 months', null, 'fact'],
+    ['less than 1 year', null, 'fact'],
+    ['under 6 months', null, 'fact'],
+    ['over 1 month', null, 'fact'],
+  ]) {
+    const rec = baseRecord();
+    rec.residence.timeAtAddress = timeAtAddress;
+    const step = bySel(buildPlan(rec, progressivePa, {}), '#NamedInsured_Embedded_Questions_List_RecentlyMoved');
+    assert.deepEqual([step.value, step.source], [expectedVal, expectedSrc], `timeAtAddress="${timeAtAddress}"`);
+  }
+
   // Second name in first-name box splits to First Name + Middle Initial on both Named Insured and Household Members.
   const twoWord = baseRecord();
   twoWord.drivers[0].first = 'Jordan Michael';
@@ -115,7 +134,9 @@ test('Named Insured maps insured driver, contact, address, and TNI standards (D1
 
 test('Products maps effective date, named operator, VIN, ownership buckets, mileage, rideshare/delivery, and actions (D4-D8)', () => {
   const plan = buildPlan(baseRecord(), progressivePa, {});
-  assert.match(String(bySel(plan, '#ProductsAA_Embedded_Questions_List_PolicyEffectiveDate').value), /^\d{2}\/\d{2}\/\d{4}$/);
+  const eff = bySel(plan, '#ProductsAA_Embedded_Questions_List_PolicyEffectiveDate');
+  assert.match(String(eff.value), /^\d{2}\/\d{2}\/\d{4}$/);
+  assert.equal(eff.trustPage, true);
   assert.equal(bySel(plan, 'input[id^="ProductsAA_Embedded_Questions_List_NamedOperatorIndicator_"]').value, false);
   assert.equal(bySel(plan, '#ProductsAA_Vehicles_List_0_Embedded_Questions_List_TypeCode').value, '1981 & Newer - Autos, Pickups, Vans, and Utility Vehicles');
   assert.equal(bySel(plan, '#ProductsAA_Vehicles_List_0_Embedded_Questions_List_Vin').value, '1HGCM82633A004352');
@@ -193,14 +214,53 @@ test('Household Members maps drivers, spouse second named insured, non-employed 
   assert.deepEqual([bySel(ep, '#People_Drivers_List_0_Embedded_Questions_List_LicenseType').value, bySel(ep, '#People_Drivers_List_0_Embedded_Questions_List_LicenseType').source], [null, 'fact']);
   assert.deepEqual([bySel(ep, '#People_Drivers_List_0_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverYearsLicensed').value, bySel(ep, '#People_Drivers_List_0_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverYearsLicensed').source], [null, 'fact']);
   assert.deepEqual([bySel(ep, 'input[id^="People_Drivers_List_0_Embedded_Questions_List_StateFiling_"]').value, bySel(ep, 'input[id^="People_Drivers_List_0_Embedded_Questions_List_StateFiling_"]').source], [null, 'fact']);
+
+  // driverLooksExcluded scopes to the named driver when notes name one, and holds all drivers when unnamed.
+  const namedExcl = baseRecord();
+  namedExcl.notes.text = 'Exclude Casey from policy';
+  const nep = buildPlan(namedExcl, progressivePa, {});
+  assert.equal(bySel(nep, '#People_Drivers_List_0_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded').value, 'Rated');
+  assert.equal(bySel(nep, '#People_Drivers_List_1_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded').value, 'Rated');
+  assert.deepEqual([
+    bySel(nep, '#People_Drivers_List_2_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded').value,
+    bySel(nep, '#People_Drivers_List_2_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded').source,
+  ], [null, 'fact']);
+
+  const unnamedExcl = baseRecord();
+  unnamedExcl.notes.text = 'Needs an excluded driver';
+  const uep = buildPlan(unnamedExcl, progressivePa, {});
+  for (const idx of [0, 1, 2]) {
+    assert.equal(bySel(uep, `#People_Drivers_List_${idx}_ProductSpecificInformation_List_0_Embedded_Questions_List_DriverIncluded`).value, null);
+  }
 });
 
 test('Additional Details and Coverages map prior insurance, standards, fullCoverage per vehicle, State Minimum, and premium (D16-D24)', () => {
   const plan = buildPlan(baseRecord(), progressivePa, {});
   assert.equal(bySel(plan, '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_InsuranceToday').value, 'Yes, currently insured');
   assert.equal(bySel(plan, '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_PriorCarrierIsProgressive').value, 'No');
-  assert.equal(bySel(plan, '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_BodilyInjuryLimits').value, 'Greater than State Minimum, Less than 100/300 or 100 CSL');
+  const priorBi = bySel(plan, '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_BodilyInjuryLimits');
+  assert.equal(priorBi.value, 'Greater than State Minimum, Less than 100/300 or 100 CSL');
+  assert.equal(priorBi.replace, false, 'prior/current BI limit keeps Progressive prefilled option');
   assert.equal(bySel(plan, '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_RecentAutoInsuranceCompanyPeriod').value, 'At least 1 year but less than 3 years');
+
+  // priorTenureBand buckets month counts accurately across 12+, 36+, and 60+ months.
+  for (const [insuredFor, expected] of [
+    ['6 months', 'Less than 1 year'],
+    ['11 months', 'Less than 1 year'],
+    ['12 months', 'At least 1 year but less than 3 years'],
+    ['18 months', 'At least 1 year but less than 3 years'],
+    ['24 months', 'At least 1 year but less than 3 years'],
+    ['36 months', 'At least 3 years but less than 5 years'],
+    ['60 months', '5 years or more'],
+  ]) {
+    const rec = baseRecord();
+    rec.priorInsurance[0].insuredFor = insuredFor;
+    assert.equal(
+      bySel(buildPlan(rec, progressivePa, {}), '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_RecentAutoInsuranceCompanyPeriod').value,
+      expected,
+      `insuredFor="${insuredFor}"`,
+    );
+  }
   assert.equal(bySel(plan, '#AdditionalDetails_ProductSpecificInformation_List_0_Embedded_Questions_List_AllDriversAcknowledgement').value, 'Yes');
   assert.equal(bySel(plan, '#AdditionalDetails_Embedded_Questions_List_PaperlessPreference').value, 'Yes');
   assert.equal(bySel(plan, '#AdditionalDetails_Embedded_Questions_List_TotalResidents').value, '3');
@@ -208,7 +268,11 @@ test('Additional Details and Coverages map prior insurance, standards, fullCover
   assert.equal(bySel(plan, '#AdditionalDetails_Embedded_Questions_List_MultiPolInd').value, true);
   assert.equal(bySel(plan, '#AdditionalDetails_Embedded_Questions_List_MultiPolInd').source, 'standard');
 
-  // Coverages: Vehicle 0 fullCoverage=true ($500/$1,000), Vehicle 1 fullCoverage=false (None/None).
+  // Coverages: BIPD replaces Progressive's default with client's requested limit;
+  // Vehicle 0 fullCoverage=true ($500/$1,000), Vehicle 1 fullCoverage=false (None/None).
+  const bipd = bySel(plan, 'select#CoveragesAA_Vehicles_List_0_Embedded_Questions_List_BIPD');
+  assert.equal(bipd.value, '100/300/100');
+  assert.equal(bipd.replace, true);
   assert.equal(bySel(plan, 'select#CoveragesAA_Vehicles_List_0_Embedded_Questions_List_COMP').value, '$500');
   assert.equal(bySel(plan, 'select#CoveragesAA_Vehicles_List_0_Embedded_Questions_List_COLL').value, '$1,000');
   assert.equal(bySel(plan, 'select#CoveragesAA_Vehicles_List_0_Embedded_Questions_List_PVP').value, 'None');

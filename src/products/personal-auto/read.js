@@ -265,8 +265,21 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
   } else {
     // Two lienholder rows, each naming its vehicle (1..4). Without a vehicle chosen, assign when
     // unambiguous (the only financed/leased vehicle, or the only vehicle on the form); otherwise
-    // raise a check quoting the lienholder.
+    // raise a check quoting the lienholder. Never silently overwrite an already-assigned vehicle.
     let unassignedLienholder = false;
+    const assignedLienholders = new Set();
+    const assignLienholder = (idx, n, lien, said, noteIfUnfinanced) => {
+      if (assignedLienholders.has(idx)) {
+        unassignedLienholder = true;
+        const existing = vehicles[idx].lienholder.name || Object.values(vehicles[idx].lienholder).filter(Boolean).join(', ');
+        check('lienholder.whose', `vehicles[${idx}].lienholder.name`, `A second lienholder ("${said}") also points to ${named[idx]} (already "${existing}"). Confirm which vehicle each lienholder belongs to.`);
+        return;
+      }
+      assignedLienholders.add(idx);
+      Object.assign(vehicles[idx].lienholder, lien);
+      for (const f of Object.keys(lien)) readFrom[`vehicles[${idx}].lienholder.${f}`] = [`lien_${f}_${n}`];
+      if (noteIfUnfinanced) noteIfUnfinanced();
+    };
     for (const n of LIENHOLDER_ROWS) {
       const lien = {
         name: txt(`lien_name_${n}`),
@@ -281,20 +294,20 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
       if (pickedRow != null) {
         const idx = rows.vehicles.indexOf(pickedRow);
         if (idx >= 0) {
-          Object.assign(vehicles[idx].lienholder, lien);
-          for (const f of Object.keys(lien)) readFrom[`vehicles[${idx}].lienholder.${f}`] = [`lien_${f}_${n}`];
-          if (!financed.includes(idx)) {
-            info('lienholder.not-financed', `vehicles[${idx}].lienholder.name`, `Lienholder "${said}" assigned to ${named[idx]}, which isn't marked financed or leased.`);
-          }
+          assignLienholder(idx, n, lien, said, () => {
+            if (!financed.includes(idx)) {
+              info('lienholder.not-financed', `vehicles[${idx}].lienholder.name`, `Lienholder "${said}" assigned to ${named[idx]}, which isn't marked financed or leased.`);
+            }
+          });
         } else {
           unassignedLienholder = true;
           check('lienholder.whose', 'vehicles', `Lienholder "${said}" names vehicle ${pickedRow}, which isn't on the form. Whose is it?`);
         }
       } else if (lienholderFor.length === 1) {
         const [i] = lienholderFor;
-        Object.assign(vehicles[i].lienholder, lien);
-        for (const f of Object.keys(lien)) readFrom[`vehicles[${i}].lienholder.${f}`] = [`lien_${f}_${n}`];
-        if (!financed.length) info('lienholder.not-financed', `vehicles[${i}].lienholder.name`, `Lienholder "${said}" with no vehicle marked financed or leased: read as ${named[i]}'s.`);
+        assignLienholder(i, n, lien, said, () => {
+          if (!financed.length) info('lienholder.not-financed', `vehicles[${i}].lienholder.name`, `Lienholder "${said}" with no vehicle marked financed or leased: read as ${named[i]}'s.`);
+        });
       } else if (lienholderFor.length) {
         unassignedLienholder = true;
         check('lienholder.whose', 'vehicles', `Lienholder "${said}": ${financed.length ? `${financed.length} vehicles are financed or leased` : 'no vehicle is marked financed or leased'} and no vehicle was picked. Whose is it?`);

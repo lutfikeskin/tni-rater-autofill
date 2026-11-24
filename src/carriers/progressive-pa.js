@@ -106,23 +106,52 @@ function oneLineAddress(r) {
 }
 
 /**
- * Parse intake "time at address" into months when unambiguous, or null if blank/unreadable.
+ * Sum explicit duration components ("1 year 6 months", "0 years 6 months", "6 weeks", "45 days")
+ * into months, or null if none matched.
+ * @param {string} s
+ * @returns {number | null}
+ */
+function exactDurationMonths(s) {
+  const yr = s.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?|y\b)/);
+  const mo = s.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:months?|mos?|m\b)/);
+  const wk = s.match(/(\d+(?:\.\d+)?)\s*(?:weeks?|wks?)/);
+  const dy = s.match(/(\d+(?:\.\d+)?)\s*days?/);
+  if (!yr && !mo && !wk && !dy) return null;
+  return (yr ? Number(yr[1]) * 12 : 0)
+    + (mo ? Number(mo[1]) : 0)
+    + (wk ? Number(wk[1]) / 4.3 : 0)
+    + (dy ? Number(dy[1]) / 30 : 0);
+}
+
+/**
+ * Parse intake "time at address" into months when unambiguous for the 2-month move check,
+ * or null if blank, unreadable, or an ambiguous bound (e.g. "less than 1 year", "under 6 months").
  * @param {string | null | undefined} text
  * @returns {number | null}
  */
 function addressMonths(text) {
-  const s = String(text ?? '').trim().toLowerCase();
+  const s = String(text ?? '').trim().toLowerCase().replace(/\btwo\b/g, '2').replace(/\bone\b/g, '1');
   if (!s) return null;
-  if (/less\s+than\s+(?:2|two)\s+months?|under\s+(?:2|two)\s+months?|just\s+moved/i.test(s)) return 1;
-  if (/(?:more\s+than|over|at\s+least)\s+(?:2|two)\s+months?/i.test(s)) return 3;
-  const yr = s.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?|y\b)/);
-  if (yr) return Number(yr[1]) * 12;
-  const mo = s.match(/(\d+(?:\.\d+)?)\s*\+?\s*(?:months?|mos?|m\b)/);
-  if (mo) return Number(mo[1]);
-  const wk = s.match(/(\d+)\s*(?:weeks?|wks?)/);
-  if (wk) return Number(wk[1]) / 4.3;
-  const dy = s.match(/(\d+)\s*days?/);
-  if (dy) return Number(dy[1]) / 30;
+  if (/\bjust\s+moved\b/.test(s)) return 1;
+  // Upper-bound phrases ("less than ...", "under ...", "< ...", "<= ...", "up to ...", "at most ..."):
+  // only unambiguous when the bound guarantees < 2 months; wider bounds ("less than 1 year") stay null.
+  const upper = s.match(/^(less\s+than|under|up\s+to|at\s+most|<=|<)\s*(.+)$/);
+  if (upper) {
+    const strict = upper[1] === 'less than' || upper[1] === 'under' || upper[1] === '<';
+    const d = exactDurationMonths(upper[2]);
+    if (d == null) return null;
+    return (strict ? d <= 2 : d < 2) ? 1 : null;
+  }
+  // Lower-bound phrases ("more than ...", "over ...", "at least ...", "> ...", ">= ..."):
+  // only unambiguous when the bound guarantees >= 2 months ("over 1 month" stays null).
+  const lower = s.match(/^(more\s+than|over|at\s+least|>=|>)\s*(.+)$/);
+  if (lower) {
+    const d = exactDurationMonths(lower[2]);
+    if (d == null || d < 2) return null;
+    return Math.max(d, 3);
+  }
+  const exact = exactDurationMonths(s);
+  if (exact != null) return exact;
   const since = s.match(/\bsince\s+((?:19|20)\d{2})\b/);
   if (since) {
     const yrs = new Date().getFullYear() - Number(since[1]);
@@ -216,7 +245,14 @@ function driverLooksExcluded(r, i) {
   if (EXCLUDED_WORD.test(String(d.licenseNumber ?? ''))) return true;
   const notes = notesOf(r);
   if (!notes || !EXCLUDED_WORD.test(notes)) return false;
-  return Boolean((d.first && new RegExp(`\\b${d.first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(notes)) || EXCLUDED_WORD.test(notes));
+  const namedInNotes = (drv) => {
+    const first = driverFirstMiddle(drv).first;
+    return !!first && new RegExp(`\\b${first.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(notes);
+  };
+  // Scope to named driver(s) when the notes name any listed driver; fall back to holding every
+  // driver for the agent only when the exclusion note names no driver.
+  const anyNamed = orderedDrivers(r).some(namedInNotes);
+  return anyNamed ? namedInNotes(d) : true;
 }
 
 /** Map intake prior BI limit to Progressive PA's 4 tiers. @param {string | null | undefined} limit */
@@ -234,7 +270,15 @@ function priorBiTier(limit) {
 function priorTenureBand(raw) {
   const s = String(raw ?? '').trim().toLowerCase();
   if (!s) return null;
-  if (/^less than 1 year$|^under 1\b|^\d+\s*months?$/.test(s)) return 'Less than 1 year';
+  const mo = s.match(/^(\d+(?:\.\d+)?)\s*(?:months?|mos?)$/);
+  if (mo) {
+    const n = Number(mo[1]);
+    if (n < 12) return 'Less than 1 year';
+    if (n < 36) return 'At least 1 year but less than 3 years';
+    if (n < 60) return 'At least 3 years but less than 5 years';
+    return '5 years or more';
+  }
+  if (/^less than 1 year$|^under 1\b/.test(s)) return 'Less than 1 year';
   if (/^1\s*-\s*3\s*years?$|^[12]\s*years?$/.test(s)) return 'At least 1 year but less than 3 years';
   if (/^3\s*-\s*5\s*years?$|^[34]\s*years?$/.test(s)) return 'At least 3 years but less than 5 years';
   if (/^5\+?\s*years?$|^(?:[5-9]|[1-9]\d)\s*years?$/.test(s)) return '5 years or more';
@@ -440,7 +484,7 @@ function productsRules() {
     {
       concept: 'quote.effective-date', steps: ['Products'], selector: `#${PA}PolicyEffectiveDate`,
       name: 'Policy effective date (keep default; fill today if empty)', kind: 'date',
-      source: 'standard', tni: 'progressive-pa.effective-date', value: () => todayMmDdYyyy(),
+      source: 'standard', tni: 'progressive-pa.effective-date', trustPage: true, value: () => todayMmDdYyyy(),
     },
     {
       concept: 'quote.effective-date', steps: ['Products'], selector: 'question[property="PolicyEffectiveDate"] input[name="pickerInput"]',
@@ -604,6 +648,8 @@ function additionalDetailsRules() {
       value: (r) => (prior(r)?.carrier ? (sameCarrier(prior(r)?.carrier, 'progressive') ? 'Yes' : 'No') : null),
       note: (r) => (prior(r)?.carrier ? null : 'Prior auto insurance carrier is blank on the intake.'),
     },
+    // Prior/current policy BI limits: intentionally omit `replace: true` so Progressive's prefilled
+    // prior limit (from history/CLUE, often more accurate/higher than an uncertain intake guess) is kept.
     {
       concept: 'prior.limit', steps: ['Additional Details'], selector: `#${ADP}BodilyInjuryLimits`, name: 'Prior bodily injury limits', kind: 'choice',
       ignore: (r) => prior(r)?.currentlyInsured === false,
@@ -677,6 +723,7 @@ function coverageVehicleRules(i) {
     {
       concept: 'coverage.liability', steps: ['Coverages'], selector: `select${p}BIPD`, name: `Vehicle ${i + 1}: BI/PD liability limit`,
       kind: (r) => (/^state minimum/i.test(r?.coverage?.liabilityLimit ?? '') ? 'pick-not' : 'choice'),
+      replace: true,
       ignore: missing,
       source: (r) => (r?.coverage?.liabilityLimit ? 'derived' : 'fact'),
       value: (r) => {

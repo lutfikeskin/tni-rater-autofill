@@ -3743,6 +3743,37 @@ test('Google address autocomplete (hidden .pac-item list): first suggestion pick
   assert.ok(!report.kept.some((x) => x.differs));
 });
 
+test('Google address autocomplete (.pac-item) after fallback retry clicks the suggestion when arrow+enter is ignored', async () => {
+  const h = harness({ progressive: true, search: '?pageName=BusinessOwnerInfo' });
+  const street = makeInput({ id: `f_U${'A'.repeat(32)}27E_1_1`, ariaLabel: 'Street Address', attrs: { fieldref: 'PrimaryBusinessAddressOutputNonShredded.StreetAddressDup' } });
+  const zip = makeInput({ id: `f_U${'A'.repeat(32)}284_1_1`, ariaLabel: 'Zip Code', attrs: { fieldref: 'PrimaryBusinessAddressInput.ZipCode' } });
+  const city = makeInput({ id: `f_U${'A'.repeat(32)}286_1_1`, ariaLabel: 'City', attrs: { fieldref: 'PrimaryBusinessAddressInput.City' } });
+  h.document.body.append(street, zip, city);
+  const container = new FakeNode('div', { className: 'pac-container' });
+  container._visible = false;
+  h.document.body.append(container);
+  let clicked = 0;
+  // Offer suggestions ONLY when fallback (street-only, no comma) is typed; ignore ArrowDown+Enter so click fallback must run.
+  street.addEventListener('input', () => {
+    if (street.value.includes(',')) return;
+    const item = new FakeNode('div', { className: 'pac-item', textContent: '5001 Sheridan Street Davenport, IA 52806' });
+    item._visible = false;
+    item.click = () => {
+      clicked++;
+      street.value = '5001 SHERIDAN ST';
+      zip.value = '52806';
+      city.value = 'DAVENPORT';
+    };
+    container.append(item);
+  });
+  const record = { applicant: {}, garaging: { street: '5001 Sheridan St', city: 'Davenport', state: 'IA', zip: '52806' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 8 });
+  assert.equal(clicked, 1, 'fallback retry must click .pac-item when ArrowDown+Enter leaves el.value === fallback');
+  assert.equal(street.value, '5001 SHERIDAN ST');
+  assert.equal(zip.value, '52806');
+  assert.equal(report.failed.length, 0);
+});
+
 test('labels: our own mark tooltip and a date picker calendar are never taken as the question', async () => {
   const h = harness();
   const wrapper = new FakeNode('div');
