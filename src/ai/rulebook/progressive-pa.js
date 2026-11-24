@@ -44,7 +44,7 @@ export const progressivePa = {
       { id: 'progressive-pa.policy-addons', kind: 'standard', text: 'Accident Forgiveness and Deductible Savings Bank: No (TNI standard).' },
       { id: 'progressive-pa.bill-plan', kind: 'standard', text: 'Bill plan: Pay With EFT (Pay With EFT From Checking) (TNI standard).' },
       { id: 'progressive-pa.optional-coverages', kind: 'workflow', text: 'UMBI, UMPD, Medical Payment, Rental, Roadside, Custom Parts and Payoff stay at Progressive\'s defaults; the agent adjusts them as needed.' },
-      { id: 'progressive-pa.stops', kind: 'agent', text: 'Point of Sale and Final Sale are the agent\'s steps: nothing is filled or clicked there. With auto-advance on, clear steps move forward automatically from Named Insured through Coverages to Portfolio; Coverages clicks Recalculate when shown and Portfolio opens Email/Print and stops there.' },
+      { id: 'progressive-pa.stops', kind: 'agent', text: 'Point of Sale and Final Sale are the agent\'s steps: nothing is filled or clicked there. With auto-advance on, clear steps move forward automatically from Named Insured through Coverages to Portfolio; Coverages clicks Recalculate when shown and Portfolio clicks Email/Print (confirmed on live quotes to open the quote PDF preview only without emailing or sending anything to the client) and stops there.' },
     ] },
   ],
 };
