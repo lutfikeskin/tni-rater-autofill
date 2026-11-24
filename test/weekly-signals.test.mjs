@@ -284,6 +284,10 @@ test('RESTRICTED is the fill engine\'s own NEVER_ADVANCE, and Save & Continue is
   assert.ok(isRestricted('advance "Sign Out"'));
   assert.ok(!isRestricted('advance "Save & Continue"'));
   assert.ok(!isRestricted('advance "Continue"'));
+  assert.ok(!isRestricted('advance "PRODUCTS"'));
+  assert.ok(!isRestricted('advance "COVERAGES/BILL PLANS (submit and move to next step)"'));
+  assert.ok(isRestricted('advance "POINT OF SALE (submit and move to next step)"'));
+  assert.ok(isRestricted('helper "PRODUCTS (submit and move to next step)"'));
 });
 
 const run = (...args) => spawnSync(process.execPath, ['scripts/weekly-signals.mjs', ...args], { encoding: 'utf8', cwd: new URL('..', import.meta.url) });

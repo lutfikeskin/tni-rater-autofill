@@ -4,7 +4,7 @@
 // never are.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { NEVER_ADVANCE, NEVER_CLICK } from '../src/restricted.js';
+import { NEVER_ADVANCE, NEVER_CLICK, cleanAdvanceLabel } from '../src/restricted.js';
 
 const COMMITS = ['Bind', 'Bind Policy', 'Buy Now', 'Purchase', 'Submit', 'Submit Application', 'Finish', 'Save', 'Delete', 'Remove', 'Cancel', 'Discard Changes',
   'Order reports', 'Sign', 'eSignature', 'E-Sign', 'Log out', 'Sign out', 'Issue Policy', 'Pay Now', 'Make a Payment', 'Payment', 'Accept & Continue',
@@ -12,18 +12,33 @@ const COMMITS = ['Bind', 'Bind Policy', 'Buy Now', 'Purchase', 'Submit', 'Submit
 // What today's carriers click, as helper or as Continue (src/carriers/*.js, the mocks).
 const HELPERS = ['View More Payment Plans', 'Recalculate', 'Print Quote Proposal', 'Verify Address', 'Verify USDOT', 'Look Up VIN', 'Import Data', 'Import Valid Records',
   'Default all answers to No', 'Bill Plan Options', 'Print, Email, Fax', 'Done with this coverage', 'Add Commodity', 'Add Another Vehicle', 'Add Trailer',
-  'Yes, under permanent lease', 'Open New Application', 'Auto', 'Search', '+', 'Add Non-Trucking Liability instead?'];
-const ADVANCES = ['Continue', 'Next', 'Save & Continue', 'Save and Continue', 'Looks Good'];
+  'Yes, under permanent lease', 'Open New Application', 'Auto', 'Search', '+', 'Add Non-Trucking Liability instead?', 'Email/Print'];
+const ADVANCES = ['Continue', 'Next', 'Save & Continue', 'Save and Continue', 'Looks Good',
+  'PRODUCTS (submit and move to next step)', 'HOUSEHOLD MEMBERS (submit and move to next step)',
+  'ADDITIONAL DETAILS (submit and move to next step)', 'COVERAGES/BILL PLANS (submit and move to next step)',
+  'PORTFOLIO (submit and move to next step)'];
+const SALE_OR_COMMIT_STEPS = [
+  'POINT OF SALE (submit and move to next step)',
+  'FINAL SALE (submit and move to next step)',
+  'SUBMIT (submit and move to next step)',
+  'BIND POLICY (submit and move to next step)',
+  'BUY NOW (submit and move to next step)',
+  '(submit and move to next step)',
+];
 
 test('every commit button of the corpus is refused, as a helper and as Continue', () => {
   for (const words of COMMITS) {
-    assert.ok(NEVER_ADVANCE.test(words), `Continue would click "${words}"`);
+    assert.ok(NEVER_ADVANCE.test(cleanAdvanceLabel(words)), `Continue would click "${words}"`);
+    assert.ok(NEVER_CLICK.test(words), `a helper would click "${words}"`);
+  }
+  for (const words of SALE_OR_COMMIT_STEPS) {
+    assert.ok(NEVER_ADVANCE.test(cleanAdvanceLabel(words)), `Continue would click "${words}"`);
     assert.ok(NEVER_CLICK.test(words), `a helper would click "${words}"`);
   }
 });
 
 test('the buttons today\'s carriers click are not refused', () => {
   for (const words of HELPERS) assert.ok(!NEVER_CLICK.test(words), `a helper can't click "${words}"`);
-  // Save & Continue reads as Continue (src/kit/actions.js findAdvanceButton).
-  for (const words of ADVANCES) assert.ok(!NEVER_ADVANCE.test(words.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')), `Continue can't click "${words}"`);
+  // Save & Continue reads as Continue; Progressive PA's "(submit and move to next step)" suffix is stripped on non-sale steps (src/kit/actions.js findAdvanceButton).
+  for (const words of ADVANCES) assert.ok(!NEVER_ADVANCE.test(cleanAdvanceLabel(words).replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')), `Continue can't click "${words}"`);
 });

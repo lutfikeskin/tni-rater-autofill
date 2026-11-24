@@ -31,6 +31,7 @@ import {
 } from "./apply.js";
 import { itemResolution, LIST_STATUS } from "../resolution.js";
 import { premiumHere, readPremium } from "../premium.js";
+import { cleanAdvanceLabel } from "../restricted.js";
 
 /** @import { FailCode, FillOptions, FillReport, PlanStep, UnitPager } from "../../types.js" */
 /** @import { PageControl } from "./dom.js" */
@@ -690,7 +691,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         break;
       }
     }
-    const controls = collectControls();
+    const controls = adapter().order?.(collectControls()) ?? collectControls();
     state.roundControls = controls;
     state.report.fields = Math.max(state.report.fields, controls.length);
     if (thisFill.timeUp()) break;
@@ -2184,7 +2185,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     // The page's questions are read once here for the end of the fill: these checks, the marks, the
     // report's labels and order, and its reconciliation with the page (reconcile).
     const endReads = getControlReads();
-    const finalControls = stillHere ? collectControls() : [];
+    const finalControls = stillHere ? (adapter().order?.(collectControls()) ?? collectControls()) : [];
     const finalPairs = stillHere ? assign(finalControls, plan) : [];
     // A unit form drawn after the last round read the page has its own edits, never the last one's.
     if (skipBy && stillHere) skipWhere(finalPairs.units);
@@ -2446,7 +2447,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         const drawn = advance.quietMs ? now.filter((c) => !readKeys.has(fieldKey(c)) && !hasValue(c)) : [];
         const found = !changed.length && !moved.length && !drawn.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
         // Per form and button (`byForm`): one already continued from is the agent's now.
-        const key = found && advance.byForm ? [state.report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : state.report.stepKey;
+        const key = found && advance.byForm ? [state.report.stepKey, squash(cleanAdvanceLabel(buttonText(found))), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : state.report.stepKey;
         const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;
         // Nothing held Continue, but none could be clicked: the page still busy after the wait
         // ('busy') or showing no Continue (`none`: not drawn yet, disabled, or a list's Looks Good
@@ -2467,7 +2468,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
           state.report.covered = true;
           state.report.blockers.push(COVERED);
         } else if (button && approved && !thisFill.timeUp()) {
-          const text = buttonText(button).slice(0, 40);
+          const text = cleanAdvanceLabel(buttonText(button)).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           state.report.signatureBefore = signature();
           // Stamped before the click so any request started by pressButton() has startTime >= pressedAt
@@ -2490,7 +2491,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             const repeat = (event) => {
               if (!event.isTrusted) return;
               const path = event.composedPath?.() ?? [event.target];
-              if (!path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && re.test(buttonText(n)))) return;
+              if (!path.some((n) => n?.nodeType === 1 && safeMatches(n, agentPress()) && re.test(cleanAdvanceLabel(buttonText(n))))) return;
               event.preventDefault();
               event.stopImmediatePropagation();
               state.report.repeatsHeld = (state.report.repeatsHeld ?? 0) + 1;
@@ -2500,8 +2501,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
               // A Stop meanwhile doesn't end this wait (`abort: null`): Continue's request is the page's
               // until it is done, and the click guard above holds until then.
               const done = await settle({ quietMs: 250, maxMs: LOAD_MS, why: 'continued', abort: null });
-              // The next page drawn and quiet, as after a helper that opens one (`settledAt`).
-              if (done && currentPage() !== startPage) settledAt = { at: Date.now(), page: currentPage(), sig: signature() };
+              // The next page or step drawn and quiet, as after a helper that opens one (`settledAt`).
+              if (done && (currentPage() !== startPage || stepChanged())) settledAt = { at: Date.now(), page: currentPage(), sig: signature() };
               // Quiet, still on this page, and nothing sent to the server: the page refused Continue in
               // the browser (Progressive's own check, a question it requires still blank, says so at its
               // top; recording of 2026-11-04, Snapshot Pro: no request). A Continue that goes through

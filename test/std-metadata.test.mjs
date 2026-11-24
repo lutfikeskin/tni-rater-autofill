@@ -122,6 +122,6 @@ test('GEICO\'s UM limit: the standard amount applies outside Texas only', () => 
 
 test('each shared standard is described on every carrier', () => {
   for (const id of Object.keys(STANDARD_IDS)) {
-    for (const carrier of CARRIERS) assert.ok(withStd(carrier).some((rule) => rule.std.id === id), `${carrier.id} has a ${id} std`);
+    for (const carrier of CARRIERS.filter((c) => c.product === 'commercial-auto')) assert.ok(withStd(carrier).some((rule) => rule.std.id === id), `${carrier.id} has a ${id} std`);
   }
 });

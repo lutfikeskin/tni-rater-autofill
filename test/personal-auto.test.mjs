@@ -61,42 +61,85 @@ test('the current form reads into the personal-auto record, each answer from its
   assert.equal(accord.commuteMiles, 15);
   assert.equal(accord.commuteDays, 5);
   assert.equal(accord.damage, false);
+  assert.equal(accord.fullCoverage, true);
   assert.deepEqual(accord.lienholder, { name: 'Example Credit Union', street: '1 Bank Way', city: 'Dallas', state: 'TX', zip: '75201' });
   // "50,000+" is no exact amount: kept as written.
   assert.equal(corolla.annualMiles, '50,000+');
   assert.equal(corolla.damage, true);
+  assert.equal(corolla.fullCoverage, false);
   assert.deepEqual(record.trailers, []);
-  assert.deepEqual(record.priorInsurance, [{ currentlyInsured: true, carrier: 'Example Mutual', limit: '$50k/$100k', insuredFor: '2 years', expiration: '12/31/2026' }]);
+  assert.deepEqual(record.priorInsurance, [{ currentlyInsured: true, carrier: 'Example Mutual', limit: '$50k/$100k', insuredFor: '1-3 years', expiration: '12/31/2026' }]);
   assert.deepEqual(record.coverage, { liabilityLimit: '100/300/100', compDeductible: '$500', collDeductible: '$1,000' });
   assert.equal(record.notes.text, 'Rear bumper dent on the Corolla.');
   // The second VIN's check digit is wrong on purpose; nothing else needs the agent.
   assert.deepEqual(r.warnings.map((w) => w.code), ['vin.invalid']);
   assert.deepEqual(r.rows, { drivers: [1, 2], vehicles: [1, 2], trailers: [] });
-  // The one lienholder row is the financed vehicle's: the panel shows each answer on its own box.
-  assert.deepEqual(r.readFrom, Object.fromEntries(['name', 'street', 'city', 'state', 'zip'].map((f) => [`vehicles[0].lienholder.${f}`, [`lien_${f}`]])));
+  // Lienholder row 1 names vehicle 1: the panel shows each answer on its own box.
+  assert.deepEqual(r.readFrom, Object.fromEntries(['name', 'street', 'city', 'state', 'zip'].map((f) => [`vehicles[0].lienholder.${f}`, [`lien_${f}_1`]])));
 });
 
-test("the one lienholder row is the financed or leased vehicle's; whose it is, when that is unclear, is the agent's", () => {
+test("lienholder rows assign by picked vehicle, or unambiguously when blank; unclear cases are the agent's", () => {
   const at = (changes) => ok(readIntake({ ...current.raw, ...changes }, { today }));
   const codes = (r) => r.warnings.map((w) => `${w.level} ${w.code} ${w.path}`);
-  // Leased instead of financed: still the one.
-  assert.equal(at({ veh_ownership_1: 'Leased' }).record.vehicles[0].lienholder.name, 'Example Credit Union');
-  // Two financed vehicles: the agent's, quoted; neither is said to have no lienholder.
-  const two = at({ veh_ownership_2: 'Financed' });
+  // Two financed vehicles with both lienholder rows assigned by vehicle number.
+  const both = at({
+    veh_ownership_2: 'Leased',
+    lien_vehicle_2: '2',
+    lien_name_2: 'Second Bank',
+    lien_street_2: '2 Main St',
+    lien_city_2: 'Austin',
+    lien_state_2: 'TX',
+    lien_zip_2: '78701',
+  });
+  assert.equal(both.record.vehicles[0].lienholder.name, 'Example Credit Union');
+  assert.equal(both.record.vehicles[1].lienholder.name, 'Second Bank');
+  assert.ok(!codes(both).some((c) => c.includes('lienholder.')));
+  // Picked vehicle not marked financed or leased: still assigned, with an info note.
+  const owned = at({ veh_ownership_1: 'Owned' });
+  assert.equal(owned.record.vehicles[0].lienholder.name, 'Example Credit Union');
+  assert.ok(codes(owned).includes('info lienholder.not-financed vehicles[0].lienholder.name'));
+  // Picked vehicle number not on the form: check quoting the lienholder.
+  const missingVeh = at({ lien_vehicle_1: '4' });
+  assert.equal(missingVeh.record.vehicles[0].lienholder.name, null);
+  assert.ok(codes(missingVeh).includes('check lienholder.whose vehicles'));
+  // No vehicle picked and two financed vehicles: the agent's, quoted; neither is said to have no lienholder.
+  const two = at({ lien_vehicle_1: 'Select*', veh_ownership_2: 'Financed' });
   assert.deepEqual(two.record.vehicles.map((v) => v.lienholder.name), [null, null]);
   assert.ok(two.warnings.some((w) => w.code === 'lienholder.whose' && w.level === 'check' && w.msg.includes('Example Credit Union, 1 Bank Way, Dallas, TX, 75201')));
   assert.ok(!codes(two).some((c) => c.includes('lienholder.missing')));
-  // No vehicle financed or leased: with two vehicles the agent's; with one, that vehicle's, said so.
-  assert.ok(codes(at({ veh_ownership_1: 'Owned' })).includes('check lienholder.whose vehicles'));
-  const second = Object.fromEntries(Object.keys(current.raw).filter((k) => /^veh_.*_2$/.test(k)).map((k) => [k, '']));
-  const one = at({ ...second, veh_ownership_1: 'Owned' });
-  assert.equal(one.record.vehicles.length, 1);
-  assert.equal(one.record.vehicles[0].lienholder.city, 'Dallas');
-  assert.ok(codes(one).includes('info lienholder.not-financed vehicles[0].lienholder.name'));
+  // No vehicle picked and only one financed vehicle: falls back to that vehicle.
+  const fallback = at({ lien_vehicle_1: 'Select*', veh_ownership_1: 'Leased' });
+  assert.equal(fallback.record.vehicles[0].lienholder.name, 'Example Credit Union');
   // A financed vehicle with no lienholder given.
-  const none = at({ lien_name: '', lien_street: '', lien_city: '', lien_state: 'Select*', lien_zip: '' });
+  const none = at({ lien_vehicle_1: 'Select*', lien_name_1: '', lien_street_1: '', lien_city_1: '', lien_state_1: 'Select*', lien_zip_1: '' });
   assert.ok(codes(none).includes('check lienholder.missing vehicles[0].lienholder.name'));
   assert.deepEqual(none.record.vehicles[0].lienholder, { name: null, street: null, city: null, state: null, zip: null });
+  // Two lienholder rows targeting the same vehicle (explicit or single-vehicle fallback) keep row 1 and raise lienholder.whose.
+  const dupExplicit = at({
+    lien_vehicle_1: '1',
+    lien_vehicle_2: '1',
+    lien_name_2: 'Second Bank',
+    lien_street_2: '2 Main St',
+    lien_city_2: 'Austin',
+    lien_state_2: 'TX',
+    lien_zip_2: '78701',
+  });
+  assert.equal(dupExplicit.record.vehicles[0].lienholder.name, 'Example Credit Union');
+  assert.deepEqual(dupExplicit.readFrom['vehicles[0].lienholder.name'], ['lien_name_1']);
+  assert.ok(dupExplicit.warnings.some((w) => w.code === 'lienholder.whose' && w.level === 'check' && w.msg.includes('Second Bank')));
+
+  const dupFallback = at({
+    lien_vehicle_1: 'Select*',
+    lien_vehicle_2: 'Select*',
+    lien_name_2: 'Second Bank',
+    lien_street_2: '2 Main St',
+    lien_city_2: 'Austin',
+    lien_state_2: 'TX',
+    lien_zip_2: '78701',
+  });
+  assert.equal(dupFallback.record.vehicles[0].lienholder.name, 'Example Credit Union');
+  assert.deepEqual(dupFallback.readFrom['vehicles[0].lienholder.name'], ['lien_name_1']);
+  assert.ok(dupFallback.warnings.some((w) => w.code === 'lienholder.whose' && w.level === 'check' && w.msg.includes('Second Bank')));
 });
 
 test('State Minimum or less is read as the client chose it, on both limit lists', () => {
@@ -157,6 +200,11 @@ test('a name and date of birth in one box, and a license and its state', () => {
   assert.deepEqual(splitLicense('TN - S1234567'), { state: 'TN', number: 'S1234567' });
   assert.deepEqual(splitLicense('S1234567, tn'), { state: 'TN', number: 'S1234567' });
   assert.deepEqual(splitLicense('S1234567'), { state: null, number: 'S1234567' });
+
+  // General rule: second name in first-name box moves its first letter to middle initial.
+  const multi = ok(readIntake({ ...current.raw, drv_first_1: 'Jordan Michael', drv_first_2: 'Mary-Ann' }, { today }));
+  assert.deepEqual([multi.record.drivers[0].first, multi.record.drivers[0].middle], ['Jordan', 'M']);
+  assert.deepEqual([multi.record.drivers[1].first, multi.record.drivers[1].middle], ['Mary-Ann', null]);
 });
 
 test('the panel draws and edits a personal-auto record with its own sections, never commercial auto\'s', () => {
@@ -179,15 +227,21 @@ test('the panel draws and edits a personal-auto record with its own sections, ne
   assert.equal(JSON.stringify(record), before);
 });
 
-test('a personal-auto intake picks the personal-auto carriers, which fill nothing yet', () => {
+test('a personal-auto intake picks the personal-auto carriers (progressive-pa active, geico-pa stub)', () => {
   assert.equal(carrierForUrl('https://sales.geico.com/quote', { product: 'personal-auto' })?.id, 'geico-pa');
   assert.equal(carrierForUrl('https://www.foragentsonly.com/home/', { product: 'personal-auto' })?.id, 'progressive-pa');
+  assert.equal(carrierForUrl('https://quoting.foragentsonly.com/Quote/Index/', { product: 'personal-auto' })?.id, 'progressive-pa');
   assert.equal(carrierForUrl('https://sales.geico.com/quote', { product: 'commercial-auto' })?.id, 'geico');
   assert.equal(carrierForUrl('https://sales.geico.com/quote')?.id, 'geico', 'with no intake, the first carrier on the host, as before');
-  for (const id of ['geico-pa', 'progressive-pa']) {
-    const c = carrierForUrl(id === 'geico-pa' ? 'https://sales.geico.com/quote' : 'https://www.foragentsonly.com/', { product: 'personal-auto' });
-    assert.deepEqual([c?.rules.length, c?.useGenericRules, 'autoFillUrl' in (c ?? {}), 'display' in (c ?? {})], [0, false, false, false], id);
-  }
+  const g = carrierForUrl('https://sales.geico.com/quote', { product: 'personal-auto' });
+  assert.deepEqual([g?.rules.length, g?.useGenericRules, 'autoFillUrl' in (g ?? {}), 'display' in (g ?? {})], [0, false, false, false], 'geico-pa');
+  const p = carrierForUrl('https://quoting.foragentsonly.com/Quote/Index/', { product: 'personal-auto' });
+  assert.ok((p?.rules.length ?? 0) > 50, 'progressive-pa has filling rules');
+  assert.equal(p?.useGenericRules, false);
+  assert.equal(p?.autoFillUrl?.test('https://quoting.foragentsonly.com/Quote/Index/'), true);
+  assert.equal(p?.autoFillUrl?.test('https://quoting.foragentsonly.com/Quote'), true);
+  assert.equal(p?.autoFillUrl?.test('https://www.foragentsonly.com/home/'), false);
+  assert.ok(p?.display && p?.premiumPages?.length);
 });
 
 test('the usage log reads a personal-auto intake without client details, as a commercial one', async () => {

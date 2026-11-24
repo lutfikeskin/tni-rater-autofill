@@ -5,7 +5,7 @@
 // that gets it. Luna gets the general part and its own carrier's only, ahead of the intake.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GENERAL, CARRIER_PARTS, rulebookFor } from '../src/ai/tni-rules.js';
+import { GENERAL, GENERAL_PA, CARRIER_PARTS, generalFor, rulebookFor } from '../src/ai/tni-rules.js';
 import { evidenceFor } from '../src/ai/common.js';
 import { buildRequest } from '../src/ai/luna.js';
 import { CARRIERS } from '../src/carriers.js';
@@ -13,7 +13,7 @@ import { CARRIERS } from '../src/carriers.js';
 const KINDS = ['standard', 'intake', 'agent', 'workflow'];
 const RULE_CARRIERS = CARRIERS.filter((c) => c.rules.length);
 const entriesOf = (part) => part.sections.flatMap((s) => s.rules);
-const GENERAL_IDS = new Map(entriesOf(GENERAL).map((e) => [e.id, e]));
+const generalIdsFor = (carrier) => new Map(entriesOf(generalFor(carrier.id)).map((e) => [e.id, e]));
 const partIds = (carrier) => new Map(entriesOf(CARRIER_PARTS[carrier.id] ?? { sections: [] }).map((e) => [e.id, e]));
 const where = (carrier, rule) => `${carrier.id}: ${rule.name ?? rule.q ?? rule.field ?? rule.selector ?? rule.label ?? rule.path ?? rule.id}`;
 // A rule fills a TNI standard when its source is 'standard', or a function of the record that
@@ -69,7 +69,7 @@ test('every carrier with rules has a rulebook part, and nothing else does', () =
 
 test('rulebook entries: unique ids named after their part, a kind, and text', () => {
   const seen = new Set();
-  for (const [prefix, part] of [['general', GENERAL], ...Object.entries(CARRIER_PARTS)]) {
+  for (const [prefix, part] of [['general', GENERAL], ['general-pa', GENERAL_PA], ...Object.entries(CARRIER_PARTS)]) {
     assert.ok(part.title, `${prefix}: a title`);
     for (const section of part.sections) {
       assert.ok(section.heading && section.rules.length, `${prefix}: a section with a heading and rules`);
@@ -88,17 +88,18 @@ test('rulebook entries: unique ids named after their part, a kind, and text', ()
 
 test('every rule that can fill a TNI standard names its standard entry, in the general part or its carrier\'s', () => {
   for (const carrier of RULE_CARRIERS) {
+    const gen = generalIdsFor(carrier);
     const own = partIds(carrier);
     for (const rule of carrier.rules) {
       if (!canBeStandard(rule)) continue;
       assert.ok(rule.tni, `${where(carrier, rule)}: a standard rule names its rulebook entry (tni)`);
-      const entry = GENERAL_IDS.get(rule.tni) ?? own.get(rule.tni);
+      const entry = gen.get(rule.tni) ?? own.get(rule.tni);
       assert.ok(entry, `${where(carrier, rule)}: "${rule.tni}" is in the general part or ${carrier.id}'s`);
       assert.equal(entry.kind, 'standard', `${where(carrier, rule)}: "${rule.tni}" is a standard entry`);
     }
     // Any other rule or click that names an entry names one Luna gets on this carrier.
     for (const step of [...carrier.rules, ...(carrier.actions ?? [])].filter((x) => x.tni)) {
-      assert.ok(GENERAL_IDS.has(step.tni) || own.has(step.tni), `${where(carrier, step)}: "${step.tni}" is in the general part or ${carrier.id}'s`);
+      assert.ok(gen.has(step.tni) || own.has(step.tni), `${where(carrier, step)}: "${step.tni}" is in the general part or ${carrier.id}'s`);
     }
   }
 });
@@ -128,12 +129,13 @@ const record = () => ({
 
 test('Luna gets the general part and its own carrier\'s, ahead of the intake', () => {
   for (const carrier of RULE_CARRIERS) {
+    const genPrefix = carrier.product === 'personal-auto' ? 'general-pa.' : 'general.';
     const { sources } = evidenceFor({ carrier: carrier.id, record: record(), active: { drivers: 0, vehicles: 0 } });
     const rules = Object.entries(sources).filter(([, s]) => s.basis === 'tni_rule');
     const expected = rulebookFor(carrier.id).map((e) => e.id);
     assert.deepEqual(rules.map(([id]) => id), expected, `${carrier.id}: the general part, then its own`);
-    assert.ok(expected.some((id) => id.startsWith('general.')) && expected.some((id) => id.startsWith(`${carrier.id}.`)));
-    assert.ok(rules.every(([id]) => id.startsWith('general.') || id.startsWith(`${carrier.id}.`)), `${carrier.id}: no other carrier's rules`);
+    assert.ok(expected.some((id) => id.startsWith(genPrefix)) && expected.some((id) => id.startsWith(`${carrier.id}.`)));
+    assert.ok(rules.every(([id]) => id.startsWith(genPrefix) || id.startsWith(`${carrier.id}.`)), `${carrier.id}: no other carrier's rules`);
     // The rules lead, so a carrier's requests share one start.
     const keys = Object.keys(sources);
     assert.deepEqual(keys.slice(0, rules.length), expected);
@@ -150,6 +152,7 @@ test('Luna gets the general part and its own carrier\'s, ahead of the intake', (
 test('a carrier\'s page reviews start the same way, through its last rule', () => {
   const item = (label) => ({ id: 'f1', key: 'k1', label, section: null, controlKind: 'radio', options: ['Yes', 'No'], current: null, status: 'unfamiliar' });
   for (const carrier of RULE_CARRIERS) {
+    const genPrefix = carrier.product === 'personal-auto' ? 'general-pa.' : 'general.';
     const other = record();
     other.applicant.name = 'Other Example Inc';
     other.operations.radius = '100';
@@ -161,7 +164,7 @@ test('a carrier\'s page reviews start the same way, through its last rule', () =
     const end = ca.indexOf(last) + last.length;
     assert.ok(end > last.length, `${carrier.id}: the rules are in the request`);
     assert.equal(ca.slice(0, end), cb.slice(0, end), `${carrier.id}: the same start through the last rule`);
-    assert.ok(ca.startsWith(`{"carrier":"${carrier.id}","sources":{"general.`), `${carrier.id}: the carrier, then its rules`);
+    assert.ok(ca.startsWith(`{"carrier":"${carrier.id}","sources":{"${genPrefix}`), `${carrier.id}: the carrier, then its rules`);
     assert.equal(a.instructions, b.instructions);
   }
 });

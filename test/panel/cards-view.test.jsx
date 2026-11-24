@@ -87,7 +87,12 @@ test('off a rater the page view says which to open, or why the page can\'t be re
     ['button', 'progressive', 'Open Progressive in a new tab'], ['button', 'geico', 'Open GEICO in a new tab'], ['button', 'amwins', 'Open AmWINS in a new tab']]);
   for (const b of logos) fireEvent.click(b);
   expect(opened).toEqual(['https://www.foragentsonly.com/home/', 'https://gateway2.geico.com/', 'https://myagency.amwinsadmittedplacement.com/commerciallines']);
-  act(() => { state.cards = { waiting: null }; });
+  // Personal auto intake shows personal-auto raters only.
+  act(() => { state.intake = { record: { product: 'personal-auto' } }; });
+  expect([...container.querySelectorAll('.rater-logos button')].map((b) => [b.dataset.carrier, b.title])).toEqual([
+    ['progressive-pa', 'Open Progressive Personal Auto in a new tab'],
+  ]);
+  act(() => { state.intake = null; state.cards = { waiting: null }; });
   expect($(container, 'fill-waiting').hidden).toBe(true);
 });
 

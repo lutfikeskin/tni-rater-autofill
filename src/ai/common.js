@@ -106,7 +106,7 @@ export function collectItems(frames) {
   return { items, blocked };
 }
 
-const SECTION_KEYS = ['applicant', 'operations', 'garaging', 'coverage', 'claims', 'notes', 'trailerInfo', 'priorInsurance'];
+const SECTION_KEYS = ['applicant', 'operations', 'garaging', 'residence', 'coverage', 'claims', 'notes', 'trailerInfo', 'priorInsurance'];
 const UNIT_LISTS = ['drivers', 'vehicles', 'trailers'];
 const UNIT_PATH = /^(drivers|vehicles|trailers)\[(\d+)\]/;
 

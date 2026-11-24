@@ -16,15 +16,22 @@
 // Luna's promptHash (src/ai/luna.js) by itself, which the usage log records with each review; bump
 // POLICY_VERSION only for a change to the safety contract (it retires pending approval holds).
 import { general } from './rulebook/general.js';
+import { generalPa } from './rulebook/general-pa.js';
 import { progressive } from './rulebook/progressive.js';
 import { amwins } from './rulebook/amwins.js';
 import { geico } from './rulebook/geico.js';
+import { progressivePa } from './rulebook/progressive-pa.js';
 
 /** @import { RulebookEntry, RulebookPart } from '../../types.js' */
 
 export const GENERAL = general;
+export const GENERAL_PA = generalPa;
 /** @type {Record<string, RulebookPart>} */
-export const CARRIER_PARTS = { progressive, amwins, geico };
+export const CARRIER_PARTS = { progressive, amwins, geico, 'progressive-pa': progressivePa };
+const PA_CARRIERS = new Set(['progressive-pa', 'geico-pa']);
+
+/** Which general rulebook part applies to a carrier. @param {string} carrier */
+export const generalFor = (carrier) => (PA_CARRIERS.has(carrier) ? generalPa : general);
 
 // The general part's entries, then the carrier's. Luna reads each entry's text only, not its
 // section heading (the headings would add about 3,000 characters on Progressive). `rewrite`: a hook
@@ -38,6 +45,6 @@ export const CARRIER_PARTS = { progressive, amwins, geico };
 export function rulebookFor(carrier, { rewrite = null } = {}) {
   const part = Object.hasOwn(CARRIER_PARTS, carrier) ? CARRIER_PARTS[carrier] : null;
   if (!part) return [];
-  const entries = [general, part].flatMap((p) => p.sections.flatMap((s) => s.rules));
+  const entries = [generalFor(carrier), part].flatMap((p) => p.sections.flatMap((s) => s.rules));
   return rewrite ? entries.map((entry) => rewrite(entry)) : entries;
 }

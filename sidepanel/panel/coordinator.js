@@ -6,7 +6,8 @@ import { sourcePlace } from '../../src/intake-source.js';
 import { redactionTerms, supportedClass } from '../../src/plan.js';
 import { planFor } from './plan-for.js';
 import { advanceFor } from '../../src/units.js';
-import { quoteProgress, ratersSaid, stopScreen } from '../../src/carriers.js';
+import { quoteProgress, ratersFor, ratersSaid, stopScreen } from '../../src/carriers.js';
+import { productOf } from '../../src/products.js';
 import { quotedCarrierPolicy } from '../../src/util.js';
 import { fillEvents, loggedTimeline, redactor, sha256Hex, knownStep } from '../../src/usage.js';
 import { stateCode, stateMismatch } from '../../src/quote-state.js';
@@ -1562,7 +1563,7 @@ function dockFor() {
   if (!carrier) {
     return state.tab && !state.tab.url
       ? { phase: 'off', ...DOCK.unreadable }
-      : { phase: 'off', ...DOCK.openRater, sub: checksSaid ?? ratersSaid() };
+      : { phase: 'off', ...DOCK.openRater, sub: checksSaid ?? ratersSaid(ratersFor(state.intake ? productOf(state.intake.record) : null)) };
   }
   const page = pageOf(state.tab.url);
   const step = tabStep(carrier);

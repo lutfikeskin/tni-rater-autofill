@@ -1,15 +1,16 @@
 // Progressive Personal Auto's page adapter: what its Angular quote app on foragentsonly.com
 // (/Quote/Index/) draws that no other carrier does, injected on progressive-pa tabs only (the
-// carrier config's `pageAdapter`), in the kit's world and the usage recorder's. Classic script,
-// no imports; it registers itself as globalThis.__raterAdapter. All of it is `shared`: plain DOM,
-// read by field-key.js, the recorder and the kit alike (no `create`).
-/** @import { PageAdapterShared } from '../../../types.js' */
+// carrier config's `pageAdapter`), in the kit's MAIN world and the usage recorder's ISOLATED
+// world. Classic script, no imports; it registers itself as globalThis.__raterAdapter.
+// `shared` is plain DOM (read by field-key.js, the recorder and the kit alike); `create` is the
+// kit's alone (in-flight API request tracking and column-first ordering on multi-entity grids).
+/** @import { PageAdapter, PageAdapterShared } from '../../../types.js' */
 
 (() => {
   const EMBEDDED = /^(.+?)_Embedded_Questions_List_(.+)$/;
   const VIEW_MODEL = /^viewModel/i;
-  const QUOTE_PATH = /^\/Quote\/Index\/?$/i;
-  const SKIP_CAPTION = '[aria-hidden="true"], .sr-only, .visually-hidden, help-icon';
+  const QUOTE_PATH = /^\/(?:Quote(?:\/Index)?\/?|test\/fixtures\/progressive-pa\/.*)$/i;
+  const SKIP_CAPTION = '[aria-hidden="true"], .sr-only, .visually-hidden, help-icon, .required-subtext';
 
   // Fixed step names from the top navigation bar (a.navigation-link[aria-current]). Never read
   // from document.title, which carries the client's name. "COVERAGES/BILL PLANS" maps to
@@ -97,6 +98,8 @@
       busy: ['.ui-blocker-spinner-outer-wrapper'],
       // Step navigation links have no href and must never be clicked as a Continue or helper.
       stepLinks: ['a.navigation-link'],
+      // Angular Material Smarty address autocomplete options on Named Insured.
+      suggestions: ['mat-option', '.mat-mdc-option'],
     },
     // Every step of the quote shares /Quote/Index/. Keep the page as the URL path so the panel's
     // pageOf(url) agrees, and read the active step from the navigation bar (never document.title).
@@ -154,8 +157,15 @@
       const doc = el.ownerDocument ?? document;
       let label = el.closest?.('question')?.querySelector?.('.question-label label') ?? null;
       if (!label) {
-        const labelId = squash(el.getAttribute?.('aria-labelledby')).split(/\s+/).find((id) => id.endsWith('_Label'));
+        const ids = squash(el.getAttribute?.('aria-labelledby')).split(/\s+/).filter(Boolean);
+        const labelId = ids.find((id) => id.endsWith('_Label'));
         if (labelId) label = doc.getElementById?.(labelId) ?? null;
+        if (!label) {
+          for (const id of ids) {
+            const candidate = doc.getElementById?.(id) ?? null;
+            if (candidate?.tagName === 'LABEL') { label = candidate; break; }
+          }
+        }
       }
       // Radios skip `label[for]` because it names the option ("Yes"/"No"), not the question.
       if (!label && type !== 'radio' && el.id) {
@@ -168,5 +178,140 @@
     date: (el) => isPickerInput(el),
   };
 
-  globalThis.__raterAdapter = { carrier: 'progressive-pa', shared };
+  /**
+   * 1-based primary column number for a repeating vehicle/driver/coverage control (including its
+   * sibling date pickerInput), or null for page-level controls.
+   * @param {Element | null | undefined} el
+   * @returns {number | null}
+   */
+  function columnOf(el) {
+    let r = rowOf(el);
+    if (!r && isPickerInput(el)) {
+      const question = el?.closest?.('question');
+      if (question) {
+        for (const ctrl of question.querySelectorAll('input, select, textarea')) {
+          r = rowOf(ctrl);
+          if (r) break;
+        }
+      }
+    }
+    if (!r) return null;
+    const n = Number(r.split('.')[0]);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  /**
+   * Progressive PA renders multiple vehicles/drivers side-by-side in one grid (row-first DOM
+   * order: Field 1 for Veh 1..4, then Field 2 for Veh 1..4). When 2+ columns are present, reorder
+   * controls column-first (page-level before grid -> Column 1 top-to-bottom -> Column 2 -> ... ->
+   * page-level after grid) so filling works left-to-right one vehicle or driver at a time.
+   * @param {any[]} controls
+   */
+  function orderByColumn(controls) {
+    if (!Array.isArray(controls) || controls.length < 2) return controls;
+    const cols = controls.map((c) => columnOf(c?.el));
+    const distinct = new Set(cols.filter((n) => n != null));
+    if (distinct.size < 2) return controls;
+    const firstRowIdx = cols.findIndex((n) => n != null);
+    return controls
+      .map((control, index) => ({
+        control,
+        index,
+        group: cols[index] != null ? cols[index] : index < firstRowIdx ? 0 : Infinity,
+      }))
+      .sort((a, b) => a.group - b.group || a.index - b.index)
+      .map((x) => x.control);
+  }
+
+  // Track same-origin Angular API XHR/fetch requests in flight (MAIN world) so serverBacked waits
+  // hold until CurrentWorkflowState, AddedVehicleCollection, AddedDriverCollection, and
+  // SingleVehicleVinOrder finish redrawing the form. Ignore telemetry (ClientErrorLogger).
+  function ensureNetTracker() {
+    const g = /** @type {any} */ (globalThis);
+    if (g.__raterPpaNet) return g.__raterPpaNet;
+    /** @type {Set<() => void>} */
+    const listeners = new Set();
+    const tracker = {
+      inFlight: 0,
+      /** @param {() => void} fn */
+      add(fn) { listeners.add(fn); },
+      /** @param {() => void} fn */
+      remove(fn) { listeners.delete(fn); },
+    };
+    /** @param {unknown} url */
+    const trackUrl = (url) => {
+      try {
+        const base = typeof location !== 'undefined' && location?.href ? location.href : 'https://quoting.foragentsonly.com/';
+        const u = new URL(String(url ?? ''), base);
+        if (typeof location !== 'undefined' && location?.origin && u.origin !== location.origin) return false;
+        if (/\/ClientErrorLogger(?:[/?#]|$)/i.test(u.pathname)) return false;
+        return /\/api\//i.test(u.pathname);
+      } catch {
+        return false;
+      }
+    };
+    const onStart = () => {
+      tracker.inFlight++;
+      for (const fn of listeners) { try { fn(); } catch { /* ignore */ } }
+    };
+    const onDone = () => {
+      tracker.inFlight = Math.max(0, tracker.inFlight - 1);
+    };
+    if (typeof XMLHttpRequest === 'function' && XMLHttpRequest.prototype) {
+      const origOpen = XMLHttpRequest.prototype.open;
+      const origSend = XMLHttpRequest.prototype.send;
+      /** @this {XMLHttpRequest & { __raterTrackUrl?: unknown }} */
+      XMLHttpRequest.prototype.open = function open(method, url, ...rest) {
+        this.__raterTrackUrl = url;
+        return /** @type {any} */ (origOpen).call(this, method, url, ...rest);
+      };
+      /** @this {XMLHttpRequest & { __raterTrackUrl?: unknown }} */
+      XMLHttpRequest.prototype.send = function send(...args) {
+        if (trackUrl(this.__raterTrackUrl)) {
+          let done = false;
+          const finish = () => { if (!done) { done = true; onDone(); } };
+          onStart();
+          this.addEventListener?.('loadend', finish, { once: true });
+          try {
+            return /** @type {any} */ (origSend).apply(this, args);
+          } catch (err) {
+            finish();
+            throw err;
+          }
+        }
+        return /** @type {any} */ (origSend).apply(this, args);
+      };
+    }
+    if (typeof globalThis.fetch === 'function') {
+      const origFetch = globalThis.fetch;
+      globalThis.fetch = function fetch(input, init) {
+        const url = typeof input === 'string' ? input : /** @type {any} */ (input)?.url;
+        if (!trackUrl(url)) return origFetch.call(this, input, init);
+        onStart();
+        try {
+          const p = origFetch.call(this, input, init);
+          return Promise.resolve(p).finally(onDone);
+        } catch (err) {
+          onDone();
+          throw err;
+        }
+      };
+    }
+    g.__raterPpaNet = tracker;
+    return tracker;
+  }
+
+  /** @returns {Partial<PageAdapter>} */
+  function create() {
+    const net = ensureNetTracker();
+    return {
+      busy: () => net.inFlight > 0,
+      serverBacked: () => true,
+      onRequest: (fn) => net.add(fn),
+      offRequest: (fn) => net.remove(fn),
+      order: orderByColumn,
+    };
+  }
+
+  globalThis.__raterAdapter = { carrier: 'progressive-pa', shared, create };
 })();

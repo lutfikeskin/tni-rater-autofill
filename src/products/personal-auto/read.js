@@ -12,7 +12,7 @@
 import { parseAddress, readGaraging } from '../../shared/address.js';
 import { clean, cleanMultiline, parseLicense, splitName, toDate, toInt, toMoney, toPhone, vinProblem, yesNo } from '../../shared/parse.js';
 import { STATES } from '../../states.js';
-import { DRIVER_ROWS, OLD_FIELDS, VEHICLE_ROWS, fieldsOf } from './form.js';
+import { DRIVER_ROWS, LIENHOLDER_ROWS, OLD_FIELDS, VEHICLE_ROWS, fieldsOf } from './form.js';
 
 /** @import { IntakeResult, IntakeWarning } from '../../../types.js' */
 
@@ -124,6 +124,20 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
     const i = drivers.length;
     const p = (f) => `drivers[${i}].${f}`;
     const name = splitName(boxes.first, boxes.last);
+    // General personal-auto rule (TNI, 2026-11-24): when a driver or owner has a second name in
+    // the first-name box (e.g. first + middle/patronymic), keep the first word in First Name and
+    // put the second name's first letter in Middle Initial. Single-letter first words ("A J") and
+    // hyphenated single words ("Mary-Ann") stay untouched.
+    if (!name.middle && name.first) {
+      const words = String(name.first).trim().split(/\s+/);
+      if (words.length >= 2 && (words[0].match(/\p{L}/gu) ?? []).length >= 2) {
+        const secondLetter = words[1].match(/\p{L}/u)?.[0] ?? null;
+        if (secondLetter) {
+          name.first = words[0];
+          name.middle = secondLetter.toUpperCase();
+        }
+      }
+    }
     const who = [name.first, name.last].filter(Boolean).join(' ') || `Driver ${n}`;
     const d = {
       first: name.first, middle: name.middle, last: name.last, suffix: name.suffix,
@@ -199,6 +213,7 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
       commuteMiles: toInt(at('commute_miles')) != null && /^\d+$/.test(at('commute_miles') ?? '') ? toInt(at('commute_miles')) : at('commute_miles'),
       commuteDays: toInt(at('commute_days')),
       damage: at('damage') == null ? null : /^no$/i.test(at('damage') ?? '') ? false : /^yes\b/i.test(at('damage') ?? '') ? true : null,
+      fullCoverage: at('full_coverage') == null ? null : /^yes\b/i.test(at('full_coverage') ?? '') ? true : /^no\b/i.test(at('full_coverage') ?? '') ? false : null,
       lienholder: { name: null, street: null, city: null, state: null, zip: null },
     };
     if (v.year == null && at('year')) check('vehicle-year.invalid', p('year'), `${what}: "${at('year')}" isn't a year.`);
@@ -248,19 +263,58 @@ export function readPersonalAuto(raw, { today = new Date() } = {}) {
     if (damage && /^(no|none)\.?$/i.test(damage)) vehicles.forEach((v, i) => { v.damage = false; readFrom[`vehicles[${i}].damage`] = [pdfName('vehicle_damage')]; });
     else once('vehicle_damage', 'Damage', (v, s) => { v.damage = yesNo(s); return ['damage']; });
   } else {
-    // The form TNI shares has one lienholder row, in boxes of its own.
-    const lien = { name: txt('lien_name'), street: txt('lien_street'), city: txt('lien_city'), state: txt('lien_state'), zip: txt('lien_zip') };
-    const said = Object.values(lien).filter(Boolean).join(', ');
-    if (said && lienholderFor.length === 1) {
-      const [i] = lienholderFor;
-      Object.assign(vehicles[i].lienholder, lien);
-      for (const f of Object.keys(lien)) readFrom[`vehicles[${i}].lienholder.${f}`] = [`lien_${f}`];
-      if (!financed.length) info('lienholder.not-financed', `vehicles[${i}].lienholder.name`, `Lienholder "${said}" with no vehicle marked financed or leased: read as ${named[i]}'s.`);
-    } else if (said && lienholderFor.length) {
-      check('lienholder.whose', 'vehicles', `Lienholder "${said}": ${financed.length ? `${financed.length} vehicles are financed or leased` : 'no vehicle is marked financed or leased'}. Whose is it?`);
+    // Two lienholder rows, each naming its vehicle (1..4). Without a vehicle chosen, assign when
+    // unambiguous (the only financed/leased vehicle, or the only vehicle on the form); otherwise
+    // raise a check quoting the lienholder. Never silently overwrite an already-assigned vehicle.
+    let unassignedLienholder = false;
+    const assignedLienholders = new Set();
+    const assignLienholder = (idx, n, lien, said, noteIfUnfinanced) => {
+      if (assignedLienholders.has(idx)) {
+        unassignedLienholder = true;
+        const existing = vehicles[idx].lienholder.name || Object.values(vehicles[idx].lienholder).filter(Boolean).join(', ');
+        check('lienholder.whose', `vehicles[${idx}].lienholder.name`, `A second lienholder ("${said}") also points to ${named[idx]} (already "${existing}"). Confirm which vehicle each lienholder belongs to.`);
+        return;
+      }
+      assignedLienholders.add(idx);
+      Object.assign(vehicles[idx].lienholder, lien);
+      for (const f of Object.keys(lien)) readFrom[`vehicles[${idx}].lienholder.${f}`] = [`lien_${f}_${n}`];
+      if (noteIfUnfinanced) noteIfUnfinanced();
+    };
+    for (const n of LIENHOLDER_ROWS) {
+      const lien = {
+        name: txt(`lien_name_${n}`),
+        street: txt(`lien_street_${n}`),
+        city: txt(`lien_city_${n}`),
+        state: txt(`lien_state_${n}`),
+        zip: txt(`lien_zip_${n}`),
+      };
+      const said = Object.values(lien).filter(Boolean).join(', ');
+      if (!said) continue;
+      const pickedRow = toInt(txt(`lien_vehicle_${n}`));
+      if (pickedRow != null) {
+        const idx = rows.vehicles.indexOf(pickedRow);
+        if (idx >= 0) {
+          assignLienholder(idx, n, lien, said, () => {
+            if (!financed.includes(idx)) {
+              info('lienholder.not-financed', `vehicles[${idx}].lienholder.name`, `Lienholder "${said}" assigned to ${named[idx]}, which isn't marked financed or leased.`);
+            }
+          });
+        } else {
+          unassignedLienholder = true;
+          check('lienholder.whose', 'vehicles', `Lienholder "${said}" names vehicle ${pickedRow}, which isn't on the form. Whose is it?`);
+        }
+      } else if (lienholderFor.length === 1) {
+        const [i] = lienholderFor;
+        assignLienholder(i, n, lien, said, () => {
+          if (!financed.length) info('lienholder.not-financed', `vehicles[${i}].lienholder.name`, `Lienholder "${said}" with no vehicle marked financed or leased: read as ${named[i]}'s.`);
+        });
+      } else if (lienholderFor.length) {
+        unassignedLienholder = true;
+        check('lienholder.whose', 'vehicles', `Lienholder "${said}": ${financed.length ? `${financed.length} vehicles are financed or leased` : 'no vehicle is marked financed or leased'} and no vehicle was picked. Whose is it?`);
+      }
     }
-    // A financed or leased vehicle with no lienholder, unless the one given is waiting on the agent.
-    if (!(said && lienholderFor.length > 1)) {
+    // A financed or leased vehicle with no lienholder, unless an unassigned lienholder is waiting on the agent.
+    if (!unassignedLienholder) {
       for (const i of financed) {
         if (!vehicles[i].lienholder.name) check('lienholder.missing', `vehicles[${i}].lienholder.name`, `${named[i]} is ${vehicles[i].ownership.toLowerCase()}: no lienholder.`);
       }

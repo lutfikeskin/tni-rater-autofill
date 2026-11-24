@@ -5,7 +5,7 @@ import { drawnParent, deepQueryAll, buttonText, hostDisabled } from './dom.js';
 import { closestOwn, noteOwnAction, withAdapter } from './adapter.js';
 import { BANNER_ID } from './marks.js';
 import { kitTrace } from './trace.js';
-import { NEVER_ADVANCE, NEVER_CLICK } from '../restricted.js';
+import { NEVER_ADVANCE, NEVER_CLICK, cleanAdvanceLabel } from '../restricted.js';
 
 // The commit words a button never has when the fill clicks it: one list, src/restricted.js.
 export { NEVER_ADVANCE, NEVER_CLICK };
@@ -87,10 +87,11 @@ export function findAdvanceButton(pattern, { notWithin = null } = {}) {
   for (const el of deepQueryAll(document, withAdapter('a, button, [role=button], input[type=button], input[type=submit]', 'buttons'))) {
     if (!el.getClientRects().length || /** @type {HTMLButtonElement} */ (el).disabled || el.getAttribute('aria-disabled') === 'true' || el.closest(withAdapter('[aria-disabled="true"]', 'disabled')) || hostDisabled(el) || closestOwn(el, 'stepLinks')) continue;
     if (notWithin && insideOf(el, notWithin)) continue;
-    const text = buttonText(el);
-    // Its words ("Save & Continue" read as Continue) and its aria-label and title, as for a helper:
-    // each name on its own, so a label or title repeating "Save & Continue" reads as Continue too.
-    const committing = NEVER_ADVANCE.test(namesOf(el, text, (s) => s.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')));
+    const text = cleanAdvanceLabel(buttonText(el));
+    // Its words ("Save & Continue" read as Continue; Progressive PA's "(submit and move to next step)"
+    // accessibility suffix stripped on non-sale step buttons via cleanAdvanceLabel) and its aria-label
+    // and title, as for a helper: each name on its own, so a label or title repeating it reads cleanly too.
+    const committing = NEVER_ADVANCE.test(namesOf(el, text, (s) => cleanAdvanceLabel(s).replace(/^save\s*(?:&|and)\s*continue$/i, 'continue')));
     if (text.length > 40 || committing || !re.test(text)) continue;
     if (!best || best.contains(el)) best = el;
   }
@@ -144,7 +145,7 @@ export function findButton(step, { disabledToo = false } = {}) {
     const text = buttonText(el);
     const named = namesOf(el, text);
     if (step.moveOn && step.within ? NEVER_ADVANCE.test(named) : NEVER_CLICK.test(named)) continue;
-    const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
+    const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'), el.getAttribute('aria-labelledby'),
       ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
     const hit = (re && text.length <= 80 && re.test(text)) || (step.token && attrs.includes(step.token));
     if (!hit || (step.near && !isNear(el, step.near, re))) continue;

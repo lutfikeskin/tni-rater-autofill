@@ -24,6 +24,7 @@ export function createAddressDriver(kit) {
   const shownSuggestions = () => deepQueryAll(document, suggestionSelector()).filter((el) => el.getClientRects().length && oneLine(el.textContent));
   async function applyAddress(step, c) {
     const text = String(step.value);
+    let typed = text;
     const { el, widget } = c;
     const before = new Set(shownSuggestions());
     // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
@@ -32,13 +33,20 @@ export function createAddressDriver(kit) {
     const pacBefore = new Map(deepQueryAll(document, '.pac-item').map((x) => [x, x.textContent]));
     const houseNumber = text.match(/^\s*(\d+)/)?.[1] ?? null;
     const freshPac = () => deepQueryAll(document, '.pac-item').find((x) => pacBefore.get(x) !== x.textContent && oneLine(x.textContent) && (!houseNumber || x.textContent.includes(houseNumber))) ?? null;
-    el.focus?.({ preventScroll: true });
-    el.dispatchEvent(new Event('focus'));
-    if (widget) adapter().setText(widget, text);
-    else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
-    // Suggestion lists listen for typing: send the events typing would.
-    for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
-    if (widget) adapter().changed(widget, text);
+    const setAndTrigger = (val) => {
+      el.focus?.({ preventScroll: true });
+      el.dispatchEvent(new Event('focus'));
+      el.dispatchEvent(new Event('focusin', { bubbles: true }));
+      if (widget) adapter().setText(widget, val);
+      else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, val);
+      // Suggestion lists listen for typing: send the events typing would (Angular Material
+      // mat-autocomplete opens on focusin + input).
+      const inputEv = typeof InputEvent === 'function' ? new InputEvent('input', { bubbles: true, data: val, inputType: 'insertText' }) : new Event('input', { bubbles: true });
+      el.dispatchEvent(inputEv);
+      for (const type of ['keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
+      if (widget) adapter().changed(widget, val);
+    };
+    setAndTrigger(text);
     // What the page adds while it thinks: when no known list shows up, the reason names the new
     // elements (tag.class), so the carrier's suggestion list can be recognised next time.
     const added = [];
@@ -53,14 +61,28 @@ export function createAddressDriver(kit) {
       const shown = oneLine(x.textContent);
       return (!houseNumber || houseNumberOf(shown) === houseNumber) && (!wantZip || !zipOf(shown) || zipOf(shown) === wantZip);
     };
-    let first = null;
-    let offered = false;
-    try {
-      for (const start = Date.now(); !first && Date.now() - start < 4000 && !halted();) {
+    const pollFor = async (ms) => {
+      for (const start = Date.now(); Date.now() - start < ms && !halted();) {
         await sleep(200);
         const fresh = shownSuggestions().filter((x) => !before.has(x));
         offered ||= fresh.length > 0;
-        first = freshPac() ?? fresh.find(fits) ?? null;
+        const hit = freshPac() ?? fresh.find(fits) ?? null;
+        if (hit) return hit;
+      }
+      return null;
+    };
+    let first = null;
+    let offered = false;
+    try {
+      const hasFallback = !!step.fallback && oneLine(step.fallback) !== oneLine(text);
+      first = await pollFor(hasFallback ? 2400 : 4000);
+      // Some Smarty / Material address autocompletes return nothing for a full comma-separated
+      // string and only suggest once the street alone is typed: retry with `fallback` while still
+      // matching against the full address's house number and ZIP.
+      if (!first && !halted() && hasFallback) {
+        typed = String(step.fallback);
+        setAndTrigger(typed);
+        first = await pollFor(2400);
       }
     } finally {
       mo?.disconnect();
@@ -86,10 +108,10 @@ export function createAddressDriver(kit) {
       for (const [key, code] of [['ArrowDown', 40], ['Enter', 13]]) el.dispatchEvent(keyEvent('keydown', key, code));
       await settle({ quietMs: 300, maxMs: 5000, why: 'address' });
       // Still the typed text: Google didn't take the keys; click the suggestion instead.
-      if (el.value !== text) return { ok: true, shown };
+      if (el.value !== typed) return { ok: true, shown };
       if (halted()) return interrupted();
     }
-    for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true, cancelable: true }));
     first.click?.();
     await settle({ quietMs: 300, maxMs: 5000, why: 'address' });
     return { ok: true, shown };

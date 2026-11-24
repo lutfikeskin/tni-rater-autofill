@@ -82,11 +82,14 @@ const PRACTICE = [
   { path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' },
   { path: /^\/test\/fixtures\/amwins\//, carrier: 'amwins' },
   { path: /^\/test\/fixtures\/geico\//, carrier: 'geico' },
+  { path: /^\/test\/fixtures\/progressive-pa\//, carrier: 'progressive-pa' },
 ];
 
 // The raters the panel offers (each carrier with a `display`), in CARRIERS' order: the "open a
 // rater" card's logos and the dock's list (ratersSaid).
 export const RATERS = CARRIERS.filter((c) => c.display);
+/** @param {string | null} [product] */
+export const ratersFor = (product = null) => (product == null ? RATERS : RATERS.filter((c) => c.product === product));
 // "Progressive, GEICO or AmWINS."
 export function ratersSaid(raters = RATERS) {
   const names = raters.map((c) => c.name);

@@ -9,14 +9,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { buildPlan, supportedClass, reviewWarn, SOURCES, AGENT_SOURCES } from '../src/plan.js';
 import { SECTIONS } from '../src/schema.js';
+import { SECTIONS as PA_SECTIONS } from '../src/products/personal-auto/sections.js';
 import { RATERS } from '../src/carriers.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 
-// Every carrier with rules; those with TNI standards (docs/intake-and-rules.md).
+// Every carrier with rules; commercial carriers with TNI standards and supportedClasses.
 const RULE_CARRIERS = RATERS;
 const STANDARD_CARRIERS = RATERS;
+const COMMERCIAL_CARRIERS = RATERS.filter((c) => c.product === 'commercial-auto');
 
 // An expediter with everything the intake can give (the shape of test/progressive.test.mjs).
 const expediter = () => ({
@@ -176,6 +178,13 @@ const NOT_MAPPED = {
     'claims.hasClaims': 'incidents on Drivers & Incidents are added by the agent (not mapped)',
     'claims.notes': 'nothing GEICO asks on the mapped steps reads the claims box\'s other answers',
   },
+  'progressive-pa': {
+    'applicant.applicationDate': 'Policy effective date keeps Progressive\'s prefilled default or fills today if empty (D4)',
+    'drivers[].education': 'not asked on the captured Progressive PA Tennessee Household Members step',
+    // Mapped on Products as CommuteDaysPerWk & OneWayCommuteMiles; lienholder modal stays agent-driven.
+    'vehicles[].damage': 'not asked on the captured Progressive PA quoting steps',
+    'priorInsurance[].expiration': 'Additional Details asks prior tenure and whether currently insured, not the prior expiration date',
+  },
 };
 // Read by a helper in another module, so the text search of the carrier file can't see it.
 const READ_INDIRECTLY = {
@@ -210,11 +219,17 @@ const READ_INDIRECTLY = {
     'drivers[].excluded': 'util.driverExcluded (the excluded-driver warning on Add Driver)',
     'trailerInfo.interchangeLimit': 'util.interchangeLimitPick (the intake\'s trailer interchange limit, or the next one up)',
   },
+  'progressive-pa': {
+    'coverage.compDeductible': 'vehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+    'coverage.collDeductible': 'vehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+  },
 };
 
 test('every intake field is consumed by each carrier, or its absence is explained here', () => {
-  const paths = SECTIONS.flatMap((s) => s.fields.map(([path]) => path));
+  const commercialPaths = SECTIONS.flatMap((s) => s.fields.map(([path]) => path));
+  const paPaths = PA_SECTIONS.flatMap((s) => s.fields.map(([path]) => path));
   for (const carrier of RULE_CARRIERS) {
+    const paths = carrier.product === 'personal-auto' ? paPaths : commercialPaths;
     const byPath = new Set(carrier.rules.map((r) => r.path?.replace(/\[\d+\]/, '[]')).filter(Boolean));
     const consumed = (path) => {
       if (byPath.has(path)) return true;
@@ -229,8 +244,8 @@ test('every intake field is consumed by each carrier, or its absence is explaine
       else assert.ok(listed, `${carrier.id}: no rule reads ${path} and it isn't listed as not mapped`);
     }
     for (const path of [...Object.keys(notMapped), ...Object.keys(indirect)]) assert.ok(paths.includes(path), `${carrier.id}: ${path} is no longer in the schema`);
-    // The 2026-10-08 audit's omission: the vehicle's attached equipment value.
-    assert.ok(consumed('operations.equipVehicle'), `${carrier.id} reads operations.equipVehicle`);
+    // The 2026-10-08 audit's omission: the vehicle's attached equipment value (commercial auto).
+    if (carrier.product === 'commercial-auto') assert.ok(consumed('operations.equipVehicle'), `${carrier.id} reads operations.equipVehicle`);
   }
 });
 
@@ -690,7 +705,7 @@ test('deductibles are TNI\'s standard $1,000 (no intake deductible field exists)
 // --- Review mode ------------------------------------------------------------------------------------
 
 test('supportedClass: expediter, freight hauler and general freight; a missing class is unsupported', () => {
-  for (const carrier of STANDARD_CARRIERS) {
+  for (const carrier of COMMERCIAL_CARRIERS) {
     assert.equal(supportedClass(expediter(), carrier), true, carrier.id);
     // Codex on 2dcd1e8: AmWINS's freight answers (isFreight) need expediting or general freight.
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), carrier !== amwins, carrier.id);
@@ -733,7 +748,7 @@ test('Progressive: review mode exactly when its for-hire answer is the agent\'s 
 
 test('review mode: every standard step is a check item naming the class and carrier; none for an expediter', () => {
   const dump = with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' });
-  for (const carrier of STANDARD_CARRIERS) {
+  for (const carrier of COMMERCIAL_CARRIERS) {
     const want = `Review mode: the business class "Dump Truck" isn't validated for ${carrier.name}; confirm this standard answer.`;
     assert.equal(reviewWarn(dump, carrier), want);
     const plan = field(buildPlan(dump, carrier, { trailers: 0 }));

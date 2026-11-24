@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
 import { carrierRefusal, reportsOf } from './carrier-reports.mjs';
-import { NEVER_ADVANCE } from '../../src/restricted.js';
+import { NEVER_ADVANCE, cleanAdvanceLabel } from '../../src/restricted.js';
 import { receivedAt } from './daily.mjs';
 import { defaultsInForce, isOwnDefault } from './agent-defaults.mjs';
 
@@ -45,7 +45,12 @@ const agentId = (e) => {
 // The retry tally's lines (below) name a page, not a button: never a restricted action themselves.
 const RETRIED = 'Continue clicked again on ';
 const clickedAction = (action) => !action.startsWith(RETRIED) && isRestricted(action);
-export const isRestricted = (action) => RESTRICTED.test(action.replace(/^(helper|advance) /, '').replace(/^"?save\s*(?:&|and)\s*continue"?$/i, 'continue'));
+export const isRestricted = (action) => {
+  const isAdvance = action.startsWith('advance ');
+  const unquoted = action.replace(/^(helper|advance) /, '').replace(/^"(.*)"$/, '$1');
+  const label = isAdvance ? cleanAdvanceLabel(unquoted).replace(/^save\s*(?:&|and)\s*continue$/i, 'continue') : unquoted;
+  return RESTRICTED.test(label);
+};
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
 const build = (e) => `${e.v ?? '?'} ${e.channel ?? '?'}`;

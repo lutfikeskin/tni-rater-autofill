@@ -43,7 +43,12 @@ function layouts(dir) {
       key: x.ref, q: x.q, label: x.caption, section: page, controlKind: x.kind === 'radio' ? 'radio' : 'select', options: x.opts, current: '' })));
   });
 }
-const PAGES = { progressive: () => layouts('progressive'), geico: () => selects('geico/quote.html'), amwins: () => selects('amwins/application.html') };
+const PAGES = {
+  progressive: () => layouts('progressive'),
+  geico: () => selects('geico/quote.html'),
+  amwins: () => selects('amwins/application.html'),
+  'progressive-pa': () => selects('progressive-pa/quote.html'),
+};
 
 // A page's other answers at their bound (pageAnswers: at most 40 entries and about 6,000 characters).
 const others = pageAnswers([{ frameId: 0, documentId: 'd', result: JSON.stringify(['https://carrier.example/quote',

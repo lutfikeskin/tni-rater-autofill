@@ -170,7 +170,7 @@
  *   general.js or this carrier's part); every rule that can be `standard` has one, which
  *   test/rulebook.test.mjs checks with the entry's kind and part (a function source counts when it
  *   returns `standard` for any record of the test's matrix, through a wrapper too). Nothing at fill time reads it
- * @property {string} [kind]  a value kind (src/schema.js: bool, choice, date, int, money, state, text), or
+ * @property {ClientValue<string>} [kind]  a value kind (src/schema.js: bool, choice, date, int, money, state, text), or
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
  * @property {string} [field]  the field's data-model name
@@ -206,6 +206,7 @@
  * @property {ClientValue<boolean>} [replace]  our answer replaces a differing one already on the page (a
  *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
  * @property {boolean} [trustPage]  an answer already on the page that differs from the rule's is kept, with no item saying it differs
+ * @property {boolean} [masked]  the page masks typed text after save (e.g. "*****1234" on Progressive PA License Number): treat a matching masked value as agreeing with the written answer
  * @property {boolean} [keepChoice]
  * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
  * @property {boolean} [keepUnlisted]  a list without the answer that already holds the page's own (not Other): kept, with a check naming the answer (GEICO's cities for the ZIP, W43-35)
@@ -479,6 +480,7 @@
  * @property {boolean} verifyOnly
  * @property {boolean} replace
  * @property {boolean} trustPage
+ * @property {boolean} masked
  * @property {boolean} keepChoice
  * @property {boolean} keepPreset
  * @property {boolean} keepUnlisted
@@ -1320,6 +1322,7 @@
  * @property {(fn: () => void) => void} onRequest  count the page's requests (per-answer timing)
  * @property {(fn: () => void) => void} offRequest
  * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
+ * @property {(controls: any[]) => any[]} [order]  reorders collected controls before cursor matching and answering (Progressive Personal Auto's side-by-side vehicle/driver columns: fill left-to-right column by column instead of row-first DOM order)
  * @property {string | null} components  the tag prefix of the carrier's own web components (GEICO's gds-): a fill waits for those the page hasn't defined yet
  */
 

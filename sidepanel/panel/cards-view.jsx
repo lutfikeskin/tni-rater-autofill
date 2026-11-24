@@ -14,7 +14,8 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { screenFor } from './screen.js';
 import { HelpLink } from './help-link.jsx';
-import { RATERS } from '../../src/carriers.js';
+import { ratersFor } from '../../src/carriers.js';
+import { productOf } from '../../src/products.js';
 
 // A card: its tone ('' red, 'warn', 'info', 'quiet'), title, what it says, its notes, what it
 // compares side by side, and its buttons. The panel's other cards are drawn with it too (notes-view.jsx).
@@ -68,13 +69,15 @@ const NOTES = [
 // (`act.portal`, with the URL): a page the agent asked for, where nothing is filled by itself.
 function Cards({ act = {} }) {
   const cards = useStore(panelStore, (s) => s.cards) ?? {};
+  const product = useStore(panelStore, (s) => productOf(s.intake?.record));
   const screen = useStore(panelStore, screenFor);
+  const raters = ratersFor(product);
   return (
     <>
       <div id="fill-waiting" className="pane waiting" hidden={cards.waiting == null}>
         <p id="fill-waiting-text" className="muted">{cards.waiting ?? ''}</p>
         <div className="rater-logos">
-          {RATERS.map(({ id, name, display }) => (
+          {raters.map(({ id, name, display }) => (
             <button key={id} type="button" className="rater-logo" data-carrier={id} title={`Open ${name} in a new tab`}
               onClick={() => act.portal?.(display.portalUrl)}><img src={display.logo} alt={name} /></button>
           ))}

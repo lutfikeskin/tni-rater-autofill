@@ -340,7 +340,7 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       id,
       path,
       name,
-      kind: rule.kind ?? info.kind,
+      kind: (typeof rule.kind === 'function' ? rule.kind(record, active) : rule.kind) ?? info.kind,
       source,
       // A TNI standard, not an intake fact: the panel tags it, and in review mode (an unvalidated
       // business class) it is a check item.
@@ -404,6 +404,7 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       replace: typeof rule.replace === 'function' ? !!rule.replace(record, active) : !!rule.replace,
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
+      masked: !!rule.masked,
       // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
       keepChoice: !!rule.keepChoice,
       // A choice the carrier already made is kept as it is, without a check; only an empty one is
