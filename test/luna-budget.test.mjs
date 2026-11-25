@@ -48,6 +48,9 @@ const PAGES = {
   geico: () => selects('geico/quote.html'),
   amwins: () => selects('amwins/application.html'),
   'progressive-pa': () => selects('progressive-pa/quote.html'),
+  'geico-pa': () => fs.readdirSync(fixture('geico-pa'))
+    .filter((f) => f.endsWith('.html'))
+    .flatMap((f) => selects(`geico-pa/${f}`)),
 };
 
 // A page's other answers at their bound (pageAnswers: at most 40 entries and about 6,000 characters).

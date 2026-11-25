@@ -277,16 +277,15 @@ try {
       throw new Error(`The fill did not finish: ${said}; panel errors: ${errors.join(' | ') || 'none'}`, { cause: error });
     });
   // A question's row in the page's list, opened (its suggestion, choices and buttons are inside).
-  // Opens a need the way the agent does: its row when the list shows it (All answers), its Needs you
-  // row in the grouped Review, or, while another need is the one on screen (closed needs are hidden
-  // then), the dock's Show the next one, else closing the open one.
+  // Opens a need the way the agent does: its row on the unified Needs / All sheet, switching to
+  // the Needs tab if another tab is selected, or stepping via #dock-next.
   const openRow = async (label) => {
     const row = panel.locator('#report .row.need', { hasText: label }).first();
     await row.waitFor({ state: 'attached', timeout: 30000 });
     for (let i = 0; i < 20 && !await row.evaluate((n) => n.classList.contains('open')); i++) {
       if (await row.isVisible()) { await row.locator('.row-head').click(); break; }
-      const reviewRow = panel.locator('#review-needs .review-row', { hasText: label }).first();
-      if (await reviewRow.isVisible()) { await reviewRow.click(); continue; }
+      const needsTab = panel.locator('#filters button[data-filter="needs"]');
+      if (await needsTab.isVisible() && await needsTab.getAttribute('aria-pressed') !== 'true') { await needsTab.click(); continue; }
       const next = panel.locator('#dock-next');
       if (await next.isVisible()) await next.click();
       else await panel.locator('#report .row.need.open .row-head').first().click();
@@ -410,10 +409,9 @@ try {
   verify('Luna stays suggestion-only while lunaAuto is off', await mock.locator('#mockLunaChoice').inputValue(), '');
   await manual.click();
   await mock.waitForFunction(() => document.querySelector('#mockLunaChoice').value === 'No');
-  // The panel says the answer went in: on the item's card while something else still needs the
-  // agent, or, with nothing left (the redesign's grouped Review), as the row's "AI · you chose".
+  // The panel says the answer went in: on the open row's note, or on the row's "AI · you chose" tag.
   await panel.getByText(/Put in .*purple on the page/)
-    .or(panel.locator('#review .review-row', { hasText: 'Mock Luna choice' }).filter({ hasText: 'AI · you chose' }))
+    .or(panel.locator('#report .row', { hasText: 'Mock Luna choice' }).filter({ hasText: 'AI · you chose' }))
     .filter({ visible: true }).first().waitFor();
   await mock.locator('#mockLunaChoice').selectOption('Yes');
   await panel.waitForTimeout(1800);

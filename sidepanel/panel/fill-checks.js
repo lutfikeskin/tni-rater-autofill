@@ -61,4 +61,38 @@ function fillErrorText(ctx, e) { return redactor(redactionTerms(ctx.intake.recor
 // only as one of the carrier's step names (knownStep).
 function stepOfResults(carrier, results) { return knownStep(carrier, results.find((r) => r.frameId === 0)?.result?.stepKey); }
 
-export { fillCurrent, fillErrorMessage, fillErrorText, layoutErrorKind, sameLayoutScope, staleFill, stepOfResults, superseded };
+/**
+ * Validates a same-origin document/proposal URL returned by a MAIN-world fill
+ * (`FillReport.openDocumentUrl`) before the side panel opens it via `chrome.tabs.create`.
+ * Allows `https:` matching `carrier.hosts` (or loopback on `carrier.practice`), and `http:`
+ * ONLY on `localhost`/`127.0.0.1` for local practice mocks (`carrier.practice`), always strictly
+ * matching the filled tab's exact origin.
+ * @param {unknown} rawUrl
+ * @param {import('../../types.js').CarrierConfig | null | undefined} carrier
+ * @param {string | null | undefined} tabUrl
+ * @returns {string | null}
+ */
+function safeDocumentUrl(rawUrl, carrier, tabUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim() || !carrier || typeof tabUrl !== 'string' || !tabUrl.trim()) return null;
+  let doc;
+  let tab;
+  try {
+    doc = new URL(rawUrl);
+    tab = new URL(tabUrl);
+  } catch {
+    return null;
+  }
+  if (doc.origin !== tab.origin) return null;
+  const loopback = /^(localhost|127\.0\.0\.1)$/.test(doc.hostname);
+  if (doc.protocol === 'https:') {
+    const hosts = Array.isArray(carrier.hosts) ? carrier.hosts : [];
+    const allowed = hosts.some((re) => re.test(doc.hostname)) || (!!carrier.practice && loopback);
+    return allowed ? doc.href : null;
+  }
+  if (doc.protocol === 'http:') {
+    return carrier.practice && loopback ? doc.href : null;
+  }
+  return null;
+}
+
+export { fillCurrent, fillErrorMessage, fillErrorText, layoutErrorKind, safeDocumentUrl, sameLayoutScope, staleFill, stepOfResults, superseded };

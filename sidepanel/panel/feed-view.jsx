@@ -1,19 +1,15 @@
 // @ts-check
-// The page view's list of answers in React, around the lists themselves: its title, the menu of pages
-// filled earlier on this tab, the filters with their counts, what the tags and the rater page's marks
-// mean, which earlier page is shown, what an empty list says, and Clear the
-// marks. Drawn from what renderSteps (coordinator.js) says of it (state.feed); what its controls do
-// is the panel's (`act`, wired in sidepanel.js).
-// The lists are not drawn here: #live-root holds the live list (live-view.jsx), #report the report in
-// front and #past an earlier one, whose nodes the panel moves in and out (showReport, renderSteps).
-// React draws those three empty and never draws into them.
+// The page view's single unified tabbed sheet (Model 2):
+// one header (page title or earlier-pages menu, summary line, i key, ? help),
+// one white sheet with three tabs (Needs, Worth a look, All + inline search),
+// #live-root / #report / #past inside, and an integrated footer (Clear page marks + field count).
 // One part of the panel; sidepanel.js mounts it (mountFeed).
 
 /** @import { PanelState } from '../../types.js' */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { createPortal, flushSync } from 'react-dom';
+import { flushSync } from 'react-dom';
 import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { HelpLink } from './help-link.jsx';
@@ -65,10 +61,11 @@ function AnswerKey({ open }) {
  *   },
  * }} props
  */
-function Feed({ act, host }) {
+function Feed({ act }) {
   const f = useStore(panelStore, (/** @type {PanelState} */ s) => s.feed) ?? {
     shown: true,
     title: FEED.defaultTitle,
+    filledCount: 0,
     pages: [],
     pastKey: null,
     pastWhen: '',
@@ -80,105 +77,117 @@ function Feed({ act, host }) {
     unmark: false,
     age: null,
   };
-  const hasReport = useStore(
-    panelStore,
-    (/** @type {PanelState} */ s) => Boolean(s.reportFor && Array.isArray(s.reportFor.list) && !s.filling),
-  );
-  const inAll = useStore(
-    panelStore,
-    (/** @type {PanelState} */ s) => Boolean(s.allAnswers && (!s.allAnswersFor || s.allAnswersFor === s.reportFor)),
-  );
-  const focusNeed = useStore(panelStore, (/** @type {PanelState} */ s) => {
-    void s.rowsDrawn;
-    void s.rowsAll;
-    const entry = s.reportFor;
-    if (!entry || !Array.isArray(entry.list) || s.filling) return false;
-    if (s.allAnswers && (!s.allAnswersFor || s.allAnswersFor === entry)) return false;
-    const list = /** @type {Array<Record<string, any>>} */ (entry.list);
-    return list.some((r) => r.type === 'need' && !r.gone && r.open && (!r.settled || r.pending));
-  });
+  const reportFor = useStore(panelStore, (/** @type {PanelState} */ s) => s.reportFor);
+  const rowsDrawn = useStore(panelStore, (/** @type {PanelState} */ s) => s.rowsDrawn);
   /** @type {import('react').RefObject<HTMLSelectElement | null>} */
   const menu = useRef(null);
+  /** @type {import('react').RefObject<HTMLDivElement | null>} */
+  const reportRef = useRef(null);
   const [filterStop, setFilterStop] = useState(/** @type {string | null} */ (null));
+  const [query, setQuery] = useState('');
+  const [searchEmpty, setSearchEmpty] = useState(false);
+
   const activeFilterStop = filterStop && FEED.filters.some((item) => item.filter === filterStop)
     ? filterStop
-    : (f.filter || 'all');
+    : (FEED.filters.some((item) => item.filter === f.filter) ? f.filter : 'all');
+
   // The menu shows the page shown as it changes, as the panel set it on each draw.
   useLayoutEffect(() => {
     if (menu.current) menu.current.value = f.pastKey ?? '';
   });
+
+  // Clear inline search whenever the tab or page report changes.
+  useEffect(() => {
+    setQuery('');
+    setSearchEmpty(false);
+  }, [f.filter, f.pastKey, reportFor]);
+
+  // Apply live text filter across #report rows when the All tab's search box has text.
+  useEffect(() => {
+    const root = reportRef.current;
+    if (!root) return;
+    const q = f.filter === 'all' && !f.pastKey ? query.trim().toLowerCase() : '';
+    const rows = /** @type {NodeListOf<HTMLElement>} */ (root.querySelectorAll('.rows > .row'));
+    let visible = 0;
+    for (const row of rows) {
+      if (!q) {
+        row.removeAttribute('data-search-hide');
+        if (!row.hidden) visible += 1;
+        continue;
+      }
+      const match = (row.textContent ?? '').toLowerCase().includes(q);
+      if (match) {
+        row.removeAttribute('data-search-hide');
+        if (!row.hidden) visible += 1;
+      } else {
+        row.setAttribute('data-search-hide', '1');
+      }
+    }
+    setSearchEmpty(Boolean(q) && visible === 0);
+  }, [query, f.filter, f.pastKey, reportFor, rowsDrawn]);
+
   const past = !!f.pastKey;
   const pages = /** @type {Array<{ key: string, title: string }>} */ (f.pages ?? []);
-  const grouped = hasReport && !past && !inAll;
-  const allOpen = hasReport && !past && inAll;
-  const showFocus = focusNeed && !past && !!f.report;
-  // Leaving one-need-per-screen (the need settled, or its card closed) hides the list under the
-  // grouped Review (sidepanel.css): keyboard focus left on its row would fall to the page, so it
-  // goes to the Review's title.
-  const wasFocus = useRef(false);
-  useEffect(() => {
-    const left = wasFocus.current && !showFocus;
-    wasFocus.current = showFocus;
-    if (!left || !grouped || typeof document === 'undefined') return;
-    const active = document.activeElement;
-    if (!active || active === document.body || active.closest('#report > .rows')) document.getElementById('review-title')?.focus();
-  }, [showFocus, grouped]);
-
-  const tools = (
-    <div className="feed-tools" hidden={!f.unmark}>
-      <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
-        {FEED.clearMarks}
-      </button>
-    </div>
-  );
-  const toolsRoot = f.shown && grouped && !showFocus
-    ? (host ? (host.isConnected ? host.parentElement?.querySelector('#feed-tools-root') : null) : (typeof document !== 'undefined' ? document.getElementById('feed-tools-root') : null))
-    : null;
+  const counts = f.counts;
+  const filledCount = typeof f.filledCount === 'number' ? f.filledCount : (counts ? Math.max(0, (counts.all ?? 0) - (counts.needs ?? 0)) : 0);
+  const needsCount = counts?.needs ?? 0;
+  const showSearch = f.filter === 'all' && !!f.report && !past && (counts?.all ?? 0) > 6;
+  const emptyText = searchEmpty ? FEED.emptySearch : f.empty;
 
   return (
-    <div
-      id="feed"
-      className="feed"
-      data-grouped={grouped ? 'true' : undefined}
-      data-all={allOpen ? 'true' : undefined}
-      hidden={!f.shown}
-    >
+    <div id="feed" className="feed" hidden={!f.shown}>
       <div className="feed-head">
-        <div className="feed-title">
-          <span id="feed-title" className="eyebrow">{f.title}</span>
-          <select
-            id="page-menu"
-            ref={menu}
-            className="page-menu"
-            aria-label={FEED.pageMenuLabel}
-            hidden={!pages.length}
-            onChange={(e) => act.showPast(e.target.value || null)}
-          >
-            {pages.length ? <option value="">{FEED.thisPage}</option> : null}
-            {pages.map((p) => <option key={p.key} value={p.key}>{p.title}</option>)}
-          </select>
-          <button
-            type="button"
-            id="key-btn"
-            className="key-btn"
-            aria-label={FEED.keyLabel}
-            title={FEED.keyLabel}
-            aria-expanded={f.keyOpen ? 'true' : 'false'}
-            aria-controls="answer-key"
-            hidden={f.keyOpen == null}
-            onClick={() => act?.toggleKey?.()}
-          >
-            i
-          </button>
-          <HelpLink topic="page" />
+        <div className="feed-head-main">
+          <div className="feed-title">
+            <h2 id="feed-title" className="eyebrow" hidden={pages.length > 0 && !f.report}>{f.title}</h2>
+            <select
+              id="page-menu"
+              ref={menu}
+              className="page-menu"
+              aria-label={FEED.pageMenuLabel}
+              hidden={!pages.length}
+              onChange={(e) => act?.showPast?.(e.target.value || null)}
+            >
+              {pages.length ? <option value="">{FEED.thisPage}</option> : null}
+              {pages.map((p) => <option key={p.key} value={p.key}>{p.title}</option>)}
+            </select>
+            <button
+              type="button"
+              id="key-btn"
+              className="key-btn"
+              aria-label={FEED.keyLabel}
+              title={FEED.keyLabel}
+              aria-expanded={f.keyOpen ? 'true' : 'false'}
+              aria-controls="answer-key"
+              hidden={f.keyOpen == null}
+              onClick={() => act?.toggleKey?.()}
+            >
+              i
+            </button>
+            <HelpLink topic="page" />
+          </div>
+          {f.report && !past && counts ? (
+            <p className="feed-sub">
+              {`${filledCount} filled`}
+              {' \u00b7 '}
+              {needsCount > 0
+                ? <strong className="feed-sub-needs">{`${needsCount} ${needsCount === 1 ? 'needs' : 'need'} you`}</strong>
+                : 'all set'}
+            </p>
+          ) : null}
         </div>
+      </div>
+
+      <AnswerKey open={!!f.keyOpen} />
+
+      <div className="feed-sheet">
         <div
           id="filters"
           className="filters"
           data-filter={f.filter}
           role="toolbar"
           aria-label={FEED.filtersLabel}
-          hidden={!f.counts}
+          hidden={!counts}
           onKeyDown={(e) => handleRovingKey(e, e.currentTarget, 'button', {
             onMove: (el) => setFilterStop(el.dataset.filter ?? null),
           })}
@@ -186,42 +195,67 @@ function Feed({ act, host }) {
             if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) setFilterStop(null);
           }}
         >
-          {FEED.filters.map(({ filter, label }) => (
-            <button
-              key={filter}
-              type="button"
-              data-filter={filter}
-              aria-pressed={filter === f.filter ? 'true' : 'false'}
-              tabIndex={activeFilterStop === filter ? 0 : -1}
-              onFocus={() => setFilterStop(filter)}
-              onClick={() => act?.setFilter?.(filter)}
-            >
-              {label} <span>{f.counts ? String(f.counts[filter] ?? 0) : ''}</span>
-            </button>
-          ))}
+          {FEED.filters.map(({ filter, label }) => {
+            const count = counts ? (counts[filter] ?? 0) : 0;
+            const pressed = filter === f.filter;
+            return (
+              <button
+                key={filter}
+                type="button"
+                data-filter={filter}
+                aria-pressed={pressed ? 'true' : 'false'}
+                tabIndex={activeFilterStop === filter ? 0 : -1}
+                onFocus={() => setFilterStop(filter)}
+                onClick={() => act?.setFilter?.(filter)}
+              >
+                {filter === 'needs' && count > 0 ? <span className="group-dot amber" aria-hidden="true" /> : null}
+                {label} <span className="tab-cnt">{counts ? String(count) : ''}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {showSearch ? (
+          <div className="feed-search">
+            <input
+              type="search"
+              id="feed-search-input"
+              aria-label={FEED.searchLabel}
+              placeholder={FEED.searchPlaceholder(counts.all)}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+        ) : null}
+
+        <div id="past-head" className="past-head" hidden={!past}>
+          <button
+            type="button"
+            id="past-back"
+            className="link small"
+            onClick={() => {
+              act?.showPast?.(null);
+              menu.current?.focus();
+            }}
+          >
+            {FEED.pastBack}
+          </button>
+          <span id="past-when" className="small muted">{f.pastWhen ?? ''}</span>
+        </div>
+
+        <p id="report-age" className="report-age" hidden={!f.age}>{f.age ?? ''}</p>
+        <div id="live-root" />
+        <div id="report" ref={reportRef} className="report" data-filter={f.filter} hidden={!f.report} />
+        <div id="past" className="report past" hidden={!past} />
+        <p id="feed-empty" className="feed-empty" hidden={emptyText == null}>{emptyText ?? ''}</p>
+
+        <div className="feed-tools" hidden={!f.unmark}>
+          <button type="button" id="unmark" className="link small subtle unmark" hidden={!f.unmark} onClick={() => act?.clearMarks?.()}>
+            {FEED.clearMarks}
+          </button>
+          {counts ? <span className="feed-total">{FEED.totalFields(counts.all)}</span> : null}
         </div>
       </div>
-      <AnswerKey open={!!f.keyOpen} />
-      <div id="past-head" className="past-head" hidden={!past}>
-        <button
-          type="button"
-          id="past-back"
-          className="link small"
-          onClick={() => {
-            act.showPast(null);
-            menu.current?.focus();
-          }}
-        >
-          {FEED.pastBack}
-        </button>
-        <span id="past-when" className="small muted">{f.pastWhen ?? ''}</span>
-      </div>
-      <p id="report-age" className="report-age" hidden={!f.age}>{f.age ?? ''}</p>
-      <div id="live-root" />
-      <div id="report" className="report" data-filter={f.filter} data-focus={showFocus ? 'need' : undefined} hidden={!f.report} />
-      <div id="past" className="report past" hidden={!past} />
-      <p id="feed-empty" className="feed-empty" hidden={f.empty == null}>{f.empty ?? ''}</p>
-      {toolsRoot ? createPortal(tools, toolsRoot) : tools}
     </div>
   );
 }

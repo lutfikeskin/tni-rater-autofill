@@ -18,11 +18,11 @@ import { ensureRecorder, flushPendingTextChanges, pageOf, tellRecorder } from '.
 import { announce, dropReports, fillContext, fillOptions, fillProblem, fillTimeline, issueSaid, logFill, logFillError, noteChangedAfterDone, notePageMoved, noteStaleFill, onQuotePage, pageMoved, putReport, recordLayout, recount, rememberFill, renderDock, renderSite, renderSteps, runPendingPage, scheduleAutoFill, scheduleLayout, scrollBehavior, showFinish, showOwnerNote, showStateNote, showStopPage, stateIssue, tabMaps, viewOf, watchFill } from './coordinator.js';
 import { aiDecisionEvent, remarkAi, runAssist, syncAiBanner } from './assistant.js';
 import { openPdf, pdfAvailable, pdfPageSaid } from './pdf-view.js';
-import { editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep } from './scope.js';
-import { fillCurrent, fillErrorMessage, fillErrorText, staleFill } from './fill-checks.js';
+import { editScope, fillSkip, fillSkipBy, formScoped, hasAgentPageEdit, pageEditScope, stepScope, tabStep } from './scope.js';
+import { fillCurrent, fillErrorMessage, fillErrorText, safeDocumentUrl, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
-import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
+import { answerRecord, defaultFilter, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
 import { mountRows } from './report-view.jsx';
 import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
@@ -348,7 +348,8 @@ async function fillPage({ auto = false, confirmed = null, continuing = false, re
     // another tab: nothing is filled, and each is said as what it is.
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     if (!fillCurrent(ctx)) { noteTabLeft(ctx); return; }
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed, ctx);
+    const editedOnPage = !!auto && hasAgentPageEdit(tabMaps(tabId), ctx.page, carrier, tabStep(carrier, tabId), { active: ctx.active });
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance && !editedOnPage, ctx.active, ctx.unitsListed, ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit?.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -656,12 +657,40 @@ function continuedKey(frames, page, carrier, active) {
   return advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
 }
 
+// Opens a validated same-origin document/proposal URL returned by a MAIN-world fill
+// (`FillReport.openDocumentUrl`) via `chrome.tabs.create`, and always strips `openDocumentUrl`
+// from every frame report so it is never persisted or logged.
+/**
+ * @param {FillReport[]} frames
+ * @param {{ carrier?: CarrierConfig | null, tabUrl?: string | null }} [ctx]
+ * @returns {string | null}
+ */
+function openFillDocument(frames, { carrier = null, tabUrl = null } = {}) {
+  /** @type {string | null} */
+  let raw = null;
+  let halted = false;
+  for (const f of frames ?? []) {
+    if (!f || typeof f !== 'object') continue;
+    if (f.halted) halted = true;
+    if (raw == null && typeof f.openDocumentUrl === 'string' && f.openDocumentUrl) raw = f.openDocumentUrl;
+    delete f.openDocumentUrl;
+  }
+  if (halted || !raw) return null;
+  const url = safeDocumentUrl(raw, carrier, tabUrl);
+  if (!url) return null;
+  if (globalThis.chrome?.tabs?.create) {
+    Promise.resolve(globalThis.chrome.tabs.create({ url })).catch(() => {});
+  }
+  return url;
+}
+
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
 /** @param {FillReport[]} frames */
-function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, intake = state.intake, revision = state.intakeRevision, active = state.active }) {
+function afterFill(frames, { tabId = state.tab?.id, carrier, page, tabUrl = state.tab?.url, run = null, intake = state.intake, revision = state.intakeRevision, active = state.active }) {
   const ctx = { tabId, carrier, page, run, intake, revision };
+  if (typeof openFillDocument === 'function') openFillDocument(frames, { carrier, tabUrl });
   const maps = tabMaps(tabId);
   // A helper found already done on the page (alreadyShown) clicked nothing: no follow-up for it.
   const clicked = frames.some((f) => (f.actions ?? []).some((a) => !a.alreadyShown));
@@ -1204,7 +1233,7 @@ function renderReport(frames, ctx = {}) {
     // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
     entry.list.length ? rowsHost(entry, rctx) : null,
   ].filter((node) => node != null && /** @type {*} */ (node) !== false);
-  if (key === currentReportKey()) state.filter = 'all';
+  if (key === currentReportKey()) state.filter = defaultFilter(entry.list);
   putReport(entry, nodes);
   renderSteps();
   if (state.reportFor !== entry || ctx.restoredAt) return;
@@ -1350,11 +1379,11 @@ function toggleRow(rec, open = !rec.open) {
 }
 
 // The dock's Show the next one: the next question still needing the agent after the one open now
-// (the first when none is), opened in the whole list and brought into view.
+// (the first when none is), opened in the Needs tab and brought into view.
 function showNextNeed() {
-  if (state.view !== 'page' || state.filter !== 'all' || state.pastKey) {
+  if (state.view !== 'page' || (state.filter !== 'needs' && state.filter !== 'all') || state.pastKey) {
     state.view = 'page';
-    state.filter = 'all';
+    state.filter = 'needs';
     state.pastKey = null;
     showScreen();
     renderSteps();
@@ -1448,6 +1477,13 @@ async function agentAnswer(rec, x, choice, { tabId, page, carrier }, button = nu
       } catch { /* a removed or navigating frame no longer has live listeners */ }
     }
     await persistGuardedEdits(editOrigin, edited);
+    if (edited.length) {
+      const maps = tabMaps(tabId);
+      maps.agentPageEdits ??= new Set();
+      const editAt = pageEditScope(page, carrier, tabStep(carrier, tabId), { active: maps.active, shown: maps.unitShown });
+      if (editAt) maps.agentPageEdits.add(editAt);
+      keepJournal(tabId);
+    }
     // Only while `filling` is still this pick's (as a fill's `finally`: an intake change may have
     // let go of it, stopFillFirst).
     const held = () => state.fillingLock === token;
@@ -1637,4 +1673,4 @@ async function capturePage() {
   }
 }
 
-export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, pickListItem, refreshAnswers, renderReport, resumeHeldFill, rowActs, runKit, showNextNeed, toggleRow, unitArrival, worldFor };
+export { afterFill, answerOf, answeredOnPage, appendRows, assistAfterFill, captureFromShortcut, capturePage, checkItems, clearMarks, drawRow, fillPage, liveFrames, liveItems, lookRight, noteLiveItems, noteMissingUnit, openFillDocument, pickListItem, refreshAnswers, renderReport, resumeHeldFill, rowActs, runKit, showNextNeed, toggleRow, unitArrival, worldFor };

@@ -44,6 +44,7 @@ export const NO_ADAPTER = {
   listOwner: () => null,
   order: (controls) => controls,
   components: null,
+  settleMaxMs: () => null,
 };
 
 let adapterSource = null;
@@ -363,6 +364,8 @@ function quietFrom(now) {
  * @returns {Promise<boolean>}
  */
 export async function settle({ quietMs = 250, maxMs = 15000, requests = null, why = null, abort = waitsStopped, since = false } = {}) {
+  const floor = adapter().settleMaxMs?.(why);
+  if (typeof floor === 'number' && Number.isFinite(floor) && floor > maxMs) maxMs = floor;
   const start = Date.now();
   let last = since ? quietFrom(start) : start;
   watching?.mo.disconnect();

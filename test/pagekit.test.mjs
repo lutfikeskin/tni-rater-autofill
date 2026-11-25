@@ -446,6 +446,7 @@ function harness({ ext = false, progressive = ext, adapter = progressive ? 'prog
   const context = {
     document,
     location,
+    URL,
     URLSearchParams,
     crypto,
     window: null,
@@ -4874,6 +4875,34 @@ test('typed text is taken out of messages from boxes question discovery skips: s
   assert.deepEqual([...h.kit.capture(null, []).messages], ['No customer named [typed]; check [typed]']);
 });
 
+// W49-03: page captures scrub non-intake VINs/addresses and suppress dynamic client labels/options
+// on GEICO USDOT verify, driver license number, registered owner, and AmWINS product-copy.
+test('a capture scrubs non-intake VINs/addresses and dynamic client controls without over-redacting (W49-03)', () => {
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
+  const vinField = new SelectNode([{ text: '$1,000,000', value: '1M' }], { id: 'Id_GiveLiability_1', ariaLabel: '2022 FORD TRANSIT (1HGCM82633A004352) Liability', value: '1M' });
+  const owner = new SelectNode([{ text: 'Robert Taylor', value: '1' }, { text: 'Apex Freight LLC', value: '2' }], { id: 'Id_GiveRegisteredOwner_2', ariaLabel: 'Registered Owner', value: '1' });
+  const dl = makeInput({ id: 'Id_GiveDriverLicenseNumber_3', ariaLabel: "Robert Taylor's Driver's License Number" });
+  const verify = gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, "USDOT Information APEX FREIGHT LLC 4521 OCEAN BLVD, STE 2 MIAMI BEACH, FL, 33139 Is this the customer's business?", [['Yes', 'Yes'], ['No', 'No']]);
+  const copy = new SelectNode([{ text: 'BOP - Apex Freight LLC 742 Evergreen Terrace', value: 'BOP' }], { id: 'product-copy', name: 'product-copy', ariaLabel: 'APEX FREIGHT LLC 742 Evergreen Terrace Product', value: 'BOP' });
+  h.document.body.append(vinField, owner, dl, verify.group, copy);
+  const page = h.kit.capture(null, []);
+  const byKey = Object.fromEntries(page.controls.map((c) => [c.ref || c.id, c]));
+  assert.equal(byKey.GiveLiability.label, '2022 FORD TRANSIT ([client]) Liability');
+  assert.deepEqual([...byKey.GiveLiability.options], ['$1,000,000']);
+  assert.deepEqual([...byKey.GiveRegisteredOwner.options], []);
+  assert.equal(byKey.GiveRegisteredOwner.selected, undefined);
+  assert.equal(byKey.GiveDriverLicenseNumber.label, "[client]'s Driver's License Number");
+  assert.equal(byKey.GiveExtendUsDotVerifyBusinessAddress.label, "USDOT Information [client] Is this the customer's business?");
+  assert.deepEqual([...byKey.GiveExtendUsDotVerifyBusinessAddress.options], ['Yes', 'No']);
+  assert.equal(byKey['product-copy'].label, 'Product');
+  assert.deepEqual([...byKey['product-copy'].options], []);
+  assert.equal(byKey['product-copy'].selected, undefined);
+  const serialized = JSON.stringify(page.controls);
+  for (const leak of ['1HGCM82633A004352', 'Robert', 'Taylor', 'APEX', 'Apex', '4521', 'OCEAN', 'MIAMI', '33139', 'Evergreen']) {
+    assert.ok(!serialized.includes(leak), `capture leaked "${leak}": ${serialized}`);
+  }
+});
+
 // Progressive renumbered every question on 2026-10-07 (Agent Code 18F became 1C6, Type of Trucker
 // 267 became 29E, and 267 became Business Name). Questions are found by their data-model name or
 // their text, so the same page with other numbers fills the same way, and no answer goes to the
@@ -6471,10 +6500,12 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       tellRecorder: async () => {}, persistAiPending: async () => {}, resumeHeldFill: () => {}, traced: () => false,
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+    const journalCalls = [];
+    sandbox.keepJournal = (tabId) => { journalCalls.push(tabId); };
     const source = PANEL_SOURCE;
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
-      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'pageEditScope', 'formScoped', 'stepScope', 'tabStep', 'tabMaps', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
     vm.runInNewContext(functions.map(name => {
       const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
       assert.ok(match, name);
@@ -6487,7 +6518,11 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       assert.ok(xs.every(x => x.done === 'auto'), 'later answers use per-field validation after the first changes the snapshot');
     } else if (scenario.startsWith('transport failure')) {
       assert.deepEqual(controls.map(el => el.value), ['no', scenario.endsWith('after edit') ? 'yes' : '', '']);
-      if (scenario.endsWith('after edit')) assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+      if (scenario.endsWith('after edit')) {
+        assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+        assert.ok(state.agentPageEdits.has('/rater'), 'transport-failure cleanup also records agentPageEdits');
+        assert.ok(journalCalls.includes(ctx.tabId), 'transport-failure cleanup persists journal');
+      }
       assert.ok(xs.every(x => x.done === 'auto'), 'transport failure retains conservative approval holds');
     } else if (scenario === 'document replacement') {
       assert.deepEqual(replacementControls.map(el => el.value), ['', '', ''], 'no remaining answer is written into the replacement document');
@@ -6504,6 +6539,8 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       assert.deepEqual(controls.map(el => el.value), scenario === 'future frame' ? ['no', 'yes', ''] : ['yes', 'no', ''],
         'the correction stays and future frame C is not answered');
       assert.deepEqual([...state.agentKeys.get('/rater')].sort(), ['choice0', 'choice1']);
+      assert.ok(state.agentPageEdits.has('/rater'), 'guarded edits during applyAi record agentPageEdits');
+      assert.ok(journalCalls.includes(ctx.tabId), 'guarded edits during applyAi persist journal');
       assert.match(xs[2].error, /agent edit interrupted/);
       assert.equal(xs[2].done, null);
       if (scenario === 'finished frame') assert.equal(xs[0].done, null, 'a correction to an earlier applied answer replaces its AI hold');
@@ -11743,4 +11780,213 @@ test('Progressive TellUsWhatHappened & AdditionalDetails: post-MVR dispute and l
   assert.deepEqual([r2.filled.length, r2.failed.length, r2.unknown.length, r2.leftRequired.length], [0, 0, 0, 0]);
   assert.equal(loan.input.value, '');
   assert.ok(r2.noData.some((x) => x.key === 'ref:AdditionalOtherInterestInput.LoanLeaseCompany' && x.manualOnly));
+});
+
+// W49-01 (2026-11-25): GEICO Quote & Coverages (and Vehicles) runs live server lookups and
+// React/GDS redraws after coverage changes, select2 picks and add-on toggles that take 3.1–4.9 s
+// (21 store quotes / 38 page.unsettled failures and 4 round-wait halts when capped at 3–4 s).
+// GEICO's adapter raises settle()'s ceiling for answer/round/list waits to 15 s while fast pages
+// still return after quietMs (zero extra delay), genuinely wedged pages still time out cleanly,
+// and non-GEICO plain pages keep their 3 s ceiling.
+test('GEICO Quote & Coverages: slow recalculation redraws (>3.5 s) settle without page.unsettled while fast pages pay no extra delay (W49-01)', async () => {
+  const makeObserver = () => {
+    const active = new Set();
+    class LiveMutationObserver {
+      constructor(cb) { this.cb = cb; this.live = false; }
+      observe() { this.live = true; active.add(this); }
+      disconnect() { this.live = false; active.delete(this); }
+      takeRecords() { return []; }
+      fire() { if (this.live) this.cb(); }
+    }
+    const mutateFor = (ms, every = 100) => {
+      if (ms <= 0) return;
+      const end = clock.Date.now() + ms;
+      const tick = () => {
+        for (const o of active) o.fire();
+        if (clock.Date.now() + every <= end) setTimeout(tick, every);
+      };
+      setTimeout(tick, every);
+    };
+    return { MutationObserver: LiveMutationObserver, mutateFor };
+  };
+
+  const runCoverage = async ({ mutateMs, adapter = 'geico' }) => {
+    const obs = makeObserver();
+    const h = harness({ adapter, pathname: adapter === 'geico' ? '/quote' : '/rater', globals: { MutationObserver: obs.MutationObserver } });
+    if (adapter === 'geico') geicoBar(h, 'Quote & Coverages');
+    const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_24001_COMP`, value: 'Not Included' });
+    comp.addEventListener('change', () => obs.mutateFor(mutateMs));
+    h.document.body.append(comp);
+    h.document.body.innerText = STALE;
+    let recalcs = 0;
+    const recalc = addButton(h, 'Recalculate');
+    recalc.onclick = () => { recalcs++; rate(h); };
+    const rules = [{ q: 'COMP', selector: '[id$="_COMP"]', ...(adapter === 'geico' ? { steps: ['Quote & Coverages'] } : {}), name: 'Comprehensive', kind: 'choice', source: 'standard', value: () => '$1,000 deductible' }];
+    const actions = adapter === 'geico' ? geico.actions.filter((a) => a.id === 'recalculate') : [];
+    const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions });
+    const report = await h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+    return { report, comp, recalcs, h, obs };
+  };
+
+  // Slow GEICO coverage redraw (4.2 s): settles cleanly, keeps the answer, and does not hold Recalculate.
+  const slow = await runCoverage({ mutateMs: 4200 });
+  assert.equal(slow.comp.value, '$1,000 deductible');
+  assert.deepEqual(plain(slow.report.failed), [], 'no false page.unsettled on 4.2 s GEICO redraw');
+  assert.equal(slow.report.filled.length, 1);
+  assert.ok(slow.report.filled[0].timing.settleMs >= 4200, `waited through redraw (${slow.report.filled[0].timing.settleMs} ms)`);
+  assert.equal(slow.recalcs, 1, 'Recalculate is not held');
+
+  // Counterexample 1: fast GEICO page pays zero extra delay (settles right after quietMs = 150 ms).
+  const fast = await runCoverage({ mutateMs: 0 });
+  assert.deepEqual(plain(fast.report.failed), []);
+  assert.equal(fast.recalcs, 1);
+  assert.ok(fast.report.filled[0].timing.settleMs < 500, `fast page paid no extra wait (${fast.report.filled[0].timing.settleMs} ms)`);
+
+  // Counterexample 2: genuinely wedged GEICO page (mutations past 15 s) still fails with page.unsettled and holds Recalculate.
+  const stuck = await runCoverage({ mutateMs: 20000 });
+  assert.deepEqual(plain(stuck.report.failed.map((x) => [x.key, x.code])), [['cov:COMP#1', 'page.unsettled']]);
+  assert.equal(stuck.recalcs, 0, 'Recalculate stays held when page never settles');
+
+  // Counterexample 3: non-GEICO plain HTML page keeps its 3 s answer settle ceiling.
+  const plainSlow = await runCoverage({ mutateMs: 3500, adapter: null });
+  assert.deepEqual(plain(plainSlow.report.failed.map((x) => x.code)), ['page.unsettled']);
+
+  // Slow GEICO panel/AI answer() (>3.5 s redraw): settles cleanly instead of returning page.unsettled.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const sel = new SelectNode(['Not Included', '$1,000 deductible'], { id: `Id_${randomUUID()}_24002_COMP`, value: 'Not Included' });
+    sel.addEventListener('change', () => obs.mutateFor(4200));
+    h.document.body.append(sel);
+    const [res] = await h.kit.answer([{ key: 'cov:COMP#1', label: sel.label ?? 'cov:COMP#1', value: '$1,000 deductible' }]);
+    assert.equal(res.ok, true, `panel/AI answer settled on GEICO: ${JSON.stringify(res)}`);
+    assert.equal(sel.value, '$1,000 deductible');
+  }
+
+  // Slow GEICO add-on chevron toggle (why: 'round' > 3.5 s redraw): settles without halting the fill.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const card = new FakeNode('li', { id: 'Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_33590', className: 'expandable-form' });
+    const icon = new FakeNode('span', { className: 'expandable-form-control', attrs: { 'data-testid': 'editIcon', tabindex: '0' } });
+    card.append(new FakeNode('p', { className: 'h4', textContent: 'Motor Truck General Liability' }), icon);
+    h.document.body.append(card);
+    icon.onclick = () => {
+      card.className = 'expandable-form expanded';
+      const r = gdsRadios('GiveMotorTruckGeneralLiabilityCoverageRequired', 57395, 'Does the customer need Motor Truck General Liability?', [['Yes', 'Yes'], ['No', 'No']]);
+      card.append(r.group);
+      obs.mutateFor(4200);
+    };
+    const record = { ...geicoRecord(), operations: { businessClass: 'Freight Hauler' }, coverage: { gl: true, glLimit: '$1M/$2M' } };
+    const plan = buildPlan(record, geico, {}).filter((s) => (s.kind === 'action' ? s.action === 'openGl' : s.field === 'GiveMotorTruckGeneralLiabilityCoverageRequired'));
+    const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+    assert.equal(report.halted, false, `round wait settled cleanly: ${report.reason}`);
+    assert.deepEqual(plain(report.actions.map((x) => x.id)), ['openGl']);
+    assert.equal(report.filled.length, 1);
+  }
+
+  // Slow GEICO select2 commodity pick (why: 'list' > 4.5 s redraw): settles without spilling into page.unsettled.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const wrap = new FakeNode('div');
+    const select = new SelectNode(['Consumer Goods - Other Consumer Goods', 'General Freight'], {
+      id: 'Id_GiveMtcHaulingCommoditiesCollect_51234',
+      name: 'Id_GiveMtcHaulingCommoditiesCollect_51234',
+      className: 'select2-hidden-accessible',
+      ariaLabel: 'Select up to four commodities the customer hauls the most',
+    });
+    select.multiple = true;
+    const box = new FakeNode('span', { className: 'select2 select2-container' });
+    const selSpan = new FakeNode('span', { className: 'select2-selection select2-selection--multiple' });
+    const search = makeInput({ className: 'select2-search__field' });
+    selSpan.append(search);
+    box.append(selSpan);
+    wrap.append(select, box);
+    h.document.body.append(wrap);
+    const results = new FakeNode('ul', { id: `select2-${select.id}-results` });
+    const item = new FakeNode('li', { className: 'select2-results__option', textContent: 'Consumer Goods - Other Consumer Goods' });
+    item.addEventListener('click', () => {
+      select.options[0].selected = true;
+      select.dispatchEvent({ type: 'change', bubbles: true });
+      obs.mutateFor(4600);
+    });
+    results.append(item);
+    search.addEventListener('input', () => { if (!results.isConnected) h.document.body.append(results); });
+    const plan = [{
+      id: 'commodities', path: 'geico.commodities', field: 'GiveMtcHaulingCommoditiesCollect',
+      steps: ['Quote & Coverages'], name: 'Commodities', kind: 'choice', source: 'derived',
+      value: 'Consumer Goods - Other Consumer Goods',
+    }];
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+    assert.deepEqual(plain(report.failed), [], 'slow select2 list redraw settles without page.unsettled');
+    assert.equal(report.filled.length, 1);
+    assert.equal(select.options[0].selected, true);
+  }
+});
+
+test('openDownloadInPanel returns same-origin target=_blank link URLs instead of clicking in MAIN world, and falls back otherwise', async () => {
+  const printStep = {
+    id: 'action:printProposal', kind: 'action', action: 'printProposal', baseAction: 'printProposal',
+    path: 'action:printProposal', name: 'Print Quote Proposal', pages: [], steps: null,
+    text: '^print quote proposal$', token: null, near: null, within: null, moveOn: false, loads: false,
+    unique: false, label: 'Print Quote Proposal', missing: null, markable: false, heldBy: [],
+    resolvedBy: null, settledByPages: [], opener: null, nudge: null, immediate: false, inFrame: false,
+    skipIfProtected: false, after: [], afterAny: [], unless: [], unlessSelector: null, doneWhen: [],
+    waitRequired: false, whenClear: false, quietMs: null, once: true, keepAnswers: false, reopen: null,
+    kitClick: true, onBlankPage: false, unfinished: null, unlessActions: [], afterActions: [],
+    afterPages: [], afterValue: null, needsPremium: false, needsRecalculation: false, verify: 'download',
+    ratedBy: null, shownBy: null, scope: null, scopeIndex: null, value: null,
+  };
+
+  // 1. Shadow <a href="/PrintQuote?quote=1" target="_blank"> inside <gds-button>: with openDownloadInPanel,
+  //    returns openDocumentUrl and does not call click() in page world.
+  {
+    const h = harness({ pathname: '/quote' });
+    const host = new FakeNode('gds-button', { attrs: { target: '_blank', href: '/PrintQuote?quote=1' } });
+    const sr = host.attachShadow({ mode: 'open' });
+    const link = new FakeNode('a', { attrs: { href: '/PrintQuote?quote=1', target: '_blank' }, textContent: 'Print Quote Proposal' });
+    let clicked = 0;
+    link.onclick = () => { clicked++; };
+    sr.append(link);
+    h.document.body.append(host);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: true });
+    assert.equal(report.openDocumentUrl, 'https://synthetic.example/PrintQuote?quote=1');
+    assert.equal(report.documentPending, true);
+    assert.equal(clicked, 0, 'must not click link in MAIN world when handing URL to side panel');
+    assert.equal(report.actions.some((a) => a.id === 'printProposal'), true);
+  }
+
+  // 2. Without openDownloadInPanel, clicks the link in-page and leaves openDocumentUrl unset.
+  {
+    const h = harness({ pathname: '/quote' });
+    const link = new FakeNode('a', { attrs: { href: '/PrintQuote?quote=2', target: '_blank' }, textContent: 'Print Quote Proposal' });
+    let clicked = 0;
+    link.onclick = () => { clicked++; };
+    h.document.body.append(link);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: false });
+    assert.equal(report.openDocumentUrl, undefined);
+    assert.equal(report.documentPending, true);
+    assert.equal(clicked, 1);
+  }
+
+  // 3. Cross-origin, javascript:, non-_blank, or plain <button> without href fall back to pressButton.
+  for (const [label, makeEl] of [
+    ['cross-origin', () => new FakeNode('a', { attrs: { href: 'https://evil.example/PrintQuote', target: '_blank' }, textContent: 'Print Quote Proposal' })],
+    ['javascript', () => new FakeNode('a', { attrs: { href: 'javascript:void(0)', target: '_blank' }, textContent: 'Print Quote Proposal' })],
+    ['same-tab', () => new FakeNode('a', { attrs: { href: '/PrintQuote?quote=3' }, textContent: 'Print Quote Proposal' })],
+    ['plain-button', () => new FakeNode('button', { textContent: 'Print Quote Proposal' })],
+  ]) {
+    const h = harness({ pathname: '/quote' });
+    const el = makeEl();
+    let clicked = 0;
+    el.onclick = () => { clicked++; };
+    h.document.body.append(el);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: true });
+    assert.equal(report.openDocumentUrl, undefined, `${label}: must not set openDocumentUrl`);
+    assert.equal(clicked, 1, `${label}: must fall back to pressButton`);
+  }
 });

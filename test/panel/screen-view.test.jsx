@@ -195,7 +195,7 @@ test('screen-head, dock sr-only/aria-hidden text, filling count from fillingFor,
     true, false, false, null, 'Answer 2 questions', false,
   ]);
   expect([$(container, 'feed').hidden, feedTitle.textContent, getComputedStyle(feedTitle).display]).toEqual([
-    false, 'Answers on this page', 'inline',
+    false, 'Answers on this page', 'block',
   ]);
 
   act(() => {

@@ -116,7 +116,8 @@ export function createLocator(kit) {
     const fieldsOf = (s) => {
       if (!known(s)) return [];
       // `control`: the kind of field the question is, when its text is shared with another kind.
-      let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control));
+      // `row`: 1-based entity row/column key (`adapter().row`), when a field or caption repeats across units.
+      let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control) && (s.row == null || String(x.row ?? '') === String(s.row)));
       if (same.length > 1 && same.some((x) => kindFits(s, x))) same = same.filter((x) => kindFits(s, x));
       // The anchor tells repeated texts apart; a data-model name is already the one field.
       return s.askAfter && !s.field ? afterAnchor(same, s.askAfter) : same;
@@ -198,7 +199,7 @@ export function createLocator(kit) {
     for (const x of held) used.add(x);
     // A data-model name not on the page, while its expected wording is: the field was probably renamed.
     pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
-      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && !stepFields(s).includes(y.ref) && !claimed.has(y.ref) && textIs(s, y)); return x ? [{ step: s, control: x }] : []; });
+      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && !stepFields(s).includes(y.ref) && !claimed.has(y.ref) && textIs(s, y) && (s.row == null || String(y.row ?? '') === String(s.row))); return x ? [{ step: s, control: x }] : []; });
     // A label rule kept out of a carrier's row sections (`notWithin`): its rows are answered by
     // their own rules, or stay the agent's.
     const fenced = (s, x) => !!s.notWithin?.some((sel) => { try { return !!x.el?.closest(sel); } catch { return false; } });

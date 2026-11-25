@@ -262,6 +262,28 @@ export function agreesWith(step, c) {
 }
 
 /**
+ * True when choice control c currently holds a numeric dollar limit strictly exceeding step's
+ * target limit (used by `replace: 'lower'`, e.g. capping UMBI to BI and UMPD to PD). Returns false
+ * when c is blank, declined (no dollar amounts), lower/equal, or has a different number of dollar
+ * components than the target.
+ * @param {any} step
+ * @param {PageControl} c
+ * @returns {boolean}
+ */
+export function exceedsTarget(step, c) {
+  if (c.kind !== 'select' && c.kind !== 'radio') return false;
+  const curText = selectedText(c);
+  if (!curText) return false;
+  const cur = moneyTokens(curText);
+  if (!cur.length) return false;
+  const targetOpt = matchOption(optionsOf(c), step);
+  const targetText = targetOpt ? targetOpt.text : (typeof step.value === 'string' ? step.value : null);
+  const want = targetText ? moneyTokens(targetText) : [];
+  if (!want.length || cur.length !== want.length) return false;
+  return cur.some((n, i) => n > want[i]);
+}
+
+/**
  * The choice control c holds the answer only by a fallback the engine isn't sure of: the one option
  * beginning with the answer's words (`prefix`) or having them (`contains`), none reading exactly so
  * (nor as an alias). What it holds and how, for a check item; else null (an exact answer, another

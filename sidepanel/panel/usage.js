@@ -7,12 +7,12 @@ import { fieldChangeEvent, fillEvents, redactor, knownStep } from '../../src/usa
 import { quoteStatePick } from '../../src/quote-state.js';
 import * as usage from '../usage-log.js';
 import { inExtension } from './env.js';
-import { framesReady, logCrash, noteFrameTimeout, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
+import { framesReady, keepJournal, logCrash, noteFrameTimeout, persistAgentKeys, persistDoneActions, settleRejectedAi, state, switchOn } from './core.js';
 import { releaseDiscardedForms } from './record.js';
-import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, viewOf } from './coordinator.js';
+import { noteChangedAfterDone, noteQuoteDone, noteQuoteState, onQuotePage, renderSteps, scheduleAutoFill, scheduleLayout, seedQuoteState, showStopPage, stopPageIsOurs, tabMaps, viewOf } from './coordinator.js';
 import { answeredOnPage, fillPage, unitArrival } from './fill.js';
 import { syncAiBanner } from './assistant.js';
-import { changeScopes, tabStep } from './scope.js';
+import { changeScopes, pageEditScopes, tabStep } from './scope.js';
 import { currentReportKey, stopNoteFor } from './report-model.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -345,6 +345,20 @@ function onRecorderMessage(msg, sender, sendResponse) {
     if (byAgent.length) {
       const page = samePage(msg.page);
       if (noteChangedAfterDone(state.tab.carrier, page, step, sender.tab.id)) renderSteps();
+      const editStep = step ?? tabStep(state.tab.carrier, sender.tab.id);
+      const maps = tabMaps(sender.tab.id);
+      maps.agentPageEdits ??= new Set();
+      let newlyEdited = false;
+      for (const scope of pageEditScopes(page, state.tab.carrier, editStep, msg.forms, { active: maps.active, bound: maps.unitForms, shown: maps.unitShown })) {
+        if (!maps.agentPageEdits.has(scope)) {
+          maps.agentPageEdits.add(scope);
+          newlyEdited = true;
+        }
+      }
+      if (newlyEdited) {
+        keepJournal(sender.tab.id);
+        if (typeof renderSteps === 'function') renderSteps();
+      }
       // On GEICO, by the unit forms on screen as the recorder saw them (changeScopes).
       for (const scope of changeScopes(page, state.tab.carrier, step, msg.forms)) {
         const keys = state.agentKeys.get(scope) ?? new Set();

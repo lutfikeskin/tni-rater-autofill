@@ -156,6 +156,36 @@ export function findButton(step, { disabledToo = false } = {}) {
 }
 
 /**
+ * Resolves a same-origin `target="_blank"` link URL for a download/preview button (such as
+ * GEICO PA's `<gds-button target="_blank" href="/PrintQuote?...">` wrapping a shadow `<a href>`).
+ * Returns the resolved `http:`/`https:` URL when strictly same-origin with `location.origin`, or
+ * `null` so callers fall back to pressing the button in-page.
+ * @param {Element | null | undefined} el
+ * @returns {string | null}
+ */
+export function downloadLinkUrl(el) {
+  if (!el) return null;
+  const root = /** @type {ShadowRoot | Document | null} */ (el.getRootNode?.() ?? null);
+  const host = root && 'host' in root ? root.host : null;
+  const inner = el.shadowRoot?.querySelector?.('a[href]') ?? el.querySelector?.('a[href]') ?? null;
+  const nodes = [el, inner, host].filter(Boolean);
+  const target = nodes.map((n) => n?.getAttribute?.('target')).find((t) => t != null && t.trim() !== '');
+  if (String(target ?? '').trim().toLowerCase() !== '_blank') return null;
+  const raw = nodes.map((n) => n?.getAttribute?.('href')).find((h) => h != null && h.trim() !== '');
+  const href = String(raw ?? '').trim();
+  if (!href || href.startsWith('#')) return null;
+  try {
+    const base = location.href || `${location.origin}${location.pathname || '/'}${location.search || ''}`;
+    const resolved = new URL(href, base);
+    if (resolved.protocol !== 'https:' && resolved.protocol !== 'http:') return null;
+    if (resolved.origin !== location.origin) return null;
+    return resolved.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Returns selectors for carrier buttons and actions the agent might click.
  * @returns {string}
  */

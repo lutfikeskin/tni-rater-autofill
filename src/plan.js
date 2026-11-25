@@ -158,6 +158,9 @@ function actionSteps(carrier, record, active) {
       // The answers on the page are read as it is clicked and checked once its result shows: one
       // the fill gave that changed is given back once, and every change is the agent's (W43-31).
       keepAnswers: !!a.keepAnswers,
+      // Button text pattern clicked during `keepAnswers` verification when recalculation collapses
+      // editable controls back to read-only cards (GEICO PA's Edit on Quote Summary).
+      reopen: resolve(a.reopen) ?? null,
       // Clicked by the kit itself where the carrier's buttons are pressed from the page's own world
       // (`pressInPage`): GEICO's Print Quote Proposal opened nothing pressed from there (2026-10-23).
       kitClick: !!a.kitClick,
@@ -361,6 +364,8 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       // the field's data-model name (Duck Creek fieldref), and any swap aliases,
       field: rule.field ?? null,
       fieldAliases: rule.fieldAliases?.length ? [...rule.fieldAliases] : null,
+      // 1-based entity row/column key (adapter().row), when the same field or caption repeats across units,
+      row: rule.row != null ? String(rule.row) : null,
       // else its question on the page: exact text(s), or `label` (re) on these pages,
       ask: rule.ask ? [].concat(rule.ask) : null,
       pages: rule.page ? [].concat(rule.page) : null,
@@ -400,9 +405,13 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
       verifyOnly,
-      // Our answer replaces what the page put there (e.g. a lookup's body type); may depend on the
-      // client (AmWINS' hazard exposure: only the intake's Yes replaces Default all answers to No's No).
-      replace: typeof rule.replace === 'function' ? !!rule.replace(record, active) : !!rule.replace,
+      // Our answer replaces what the page put there (e.g. a lookup's body type); `'lower'` replaces
+      // a choice only when the currently selected numeric dollar limit strictly exceeds the target
+      // limit (GEICO PA UMBI/UMPD capping); may depend on the client.
+      replace: (() => {
+        const raw = typeof rule.replace === 'function' ? rule.replace(record, active) : rule.replace;
+        return raw === 'lower' ? 'lower' : !!raw;
+      })(),
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
       masked: !!rule.masked,

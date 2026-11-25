@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="completed" expanded="" type="menu" variation="accordion">
+      <span slot="title">Policyholder</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Policyholder Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Current Insurance</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="completed" expanded="" type="menu" variation="accordion">
+      <span slot="title">Vehicles</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Vehicle Information</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Drivers</span>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">License History</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Select Drivers with Incidents</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div><gds-section-header>Let's add all drivers</gds-section-header></div>
+
+      <div id="Id_GeicoAdaptiveGrid_45158" class="ssp-grid">
+        <div class="count-label">3 drivers</div>
+        <div class="data-table">
+          <table class="table">
+            <thead>
+              <tr>
+                <td><p><strong>Driver Information</strong></p></td>
+                <td><div class="grid-header"><gds-label-legend><span>Alex Sample</span></gds-label-legend></div></td>
+                <td><div class="grid-header"><gds-label-legend><span>Jordan Sample</span></gds-label-legend></div></td>
+                <td>
+                  <div class="grid-header">
+                    <div><gds-label-legend><span>Casey Sample</span></gds-label-legend></div>
+                    <div class="grid-actions"><span class="icon-trash geico-icon" data-testid="deleteIcon"></span></div>
+                  </div>
+                </td>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>First Name</span></gds-label-legend></div></td>
+                <td><gds-input-wrapper mask-type="none"><input id="Id_GiveFirstName_26136" name="Id_GiveFirstName_26136" type="text" slot="input" aria-label="First Name" value="Alex"></gds-input-wrapper></td>
+                <td><gds-input-wrapper mask-type="none"><input id="Id_GiveFirstName_99161" name="Id_GiveFirstName_99161" type="text" slot="input" aria-label="First Name" value="Jordan"></gds-input-wrapper></td>
+                <td><gds-input-wrapper mask-type="none"><input id="Id_GiveFirstName_70980" name="Id_GiveFirstName_70980" type="text" slot="input" aria-label="First Name" value="Casey"></gds-input-wrapper></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Last Name</span></gds-label-legend></div></td>
+                <td><gds-input-wrapper mask-type="none"><input id="Id_GiveLastName_67090" name="Id_GiveLastName_67090" type="text" slot="input" aria-label="Last Name" value="Sample"></gds-input-wrapper></td>
+                <td><gds-input-wrapper mask-type="none"><input id="Id_GiveLastName_32793" name="Id_GiveLastName_32793" type="text" slot="input" aria-label="Last Name" value="Sample"></gds-input-wrapper></td>
+                <td><gds-input-wrapper mask-type="none"><input id="Id_GiveLastName_33685" name="Id_GiveLastName_33685" type="text" slot="input" aria-label="Last Name" value="Sample"></gds-input-wrapper></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Date of Birth</span></gds-label-legend></div></td>
+                <td><gds-date-input-wrapper date-format="MM dd yyyy" remove-calendar-icon=""><gds-input-wrapper mask-type="date-full-prefix"><input id="Id_GiveDateOfBirth_40319" name="Id_GiveDateOfBirth_40319" type="text" slot="input" inputmode="numeric"></gds-input-wrapper></gds-date-input-wrapper></td>
+                <td><gds-date-input-wrapper date-format="MM dd yyyy" remove-calendar-icon=""><gds-input-wrapper mask-type="date-full-prefix"><input id="Id_GiveDateOfBirth_65577" name="Id_GiveDateOfBirth_65577" type="text" slot="input" inputmode="numeric"></gds-input-wrapper></gds-date-input-wrapper></td>
+                <td><gds-date-input-wrapper date-format="MM dd yyyy" remove-calendar-icon=""><gds-input-wrapper mask-type="date-full-prefix"><input id="Id_GiveDateOfBirth_24420" name="Id_GiveDateOfBirth_24420" type="text" slot="input" inputmode="numeric"></gds-input-wrapper></gds-date-input-wrapper></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Gender</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveGender_97410Div" class="select-box"><select id="Id_GiveGender_97410" aria-label="Gender"><option value="">Please Select</option><option value="Female">Female</option><option value="Male">Male</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveGender_80471Div" class="select-box"><select id="Id_GiveGender_80471" aria-label="Gender"><option value="">Please Select</option><option value="Female">Female</option><option value="Male">Male</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveGender_20115Div" class="select-box"><select id="Id_GiveGender_20115" aria-label="Gender"><option value="">Please Select</option><option value="Female">Female</option><option value="Male">Male</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Marital Status</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveMaritalStatus_97222Div" class="select-box"><select id="Id_GiveMaritalStatus_97222" aria-label="Marital Status"><option value="">Please Select</option><option value="Single">Single</option><option value="Married">Married</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveMaritalStatus_57847Div" class="select-box disabled"><select id="Id_GiveMaritalStatus_57847" disabled="" aria-label="Marital Status"><option value="">Please Select</option><option value="Married" selected="">Married</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveMaritalStatus_37953Div" class="select-box"><select id="Id_GiveMaritalStatus_37953" aria-label="Marital Status"><option value="">Please Select</option><option value="Single">Single</option><option value="Married">Married</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Relationship to Insured</span></gds-label-legend></div></td>
+                <td></td>
+                <td><div class="form-field"><div id="Id_GiveRelationshipToInsured_84359Div" class="select-box disabled"><select id="Id_GiveRelationshipToInsured_84359" disabled="" aria-label="Relationship to You"><option value="">Please Select</option><option value="Spouse" selected="">Spouse</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveRelationshipToInsured_73843Div" class="select-box"><select id="Id_GiveRelationshipToInsured_73843" aria-label="Relationship to You"><option value="">Please Select</option><option value="Child">Child</option><option value="Other">Other</option><option value="Parent">Parent</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Government/Military Affiliations</span></gds-label-legend></div></td>
+                <td>
+                  <div class="form-field">
+                    <select id="Id_GiveGovernmentMilitaryAffiliation_59886" class="select2-hidden-accessible" multiple="" required="" aria-label="Select all government or military affiliations you have (current or retired)." data-select2-id="Id_GiveGovernmentMilitaryAffiliation_59886" tabindex="-1" aria-hidden="true">
+                      <option value="IsMilitary">Military</option>
+                      <option value="DNA" selected="">Does Not Apply</option>
+                    </select>
+                    <span class="select2 select2-container select2-container--default">
+                      <span class="selection"><span class="select2-selection select2-selection--multiple"><ul class="select2-selection__rendered"><li class="select2-search select2-search--inline"><input class="select2-search__field" type="search" role="searchbox" aria-autocomplete="list"></li></ul></span></span>
+                    </span>
+                  </div>
+                </td>
+                <td>
+                  <div class="form-field">
+                    <select id="Id_GiveGovernmentMilitaryAffiliation_59759" class="select2-hidden-accessible" multiple="" required="" aria-label="Select all government or military affiliations &lt;span data-qm-encrypt='true'&gt;Jordan&lt;/span&gt; has (current or retired)." data-select2-id="Id_GiveGovernmentMilitaryAffiliation_59759" tabindex="-1" aria-hidden="true">
+                      <option value="IsMilitary">Military</option>
+                      <option value="DNA" selected="">Does Not Apply</option>
+                    </select>
+                    <span class="select2 select2-container select2-container--default">
+                      <span class="selection"><span class="select2-selection select2-selection--multiple"><ul class="select2-selection__rendered"><li class="select2-search select2-search--inline"><input class="select2-search__field" type="search" role="searchbox" aria-autocomplete="list"></li></ul></span></span>
+                    </span>
+                  </div>
+                </td>
+                <td></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>License Status</span></gds-label-legend></div></td>
+                <td><div class="form-field"><div id="Id_GiveDriversLicenseStatus_19704Div" class="select-box"><select id="Id_GiveDriversLicenseStatus_19704" aria-label="License Status"><option value="">Please Select</option><option value="Active">Active</option><option value="Suspended">Suspended</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveDriversLicenseStatus_76848Div" class="select-box"><select id="Id_GiveDriversLicenseStatus_76848" aria-label="License Status"><option value="">Please Select</option><option value="Active">Active</option><option value="Suspended">Suspended</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveDriversLicenseStatus_98976Div" class="select-box"><select id="Id_GiveDriversLicenseStatus_98976" aria-label="License Status"><option value="">Please Select</option><option value="Active">Active</option><option value="Suspended">Suspended</option></select></div></div></td>
+              </tr>
+              <tr>
+                <td class="row-header"><div class="grid-header"><gds-label-legend><span>Insure this person?</span></gds-label-legend></div></td>
+                <td></td>
+                <td><div class="form-field"><div id="Id_GiveDriverExclusionInsuredYesNo_29214Div" class="select-box"><select id="Id_GiveDriverExclusionInsuredYesNo_29214" aria-label="Do you want to insure &lt;span data-qm-encrypt='true'&gt;Jordan&lt;/span&gt; &lt;span data-qm-encrypt='true'&gt;Sample&lt;/span&gt;?"><option value="">Please Select</option><option value="No">No</option><option value="Yes">Yes</option></select></div></div></td>
+                <td><div class="form-field"><div id="Id_GiveDriverExclusionInsuredYesNo_55468Div" class="select-box"><select id="Id_GiveDriverExclusionInsuredYesNo_55468" aria-label="Do you want to insure &lt;span data-qm-encrypt='true'&gt;Casey&lt;/span&gt; &lt;span data-qm-encrypt='true'&gt;Sample&lt;/span&gt;?"><option value="">Please Select</option><option value="No">No</option><option value="Yes">Yes</option></select></div></div></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <fieldset id="Id_GiveAllDriversAcknowledgement_40067" class="form-field checkbox-group" role="radiogroup">
+          <div class="checkbox-group-sales checkbox-wrapper col-1">
+            <div>
+              <input id="checkbox-Id_GiveAllDriversAcknowledgement_40067-Yes" name="Id_GiveAllDriversAcknowledgement_40067" type="checkbox" value="Yes" data-testid="checkbox-Id_GiveAllDriversAcknowledgement_40067-Yes">
+              <label id="labelForYes" for="checkbox-Id_GiveAllDriversAcknowledgement_40067-Yes" class="checkbox"><span>I have read the statement to the customer.</span></label>
+            </div>
+          </div>
+          <span id="form-message-error-Id_GiveAllDriversAcknowledgement_40067" class="form-message"></span>
+        </fieldset>
+      </div>
+
+      <gds-sticky-bar class="sales-docked-message">
+        <div class="right-content">
+          <div class="right">
+            <gds-button class="mobile-button" type="button">
+              <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+              Add Driver
+            </gds-button>
+            <gds-button class="mobile-button" type="button" disabled="">
+              <template shadowrootmode="open"><button type="button" disabled=""><span><slot></slot></span></button></template>
+              Save and Continue
+            </gds-button>
+            <gds-button class="mobile-button" type="button">
+              <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+              Discard Changes
+            </gds-button>
+          </div>
+        </div>
+      </gds-sticky-bar>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

@@ -2,7 +2,7 @@
 // on it, and its controls. Drawn from what openPdf and drawPdf say (state.pdfSheet); what its buttons
 // do is the panel's (`act`, wired in sidepanel.js). The page itself is drawn by drawPdf on
 // #pdf-canvas, which this draws once and leaves alone (no size, style or children of React's), so a
-// redraw never wipes it; the drag and the Ctrl + wheel zoom on #pdf-scroll are pdfPan's, wired once
+// redraw never wipes it; the left-click pan and scroll-wheel zoom on #pdf-scroll are pdfPan's, wired once
 // it is drawn. One part of the panel; sidepanel.js mounts it (mountPdf).
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
