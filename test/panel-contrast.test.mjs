@@ -86,3 +86,12 @@ test('with reduced motion, a fill shows a steady full bar and a still spinner, n
   // Nothing else moves either: every element and its before and after content.
   assert.match(reduced, /\*, \*::before, \*::after \{ animation: none !important; transition: none !important; \}/);
 });
+
+test('grid containers holding selects and need actions constrain columns to minmax(0, 1fr) so long <option> text never clips buttons', () => {
+  for (const sel of ['.view', '.report', '.rows', '.row-body', '.review-row-body', '.change-slot']) {
+    assert.match(CSS, new RegExp(`\\${sel} \\{[^}]*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\);`), `${sel} uses minmax(0, 1fr)`);
+  }
+  assert.match(CSS, /\.opt-select \{[^}]*min-width:\s*0;/);
+  assert.match(CSS, /\.opt-select select \{[^}]*width:\s*0;[^}]*min-width:\s*0;/);
+  assert.match(CSS, /\.opt-select > button \{[^}]*flex:\s*0 0 auto;/);
+});
