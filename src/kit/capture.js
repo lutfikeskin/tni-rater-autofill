@@ -8,7 +8,7 @@ import {
   keyIndex, controlOf, hiddenKeys, isVisible, buttonText,
 } from './dom.js';
 import { adapter, withAdapter, currentPage } from './adapter.js';
-import { redactionPattern } from '../redaction.js';
+import { hasPrivateOptions, redactionPattern, sanitizeFieldLabel, scrubPatterns } from '../redaction.js';
 import { agreesWith, assign } from './apply.js';
 import { getRunning } from './cursor.js';
 
@@ -60,7 +60,7 @@ export function listOwner(list) {
  * @returns {{ options: string[], optionsTruncated?: boolean }}
  */
 export function captureOptions(c, r) {
-  const all = /agent|producer/i.test(c.label ?? '') ? [] : optionsOf(c);
+  const all = /agent|producer/i.test(c.label ?? '') || hasPrivateOptions(c) ? [] : optionsOf(c);
   return { options: all.slice(0, CAPTURE_OPTIONS).map((o) => r(o.text)), optionsTruncated: all.length > CAPTURE_OPTIONS || undefined };
 }
 
@@ -72,7 +72,7 @@ export function captureOptions(c, r) {
  */
 export function capture(plan, redact = []) {
   const patterns = redact.filter((t) => t && t.length >= 3).map(redactionPattern);
-  const r = (s) => patterns.reduce((acc, re) => acc.replace(re, '[client]'), oneLine(s)).replace(/^.+?(?=\((?:USDOT|Primary Business|Mailing|Garaging) Address\))/i, '[client] ');
+  const r = (s) => patterns.reduce((acc, re) => acc.replace(re, '[client]'), scrubPatterns(oneLine(s)));
   const controls = collectControls();
   const matched = new Map(plan ? assign(controls, plan).map((p) => [p.control, p.step.path]) : []);
   const path = location.pathname.replace(/\d{5,}/g, ':id');
@@ -90,7 +90,7 @@ export function capture(plan, redact = []) {
       row: c.row ?? undefined,
       kind: c.kind,
       type: adapter().typeName(c.widget) ?? c.type,
-      label: r(c.label),
+      label: r(sanitizeFieldLabel(c.label, c)),
       name: /** @type {HTMLInputElement} */ (c.el).name || null,
       id: c.el.id || null,
       dataId: c.el.getAttribute('data-id') || null,
@@ -100,18 +100,18 @@ export function capture(plan, redact = []) {
       ...captureOptions(c, r),
       wouldFill: matched.get(c) ?? null,
       pageHasValue: hasValue(c),
-      selected: c.kind === 'text' ? undefined : r(selectedText(c) ?? ''),
+      selected: c.kind === 'text' || hasPrivateOptions(c) ? undefined : r(selectedText(c) ?? ''),
     })),
     buttons: [...new Set(deepQueryAll(document, withAdapter('a, button, [role=button], input[type=button], input[type=submit]', 'buttons'))
       .filter((el) => el.getClientRects().length).map((el) => r(buttonText(el)).slice(0, 60)).filter(Boolean))].slice(0, 80),
     customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
       .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
     messages: [...new Set(deepQueryAll(document, withAdapter('[role=alert], [class*="error-message"], [class*="validation-message"], [class*="help-block"]', 'errors'))
-      .filter(isVisible).map((el) => withoutTyped(r(oneLine(el.textContent)), controls).slice(0, 200)).filter(Boolean))].slice(0, 40),
+      .filter(isVisible).map((el) => r(withoutTyped(oneLine(el.textContent), controls)).slice(0, 200)).filter(Boolean))].slice(0, 40),
     openLists: deepQueryAll(document, withAdapter('[role=listbox]', 'lists')).filter(isVisible).slice(0, 10).map((list) => {
       const owner = listOwner(list);
       const label = owner?.label ?? null;
-      const items = [...list.querySelectorAll(withAdapter('[role=option]', 'options'))].map((o) => withoutTyped(r(oneLine(o.textContent)), controls)).filter(Boolean);
+      const items = [...list.querySelectorAll(withAdapter('[role=option]', 'options'))].map((o) => r(withoutTyped(oneLine(o.textContent), controls))).filter(Boolean);
       const kept = !!owner?.fixed && label !== null && !/agent|producer/i.test(label);
       return { label: label === null ? null : r(label), selector: cssPath(list), count: items.length, fixed: !!owner?.fixed,
         options: kept ? items.slice(0, CAPTURE_OPTIONS) : [], optionsTruncated: (kept && items.length > CAPTURE_OPTIONS) || undefined };

@@ -4874,6 +4874,34 @@ test('typed text is taken out of messages from boxes question discovery skips: s
   assert.deepEqual([...h.kit.capture(null, []).messages], ['No customer named [typed]; check [typed]']);
 });
 
+// W49-03: page captures scrub non-intake VINs/addresses and suppress dynamic client labels/options
+// on GEICO USDOT verify, driver license number, registered owner, and AmWINS product-copy.
+test('a capture scrubs non-intake VINs/addresses and dynamic client controls without over-redacting (W49-03)', () => {
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
+  const vinField = new SelectNode([{ text: '$1,000,000', value: '1M' }], { id: 'Id_GiveLiability_1', ariaLabel: '2022 FORD TRANSIT (1HGCM82633A004352) Liability', value: '1M' });
+  const owner = new SelectNode([{ text: 'Robert Taylor', value: '1' }, { text: 'Apex Freight LLC', value: '2' }], { id: 'Id_GiveRegisteredOwner_2', ariaLabel: 'Registered Owner', value: '1' });
+  const dl = makeInput({ id: 'Id_GiveDriverLicenseNumber_3', ariaLabel: "Robert Taylor's Driver's License Number" });
+  const verify = gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, "USDOT Information APEX FREIGHT LLC 4521 OCEAN BLVD, STE 2 MIAMI BEACH, FL, 33139 Is this the customer's business?", [['Yes', 'Yes'], ['No', 'No']]);
+  const copy = new SelectNode([{ text: 'BOP - Apex Freight LLC 742 Evergreen Terrace', value: 'BOP' }], { id: 'product-copy', name: 'product-copy', ariaLabel: 'APEX FREIGHT LLC 742 Evergreen Terrace Product', value: 'BOP' });
+  h.document.body.append(vinField, owner, dl, verify.group, copy);
+  const page = h.kit.capture(null, []);
+  const byKey = Object.fromEntries(page.controls.map((c) => [c.ref || c.id, c]));
+  assert.equal(byKey.GiveLiability.label, '2022 FORD TRANSIT ([client]) Liability');
+  assert.deepEqual([...byKey.GiveLiability.options], ['$1,000,000']);
+  assert.deepEqual([...byKey.GiveRegisteredOwner.options], []);
+  assert.equal(byKey.GiveRegisteredOwner.selected, undefined);
+  assert.equal(byKey.GiveDriverLicenseNumber.label, "[client]'s Driver's License Number");
+  assert.equal(byKey.GiveExtendUsDotVerifyBusinessAddress.label, "USDOT Information [client] Is this the customer's business?");
+  assert.deepEqual([...byKey.GiveExtendUsDotVerifyBusinessAddress.options], ['Yes', 'No']);
+  assert.equal(byKey['product-copy'].label, 'Product');
+  assert.deepEqual([...byKey['product-copy'].options], []);
+  assert.equal(byKey['product-copy'].selected, undefined);
+  const serialized = JSON.stringify(page.controls);
+  for (const leak of ['1HGCM82633A004352', 'Robert', 'Taylor', 'APEX', 'Apex', '4521', 'OCEAN', 'MIAMI', '33139', 'Evergreen']) {
+    assert.ok(!serialized.includes(leak), `capture leaked "${leak}": ${serialized}`);
+  }
+});
+
 // Progressive renumbered every question on 2026-10-07 (Agent Code 18F became 1C6, Type of Trucker
 // 267 became 29E, and 267 became Business Name). Questions are found by their data-model name or
 // their text, so the same page with other numbers fills the same way, and no answer goes to the
