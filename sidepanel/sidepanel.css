@@ -323,7 +323,6 @@ body:not(:has(#settings:not([hidden]))) .steps:has(#step-fill[aria-selected="tru
 .drop-title { font-weight: 600; font-size: 14px; color: var(--ink-strong); }
 .drop-hint { font-size: 13px; color: var(--ink-muted); }
 #choose { min-height: 36px; padding: 0 16px; font-size: 14px; border-radius: var(--radius-md); }
-.privacy-line { margin-top: 0; color: var(--ink-muted); font-size: 13px; text-align: center; }
 /* Home's setup checklist (home-view.jsx); #setup-root takes no room once all is done. */
 #setup-root:empty { display: none; }
 .setup-card { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border-card); border-radius: var(--radius-lg); box-shadow: var(--card-shadow); display: grid; gap: 6px; }
