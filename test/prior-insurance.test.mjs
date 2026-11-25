@@ -109,9 +109,51 @@ test('GEICO: no current insurance, an expired policy or another kind of policy s
     assert.doesNotMatch(auto.note, /doesn't show a current auto policy/);
     agents(geicoStep(record, GEICO.years));
   }
-  const none = intake({ ins_carrier_1: 'NO POP' }).record;
+  const none = intake({ ins_carrier_1: 'None' }).record;
   assert.equal(geicoStep(none, GEICO.auto).value, 'No');
   agents(geicoStep(none, GEICO.years));
+  const noIns = intake({ ins_carrier_1: 'No insurance' }).record;
+  assert.equal(geicoStep(noIns, GEICO.auto).value, 'No');
+  agents(geicoStep(noIns, GEICO.years));
+});
+
+// W49-04 (TNI, 2026-11-25): "NO POP" ("No Proof of Prior") does not rule out personal or
+// commercial auto insurance, so treat it as unknown (fact / null, left to the agent with a note)
+// on GEICO GiveCurrentAutoInsuranceStatus and Progressive HasCurrentInsurancePolicy, while keeping
+// explicit "None" / "No prior" / "No insurance" as No (W48-08).
+test('W49-04: "NO POP" is unknown (fact / left to agent) on GEICO & Progressive; explicit "None" / "No insurance" stay No', () => {
+  for (const carrier of ['NO POP', 'No POP', 'no pop', ' NO POP ']) {
+    const { record, warnings } = intake({ ins_carrier_1: carrier });
+    assert.equal(priorInsuranceAssumed(record), false, carrier);
+    assert.ok(warnings.some((w) => w.code === 'prior.no-pop'), `${carrier}: prior.no-pop info`);
+    assert.equal(warnings.some((w) => w.code === 'prior.none'), false, `${carrier}: not prior.none`);
+    assert.equal(warnings.some((w) => w.code === 'prior.incomplete'), false, `${carrier}: not prior.incomplete`);
+    // GEICO: left to agent as fact / null with note quoting the intake text.
+    const gAuto = geicoStep(record, GEICO.auto);
+    agents(gAuto);
+    assert.deepEqual([gAuto.source, gAuto.manualOnly], ['fact', true], `GEICO ${carrier}`);
+    assert.match(gAuto.note, /no proof of prior/i, `GEICO ${carrier}`);
+    agents(geicoStep(record, GEICO.years));
+    // Progressive: q81 left to agent as fact / null, q83 attestation, q95/q9D left to agent if revealed.
+    const pAuto = byQ(record, '81');
+    agents(pAuto);
+    assert.deepEqual([pAuto.source, pAuto.manualOnly], ['fact', true], `Progressive ${carrier}`);
+    assert.match(pAuto.note, /no proof of prior/i, `Progressive ${carrier}`);
+    assert.deepEqual([byQ(record, '83').value, byQ(record, '83').source], [null, 'attestation'], `Progressive q83 ${carrier}`);
+    for (const q of ['95', '9D']) {
+      assert.deepEqual([byQ(record, q).ignore, byQ(record, q).value, byQ(record, q).source], [false, null, 'fact'], `Progressive ${q} ${carrier}`);
+    }
+    // AmWINS: disclosure still has no POP line; prior-carrier rows stay NO PRIOR.
+    assert.doesNotMatch(disclosure(record), /POP|prior/i, `AmWINS disclosure ${carrier}`);
+  }
+  // Counterexample: explicit "None", "No prior", "No insurance" still answer No.
+  for (const carrier of ['None', 'NONE', 'No', 'No prior', 'No insurance', 'N/A']) {
+    const { record, warnings } = intake({ ins_carrier_1: carrier });
+    assert.ok(warnings.some((w) => w.code === 'prior.none'), `${carrier}: prior.none`);
+    assert.deepEqual([geicoStep(record, GEICO.auto).value, geicoStep(record, GEICO.auto).source], ['No', 'derived'], `GEICO ${carrier}`);
+    assert.deepEqual([byQ(record, '81').value, byQ(record, '81').source], [false, 'derived'], `Progressive ${carrier}`);
+    for (const q of ['95', '9D']) assert.equal(byQ(record, q).ignore, true, `Progressive ${q} ${carrier}`);
+  }
 });
 
 // The maintainer, 2026-11-07 (audit DATA-02): a policy expired by today's date (the day the intake
@@ -481,8 +523,8 @@ test('Progressive: currently insured with any box filled; a blank limit or date 
   assert.deepEqual([byQ(dated, '81').value, byQ(dated, '81').source, byQ(dated, '9D').value], [true, 'derived', '12/31/2026']);
 });
 
-test('Progressive: nothing filled, no prior insurance or an expired policy is not currently insured, as before', () => {
-  for (const boxes of [{}, { ins_carrier_1: 'NO POP' }, { ...DATED, ins_exp_1: '08/31/2026' }]) {
+test('Progressive: nothing filled, explicit no prior insurance or an expired policy is not currently insured, as before', () => {
+  for (const boxes of [{}, { ins_carrier_1: 'None' }, { ins_carrier_1: 'No insurance' }, { ...DATED, ins_exp_1: '08/31/2026' }]) {
     const { record } = intake(boxes);
     assert.deepEqual([byQ(record, '81').value, byQ(record, '81').source], [false, 'derived'], JSON.stringify(boxes));
     assert.equal(byQ(record, '83').source, 'attestation');

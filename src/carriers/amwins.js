@@ -50,8 +50,8 @@
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { isLongHaul, ntlNoDotFilings, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
-import { vinUnreadable } from '../shared/parse.js';
-import { otherNotes, noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
+import { toDate, vinUnreadable } from '../shared/parse.js';
+import { otherNotes, noPriorInsurance, noProofOfPrior, priorPolicyExpired, priorInsuranceAssumed, priorPolicyNotAuto, companyName, companyStructure, companyStructureWarn, companyStructureNote, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, cargoCommodity } from '../util.js';
 import { HAZ_HAUL } from '../util.js';
 import { driverExcluded, ownerRowExcluded, owner, ownerDobNote } from '../answers/owner.js';
 import { STANDARDS, usd, usdK } from '../standards.js';
@@ -174,7 +174,7 @@ const disclosure = (r) => {
   // the other boxes (TNI, 2026-10-26, W44-29), the part the intake lacks left out. A remark in the
   // date box is no date: no "Exp Date" (TNI, 2026-10-26: answer to PR question).
   const p = r.priorInsurance?.[0];
-  if (p && !noPriorInsurance(p) && (p.carrier || priorInsuranceAssumed(r))) {
+  if (p && !noPriorInsurance(p) && !noProofOfPrior(p) && (p.carrier || priorInsuranceAssumed(r))) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
     const carrier = p.carrier ? p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase()) : null;
     const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(otherNotes(r) ?? '');
@@ -227,8 +227,8 @@ const genderNote = (r, a) => (gender(r, a) == null ? `The driver's gender "${gen
 // typed was refused and the application went back from Vehicles to Drivers). No readable date of
 // birth is the agent's.
 const birthYear = (r, a) => {
-  const m = /^\d{1,2}\/\d{1,2}\/(\d{4})$/.exec(String(driverOf(r, a)?.dob ?? '').trim());
-  return m ? Number(m[1]) : null;
+  const d = toDate(driverOf(r, a)?.dob);
+  return d ? Number(d.slice(6)) : null;
 };
 const licenseYear = (r, a) => (birthYear(r, a) == null ? null : String(birthYear(r, a) + 17));
 const licenseYearNote = (r, a) => (birthYear(r, a) == null
@@ -655,11 +655,10 @@ export const amwins = {
       value: withCurrentCarrier, note: withCurrentCarrierNote },
     { concept: 'prior.loss-runs', tni: 'amwins.loss-runs', name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
     { concept: 'prior.loss-runs', tni: 'amwins.loss-runs', name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
-    // Preserve the intake's explicit claims answer; unknown history stays with the agent.
-    // Yes opens the required Loss History.
-    { concept: 'prior.losses', name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', source: 'derived', clientFact: true,
-      value: (r) => typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : null,
-      note: (r) => typeof r.claims?.hasClaims === 'boolean' ? null : 'The intake doesn\'t answer the claims / violations question: answer prior loss yourself.' },
+    // Any prior loss: always No on AmWINS, whatever the intake's claims box says (TNI standard,
+    // 2026-11-25, W48-12). The Loss History rows below stay mapped as client facts (W48-04) in
+    // case the agent switches it to Yes manually.
+    { concept: 'prior.losses', tni: 'amwins.prior-loss', name: 'Any prior loss (standard: No)', label: '^any prior loss$', kind: 'bool', source: 'standard', value: () => false },
     // Its Loss History rows (#lossHistroyPanel, the page's spelling), one per loss: the client's
     // facts. The intake has only the claims box's text, never read into a date, a type or an amount
     // (W48-04: they were unfamiliar questions). A step per row, up to LOSS_ROWS; with No the panel

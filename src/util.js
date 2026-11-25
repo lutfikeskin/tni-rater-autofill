@@ -7,12 +7,21 @@ export { STATES } from './states.js';
 // Additional Notes box.
 export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
 
-// "No", "NO POP" (no proof of prior), "None", "No prior", "N/A" as the carrier, without an
-// expiration date: the client has no current insurance, whatever type or limit the form shows
-// (TNI, 2026-10-09). The policy stays on the record so the panel shows what the intake said,
-// but nothing is filled or disclosed from it.
+// "NO POP" / "No POP" / "No proof of prior" as the carrier, without an expiration date:
+// the client has no proof of prior (often commercial) insurance, which does not rule out current
+// personal or commercial auto insurance (TNI, 2026-11-25, W49-04). Kept on the record so the
+// panel shows it, not assumed as current insurance, not disclosed on AmWINS, and left to the
+// agent (`fact`) on GEICO and Progressive's "currently insured?" questions.
+export function noProofOfPrior(policy) {
+  return !!policy && /^no\s+(?:p\.?o\.?p\.?|proof\s+of\s+prior)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
+}
+
+// "No", "None", "No prior", "No insurance", "N/A" as the carrier, without an expiration date:
+// the client has no current insurance, whatever type or limit the form shows (TNI, 2026-10-09;
+// W48-08; excluding "NO POP", which is unknown since TNI, 2026-11-25, W49-04). The policy stays
+// on the record so the panel shows what the intake said, but nothing is filled or disclosed from it.
 export function noPriorInsurance(policy) {
-  return !!policy && /^(no|none|n\/?a)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
+  return !!policy && !noProofOfPrior(policy) && /^(no|none|n\/?a)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
 }
 
 // A cargo limit with no deductible on the intake: the deductible is the client's, so on every
@@ -172,7 +181,7 @@ export function sameCarrier(name, carrierId) {
 // (untypedCarrierPolicy). Expired or undated, it is said, as before. The side panel's red card on the
 // carrier's pages and the intake check (prior.carrier-is-quoted, normalize.js) both read it.
 export function quotedCarrierPolicy(policy, carrierId) {
-  if (!policy || noPriorInsurance(policy) || !sameCarrier(policy.carrier, carrierId)) return false;
+  if (!policy || noPriorInsurance(policy) || noProofOfPrior(policy) || !sameCarrier(policy.carrier, carrierId)) return false;
   const type = String(policy.type ?? '').trim();
   return !type || /commercial\s+auto/i.test(type);
 }
@@ -203,7 +212,7 @@ export function quotedCarriersOf(policy) {
 // GL, cargo or other one): the two become one helper once both are merged.
 export function priorPolicyCurrent(record, policy = record?.priorInsurance?.[0]) {
   const filled = (v) => v != null && String(v).trim() !== '';
-  if (!policy || noPriorInsurance(policy) || !['type', 'carrier', 'limit', 'expiration'].some((k) => filled(policy[k]))) return false;
+  if (!policy || noPriorInsurance(policy) || noProofOfPrior(policy) || !['type', 'carrier', 'limit', 'expiration'].some((k) => filled(policy[k]))) return false;
   return !priorPolicyExpired(record, policy);
 }
 
@@ -248,7 +257,7 @@ export function priorPolicyExpired(record, policy = record?.priorInsurance?.[0])
 const AUTO_POLICY = /^(?:commercial|personal)\s+auto$/i;
 export function priorInsuranceAssumed(record, policy = record?.priorInsurance?.[0]) {
   const filled = (v) => v != null && String(v).trim() !== '';
-  if (!policy || noPriorInsurance(policy) || !['type', 'carrier', 'limit', 'expiration'].some((k) => filled(policy[k]))) return false;
+  if (!policy || noPriorInsurance(policy) || noProofOfPrior(policy) || !['type', 'carrier', 'limit', 'expiration'].some((k) => filled(policy[k]))) return false;
   if (filled(policy.type) && !AUTO_POLICY.test(String(policy.type).trim())) return false;
   return !priorPolicyExpired(record, policy);
 }
@@ -257,7 +266,7 @@ export function priorInsuranceAssumed(record, policy = record?.priorInsurance?.[
 // untyped policy isn't one.
 export function priorPolicyNotAuto(policy) {
   const type = String(policy?.type ?? '').trim();
-  return type !== '' && !noPriorInsurance(policy) && !AUTO_POLICY.test(type);
+  return type !== '' && !noPriorInsurance(policy) && !noProofOfPrior(policy) && !AUTO_POLICY.test(type);
 }
 
 // A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the

@@ -223,10 +223,15 @@ const UNREADABLE = {
 // into Progressive's 17-character box and refused): the intake's vin.invalid check, its reason
 // quoted. Read as normalizeIntake reads it, so a valid VIN written with spaces or dashes fills.
 const isVin = (path) => /^(vehicles|trailers)\[\d+\]\.vin$/.test(path ?? '');
+// Bare "Other" in requested auto liability limit names no amount (W49-19, matching W45-06 on
+// priorInsurance[0].limit): held as Needs you quoting the raw text instead of failing option.no-match.
+const OTHER_LIMIT = /^other$/i;
+const isOtherAutoLimit = (path, value) => path === 'coverage.autoLiabLimit' && OTHER_LIMIT.test(String(value ?? '').trim());
 /** @param {any} kind  the schema kind of the field (fieldInfo) @param {any} value @param {string | null} path  the record path it was read from @returns {string | null} what the value should be, when it is not that */
 function unreadable(kind, value, path) {
   if (value === null || value === undefined || value === '') return null;
   if (isVin(path)) return vinUnreadable(value);
+  if (isOtherAutoLimit(path, value)) return 'a liability limit';
   return UNREADABLE[kind]?.(value) ?? null;
 }
 
@@ -306,6 +311,7 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       : `${carrier?.id ?? 'carrier'}.q${rule.q ?? id}`;
     const info = rule.path ? fieldInfo(rule.path) : { label: rule.name ?? path, kind: 'text' };
     const name = rule.name ?? info.label;
+    const kind = (typeof rule.kind === 'function' ? rule.kind(record, active) : rule.kind) ?? info.kind;
     // A rule with a path and no computed value reads the intake; the rest declare their source.
     // A rule's source may depend on the record (a TNI standard when the intake is silent, derived
     // when it answers).
@@ -322,10 +328,21 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
     const verifyOnly = typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly;
     // An intake value its field can't hold (UNREADABLE above) is the agent's, never filled. A step
     // that only checks the page against it, or leaves the page's answer, is left as it is.
-    const unreadableAs = source === 'intake' && !rule.value && !note && !ignore && !verifyOnly ? unreadable(info.kind, value, rule.path ? path : null) : null;
-    const unreadableNote = !unreadableAs ? null : isVin(rule.path ? path : null)
+    // Derived date steps (owner DOB on Progressive/AmWINS/GEICO, PA driver DOB) read the intake's
+    // dob too, so an unreadable date flagged `dob.invalid` is held here quoting the raw text
+    // instead of typed to fail `answer.cleared` (W49-20). Bare "Other" on coverage.autoLiabLimit
+    // is held the same way if set on the record (W49-19).
+    const rulePath = rule.path ? path : null;
+    const checkUnreadable = !note && !ignore && !verifyOnly && (
+      (source === 'intake' && !rule.value)
+      || ((source === 'intake' || source === 'derived') && (kind === 'date' || isOtherAutoLimit(rulePath, value)))
+    );
+    const unreadableAs = checkUnreadable ? unreadable(kind, value, rulePath) : null;
+    const unreadableNote = !unreadableAs ? null : isVin(rulePath)
       ? `${name}: the intake's VIN "${value}" ${unreadableAs}, so it isn't typed. Correct it in client details, or type the right VIN yourself.`
-      : `${name}: the intake says "${value}", which isn't ${unreadableAs}. Answer it yourself.`;
+      : isOtherAutoLimit(rulePath, value)
+        ? `${name}: the intake says "${value}", with no amount. Answer it yourself.`
+        : `${name}: the intake says "${value}", which isn't ${unreadableAs}. Answer it yourself.`;
     if (unreadableAs) value = null;
     // A derived answer's evidence: the intake facts its rule read (the panel shows them on the PDF).
     const from = source === 'derived' && rule.value && value != null && value !== '' ? readsOf(rule.value, record, active, value) : null;
@@ -346,7 +363,7 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       id,
       path,
       name,
-      kind: (typeof rule.kind === 'function' ? rule.kind(record, active) : rule.kind) ?? info.kind,
+      kind,
       source,
       // A TNI standard, not an intake fact: the panel tags it, and in review mode (an unvalidated
       // business class) it is a check item.

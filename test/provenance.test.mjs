@@ -158,6 +158,7 @@ const NOT_MAPPED = {
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
+    'claims.hasClaims': 'AmWINS "Any prior loss" is always No (TNI standard, 2026-11-25, W48-12; amwins.prior-loss; tested below)',
   },
   geico: {
     'coverage.cargoAsWritten': 'the cargo box as written, for the agent to compare: the carriers read the limit and deductible parsed from it (coverage.cargoLimit, coverage.cargoDeductible)',
@@ -325,31 +326,13 @@ test('loads to Canada: AmWINS foreign operations stays TNI\'s No, naming its own
   }
 });
 
-test('convictions are TNI\'s standard No whatever the claims answer; prior loss follows the intake', () => {
-  for (const hasClaims of [true, false, null]) {
+test('convictions and AmWINS prior loss are TNI\'s standard No whatever the claims answer (W48-12, 2026-11-25)', () => {
+  for (const hasClaims of [true, false, null, undefined]) {
     const plan = buildPlan(with_({ 'claims.hasClaims': hasClaims }), amwins, {});
     const convictions = named(plan, /convictions/i);
     assert.deepEqual([convictions.value, convictions.source, convictions.manualOnly], [false, 'standard', false], String(hasClaims));
-  }
-  assert.equal(named(buildPlan(with_({ 'claims.hasClaims': true }), amwins, {}), /^Any prior loss/).value, true);
-  assert.equal(named(buildPlan(expediter(), amwins, {}), /^Any prior loss/).value, false);
-});
-
-test('AmWINS prior loss preserves unknown claims and explicit Yes / No', () => {
-  for (const hasClaims of [null, undefined, 'unknown']) {
-    const plan = buildPlan(with_({ 'claims.hasClaims': hasClaims }), amwins, {});
     const loss = named(plan, /^Any prior loss/);
-    agentsNote(loss);
-    assert.equal(loss.source, 'derived');
-    assert.equal(loss.manualOnly, true, `${hasClaims}: missing claim history is the agent's`);
-    assert.match(loss.note, /intake.*doesn.t answer|intake.*no.*answer/i);
-  }
-  for (const hasClaims of [true, false]) {
-    const loss = named(buildPlan(with_({ 'claims.hasClaims': hasClaims }), amwins, {}), /^Any prior loss/);
-    assert.equal(loss.value, hasClaims);
-    assert.equal(loss.note, null);
-    assert.equal(loss.manualOnly, false);
-    assert.equal(loss.source, 'derived');
+    assert.deepEqual([loss.value, loss.source, loss.standard, loss.manualOnly, loss.note ?? null, loss.tni], [false, 'standard', true, false, null, 'amwins.prior-loss'], String(hasClaims));
   }
 });
 

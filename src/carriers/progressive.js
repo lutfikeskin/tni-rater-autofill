@@ -43,7 +43,7 @@ import { garagingIs } from '../answers/state.js';
 import { recentModel, vehicleValueNote, vehicleFinancing, vehicleFinancingNote, trailerFinancing, trailerFinancingNote } from '../answers/vehicles.js';
 import { incidentRowNote } from '../answers/claims.js';
 import { phoneDigits, phoneNote } from '../answers/contact.js';
-import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, notAutoType, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
+import { currentlyInsured, currentlyInsuredAnswer, currentlyInsuredSource, currentlyInsuredNote, onlyNotAuto, onlyNoPop, notAutoType, noPopText, priorLimit, priorBoxValue, priorBoxIgnored, priorBoxSource, priorBoxNote } from '../answers/insurance.js';
 
 // The intake's current bodily injury limit in Progressive's words: its "State Minimum" is the
 // list's "State Minimum or less" (the maintainer, 2026-11-07), not a fallback match to check.
@@ -1005,8 +1005,9 @@ export const progressive = {
       { concept: 'prior.continuous', q: '83', tni: 'progressive.continuous-coverage', source: (r) => (currentlyInsured(r) ? 'standard' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : onlyNotAuto(r) ? `The intake's current insurance is ${notAutoType(r)}, not an auto policy, so whether the customer has had continuous coverage is yours to answer.`
-          : priorPolicyExpired(r) ? `The intake's current policy expired ${r.priorInsurance[0].expiration}, so whether the customer has had continuous coverage is yours to answer.`
-            : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
+          : onlyNoPop(r) ? `The intake's current insurance says "${noPopText(r)}" (no proof of prior), so whether the customer has had continuous coverage is yours to answer.`
+            : priorPolicyExpired(r) ? `The intake's current policy expired ${r.priorInsurance[0].expiration}, so whether the customer has had continuous coverage is yours to answer.`
+              : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
       { concept: 'prior.limit', q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true, source: priorBoxSource, value: priorBoxValue('limit'), choiceAliases: priorLimitAliases,
         ignore: priorBoxIgnored, note: (r) => priorBoxNote(r, 'limit') },
       { concept: 'prior.expiration', q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true, source: priorBoxSource, value: priorBoxValue('expiration'),

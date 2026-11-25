@@ -57,7 +57,7 @@ import { filingsIntent } from '../answers/filings.js';
 import { phoneNote } from '../answers/contact.js';
 import { isLongHaul, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold, ntlHeld as held, ntlHoldOr as holdOr, insurerTenure, tenureBand } from '../normalize.js';
 import { vinUnreadable } from '../shared/parse.js';
-import { otherNotes, noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
+import { otherNotes, noPriorInsurance, noProofOfPrior, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent, untypedCarrierPolicy, priorInsuranceAssumed, noCargoDeductible, CARGO_DEDUCTIBLE_NOTE, haulsGeneralFreight, haulsCarParts, carPartsMixed, carPartsMixedNote, CARS } from '../util.js';
 import { glRequested, glAnswer, GL_OIL_GAS, interchangeRequested, interchangeUnrequested, INTERCHANGE_TRAILERS, interchangeLimitPick, interchangeLimitNote, interchangeLimitRaised,
   interchangeLimitSource, interchangeTrailerType, interchangeTypeSaid } from '../util.js';
 
@@ -320,8 +320,7 @@ const DATE = /^\d{2}\/\d{2}\/\d{4}$/;
 // no driver rows and a blank owner box, their note would quote the name as "".
 const noOwnerName = (r) => !String(r.applicant.owner1 ?? '').trim();
 const ownerDobNote = (r) => (!owner(r).dob && !owner(r).dobDriver && ownerDrivesSaid(r) !== false && noOwnerName(r)
-  ? 'The intake has no owner name, so no driver row gives their date of birth: enter it yourself.' : noOwnerDob(r))
-  ?? (!DATE.test(owner(r).dob) ? 'The owner\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
+  ? 'The intake has no owner name, so no driver row gives their date of birth: enter it yourself.' : noOwnerDob(r));
 
 // Ownership type from the company name, by the rule Progressive's business structure and AmWINS'
 // entity type share (util.js companyStructure, TNI 2026-10-20): the last word LLC, or Inc / Corp /
@@ -673,7 +672,6 @@ const excludedWarn = (r, a) => {
   if (!d || (a.drivers ?? 0) === omittedDriver(r)) return null;
   return driverExcluded(r, d) ? 'The intake marks this driver to be excluded, and GEICO asks nothing about it here: handle the exclusion yourself.' : null;
 };
-const dobNote = (r, a) => (driverOf(r, a)?.dob && !DATE.test(driverOf(r, a).dob) ? 'This driver\'s date of birth on the intake isn\'t a valid date: enter it yourself.' : null);
 
 // --- Additional business info ------------------------------------------------------------------
 
@@ -694,10 +692,13 @@ const datedAuto = (r) => { const p = prior(r); return !!p && AUTO.test(String(p.
 const currentAuto = (r) => {
   const p = prior(r);
   if (!p) return null;
+  // "NO POP" (no proof of prior) does not rule out personal or commercial auto insurance (TNI, 2026-11-25, W49-04).
+  if (noProofOfPrior(p)) return null;
   if (noPriorInsurance(p)) return 'No';
   return datedAuto(r) || priorInsuranceAssumed(r) ? 'Yes' : null;
 };
-const currentAutoSource = (r) => (currentAuto(r) === 'Yes' && !datedAuto(r) ? 'standard' : 'derived');
+const currentAutoSource = (r) => (noProofOfPrior(prior(r)) ? 'fact'
+  : currentAuto(r) === 'Yes' && !datedAuto(r) ? 'standard' : 'derived');
 // "How many employees does the customer's business have…?" TNI (2026-10-21): the intake's drivers
 // other than the owner(s), as GEICO's band. No drivers on the intake is the agent's.
 const employees = (r) => {
@@ -727,9 +728,10 @@ const yearsWithInsurer = (r) => {
 const yearsSource = (r) => (!yearsWithInsurer(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard');
 const anyPriorBox = (p) => !!p && ['type', 'carrier', 'limit', 'expiration'].some((k) => p[k] != null && String(p[k]).trim() !== '');
 const currentAutoNote = (r) => (currentAuto(r) != null ? null
-  : !anyPriorBox(prior(r)) ? 'The intake\'s current insurance section is blank: answer it yourself.'
-    : priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
-      : `The intake's current insurance is ${prior(r).type ? quote(prior(r).type, 30) : 'another kind of policy'}, not an auto policy: answer it yourself.`);
+  : noProofOfPrior(prior(r)) ? `The intake's current insurance says ${quote(prior(r).carrier, 30)} (no proof of prior): answer whether the customer has personal or commercial auto insurance yourself.`
+    : !anyPriorBox(prior(r)) ? 'The intake\'s current insurance section is blank: answer it yourself.'
+      : priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
+        : `The intake's current insurance is ${prior(r).type ? quote(prior(r).type, 30) : 'another kind of policy'}, not an auto policy: answer it yourself.`);
 const yearsNote = (r) => (yearsWithInsurer(r) ? null
   : currentAuto(r) === 'Yes' ? `The intake's notes give the time with the current insurer (${quote(longerTenure(r)?.line, 80)}), and more than one of GEICO's bands could fit it: pick it yourself.`
     : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.');
@@ -1415,7 +1417,7 @@ export const geico = {
       { concept: 'driver.name', field: 'GiveLastName', ask: 'Last Name', path: 'drivers[].last', name: 'Driver last name', note: driverNote((r, a) => (driverOf(r, a)?.last?.length > MAX_NAME ? nameNote(driverOf(r, a).last, 'driver\'s last name') : null)) },
       // GEICO is the first carrier mapped with a suffix box.
       { concept: 'driver.name', field: 'GiveDriverSuffix', ask: 'Suffix', path: 'drivers[].suffix', name: 'Driver suffix', kind: 'choice', optional: true, note: driverNote() },
-      { concept: 'driver.dob', field: 'GiveDateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob', name: 'Driver date of birth', kind: 'date', note: driverNote(dobNote) },
+      { concept: 'driver.dob', field: 'GiveDateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob', name: 'Driver date of birth', kind: 'date', note: driverNote() },
       { concept: 'driver.license-state', field: 'GiveDriverLicenseState', ask: 'Driver\'s License State', path: 'drivers[].licenseState', name: 'Driver license state', kind: 'state', note: driverNote() },
       { concept: 'driver.relationship', field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', tni: 'geico.relationship', name: 'Driver\'s relationship to the business (Owner, else Employee)', kind: 'choice', source: relationshipSource, clientFact: true,
         value: relationship, note: driverNote(relationshipNote) },

@@ -33,7 +33,7 @@ const namesSent = [];
 let flagIntake = false;
 // Fields the rules leave to the agent (manualOnly) that still reached Luna: must stay 0.
 let agentFactsSent = 0;
-const AGENT_FACT = /how long with current carrier|has additional interest|claim free loss run|valued loss runs|any prior loss|gender|marital|licen[cs]e year/i;
+const AGENT_FACT = /how long with current carrier|has additional interest|claim free loss run|valued loss runs|entity type|gender|marital|licen[cs]e year/i;
 const unexpectedProviderHosts = new Set();
 // The page's other answers each page review carried (2026-10-27: context, never evidence).
 const pageAnswersSent = [];
@@ -142,7 +142,7 @@ try {
       .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
     await panel.waitForFunction(() => document.querySelector('#site')?.textContent.includes('AmWINS'));
   };
-  const loadPdf = async ({ missingClaims = false } = {}) => {
+  const loadPdf = async ({ unknownEntityType = false } = {}) => {
     phase = 'load-pdf';
     if (await panel.locator('#quote').isVisible()) {
       await panel.locator('#clear-client').click();
@@ -166,12 +166,12 @@ try {
       verify('a new intake gets one driver-name check', namesRequests - namesBefore, 1);
     }
     // This controlled fixture fact is synthetic; no customer data or external provider is used.
-    await panel.evaluate(async (missingClaims) => {
+    await panel.evaluate(async (unknownEntityType) => {
       const { intake } = await chrome.storage.session.get('intake');
       intake.record.operations.hazPlacard = false;
-      if (missingClaims) intake.record.claims.hasClaims = null;
+      if (unknownEntityType) intake.record.applicant.name = 'Sample Expediter';
       await chrome.storage.session.set({ intake });
-    }, missingClaims);
+    }, unknownEntityType);
     await panel.reload();
     // The panel reload completes before its async tab refresh on some Chromium/Linux runs.
     // Wait for the active fixture and an enabled Fill control, which are the production
@@ -421,7 +421,7 @@ try {
   await waitSetting('lunaAuto', true);
   verify('Luna auto setting is stored independently', (await savedSettings()).lunaAuto, true);
   await closeAgent();
-  await openMock(); await loadPdf({ missingClaims: true });
+  await openMock(); await loadPdf({ unknownEntityType: true });
   phase = 'automatic-approval';
   verify('follow-up automation stays off for the explicit approval flow', await panel.locator('#auto-followups').isChecked(), false);
   verify('fixture has no follow-up save before explicit Fill', await mock.evaluate(() => window.__amwinsMock.saves), 0);
@@ -440,10 +440,10 @@ try {
   // unanswered `clientFact` rules) and hold Continue too. Answering them on the page would change
   // the snapshot the automatic pick was checked against, so the agent marks them done here (Mark
   // done: nothing is filled or clicked): only the Luna approval holds Continue below.
-  verify('missing claims does not become a prior-loss answer', await mock.locator('input[name=anyPriorLoss]:checked').count(), 0);
-  verify('missing claims has a visible agent review item', await panel.locator('#report .row.need', { hasText: 'any prior loss' }).count(), 1);
+  verify('bare company name does not become an entity-type answer', await mock.locator('#entityType').inputValue(), '');
+  verify('unknown entity type has a visible agent review item', await panel.locator('#report .row.need', { hasText: 'Entity Type' }).count(), 1);
   const leftBefore = await panel.locator('#fill-summary').innerText();
-  for (const label of ['any prior loss', 'how long with current carrier', 'has additional interest', 'can provide claim free loss run', 'valued loss runs']) {
+  for (const label of ['Entity Type', 'how long with current carrier', 'has additional interest', 'can provide claim free loss run', 'valued loss runs']) {
     if (!await panel.locator('#report .row.need', { hasText: label }).count()) continue;
     const need = await openRow(label);
     await need.locator('.mark-done').click();
