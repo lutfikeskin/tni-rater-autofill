@@ -8,6 +8,13 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
+  '0.9.43': [
+    'Personal Auto quotes now autofill on Progressive and GEICO.',
+    'One tabbed answers view after a fill, plus scroll-wheel zoom on PDFs.',
+    'Editing on the rater page pauses auto-advance until you click Next.',
+    'GEICO: fewer rate-recalculation timeouts, plus anti-theft and PIP fixes.',
+    'Progressive & AmWINS: duplicate trucks, CDL year, NO POP, and prior loss.',
+  ],
   '0.9.42': [
     'A new panel: intake checks and questions come one at a time.',
     'After a fill, a summary shows what needs you and what is worth a look.',
