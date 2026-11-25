@@ -652,7 +652,8 @@ const oldServer = (calls) => async (url, init) => {
 test("a server from before the larger bound refuses a request over its own: that alone says so, not another 400", async () => {
   const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
   const big = buildRequest(questions(1).map(x => ({ ...x, label: 'x'.repeat(OLD_SERVER_CHARS) })), context);
-  const huge = buildRequest(questions(1).map(x => ({ ...x, label: 'x'.repeat(2 * OLD_SERVER_CHARS) })), context);
+  const huge = buildRequest(questions(1).map(x => ({ ...x, label: 'x'.repeat(2 * OLD_SERVER_CHARS - 10_000) })), context);
+  assert.ok(JSON.stringify(huge).length > 2 * OLD_SERVER_CHARS, 'huge exceeds old server connection-reset bound');
   const small = buildRequest(items, context);
   const calls = [];
   await assert.rejects(callModel({ proxy, body: big, fetchImpl: oldServer(calls) }), OldServerLimit);

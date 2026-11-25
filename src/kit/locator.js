@@ -70,10 +70,15 @@ export function createLocator(kit) {
     // Rows showing a witness (a VIN) no intake unit has: a vehicle on the quote the intake doesn't
     // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
     const extraRows = new Map();
-    // Rows of a per-unit question found by a selector that name their unit: the rule each is for.
-    // One no step took is a check naming the row for the agent, never an unfamiliar question
+    // Rows of a per-unit question that name their unit: the rule each is for.
+    // One no step took (e.g. a row matching no intake unit, or identical-model rows tied without
+    // distinguishing VINs) is a check naming the row for the agent, never an unfamiliar question
     // (pairs.unmatchedRows).
     const namedRows = new Map();
+    // Units whose step genuinely tied on one or more labelled rows (VIN tie or full-hint caption
+    // tie, never an unrelated unit sharing only year+make): `makePager` uses this to avoid emitting
+    // a contradictory "No row on this page reads as Vehicle N" note alongside `unmatchedRows`.
+    const tiedCandidates = [];
     const page = currentPage();
     // The step on screen, read only for a plan kept to steps ('' when no step is named: then no
     // stepped rule is live, and GEICO's fields stay the agent's).
@@ -100,8 +105,9 @@ export function createLocator(kit) {
     const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
     // Data-model names some rule knows here: those fields are that rule's, never a text rule's. A
     // name fenced off this page (a trailer's RiskInput.PAValue on Add Vehicle) claims nothing here.
-    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).map((s) => s.field));
-    const isIt = (s, x) => (s.field ? x.ref === s.field && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
+    const stepFields = (s) => (s.field ? [s.field, ...(s.fieldAliases ?? [])] : []);
+    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).flatMap(stepFields));
+    const isIt = (s, x) => (s.field ? stepFields(s).includes(x.ref) && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
     // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
     // text step only gives way to a box when its text names a box and a choice.
     const definite = (s, x) => !(CHOICE_STEPS.has(s.kind) && x.kind === 'text') && !(TYPED_STEPS.has(s.kind) && x.kind !== 'text');
@@ -115,7 +121,8 @@ export function createLocator(kit) {
     const fieldsOf = (s) => {
       if (!known(s)) return [];
       // `control`: the kind of field the question is, when its text is shared with another kind.
-      let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control));
+      // `row`: 1-based entity row/column key (`adapter().row`), when a field or caption repeats across units.
+      let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control) && (s.row == null || String(x.row ?? '') === String(s.row)));
       if (same.length > 1 && same.some((x) => kindFits(s, x))) same = same.filter((x) => kindFits(s, x));
       // The anchor tells repeated texts apart; a data-model name is already the one field.
       return s.askAfter && !s.field ? afterAnchor(same, s.askAfter) : same;
@@ -130,7 +137,7 @@ export function createLocator(kit) {
     const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null).flatMap((s) => found.get(s)));
     // A page about one vehicle (Add Vehicle): no question names a vehicle and the per-vehicle
     // questions sit in one row. Rows of several vehicles without their names stay with the agent.
-    const oneVehicle = !controls.some((x) => x.vehicle) && new Set([...perVehicle].map((x) => x.row)).size <= 1;
+    const oneVehicle = !controls.some((x) => x.vehicle || x.vehicleId) && new Set([...perVehicle].map((x) => x.row)).size <= 1;
 
     // Distinct known questions may share intake data (business and home ZIP/City).
     // Match every known question; path deduplication applies only to label fallbacks.
@@ -141,9 +148,21 @@ export function createLocator(kit) {
       const same = found.get(s);
       if (known(s) && s.activeVehicle != null) {
         // One step per vehicle (several in the quote): on a page showing one vehicle at a time, the
-        // active vehicle's; otherwise the row labelled with this vehicle's year/make/model. A
-        // vehicle the intake doesn't describe can't name a row: left to the agent.
-        c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : s.vehicleHint ? vehicleRow(same, s.vehicleHint) : null;
+        // active vehicle's; otherwise the row matching this unit's VIN (when the page shows one) or
+        // labelled with its year/make/model (when unambiguous across both rows and intake units).
+        // Labelled rows left unmatched (including tied identical-model vehicles without VINs) are
+        // recorded in `namedRows` so they route to `unmatchedRows` checks instead of `unknown` +
+        // `pageChanged` (W49-06).
+        if (oneVehicle) {
+          c = s.activeVehicle && same.length === 1 ? same[0] : null;
+        } else {
+          c = matchedVehicleRow(same, s, steps, found);
+          if (!c && s.unit) {
+            const tied = tiedVehicleRows(same, s, steps, found);
+            if (tied.length) tiedCandidates.push({ unit: s.unit, rows: tied });
+          }
+          for (const x of same) if ((x.vehicle || x.vehicleId) && !namedRows.has(x)) namedRows.set(x, s);
+        }
         if (c && used.has(c)) c = null;
       } else if (known(s)) {
         // Without a vehicle, several fields for one question are ambiguous: they stay yellow.
@@ -197,7 +216,7 @@ export function createLocator(kit) {
     for (const x of held) used.add(x);
     // A data-model name not on the page, while its expected wording is: the field was probably renamed.
     pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
-      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && y.ref !== s.field && !claimed.has(y.ref) && textIs(s, y)); return x ? [{ step: s, control: x }] : []; });
+      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && !stepFields(s).includes(y.ref) && !claimed.has(y.ref) && textIs(s, y) && (s.row == null || String(y.row ?? '') === String(s.row))); return x ? [{ step: s, control: x }] : []; });
     // A label rule kept out of a carrier's row sections (`notWithin`): its rows are answered by
     // their own rules, or stay the agent's.
     const fenced = (s, x) => !!s.notWithin?.some((sel) => { try { return !!x.el?.closest(sel); } catch { return false; } });
@@ -219,6 +238,7 @@ export function createLocator(kit) {
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
     pairs.unmatchedRows = [...namedRows].filter(([x]) => !used.has(x)).map(([control, step]) => ({ control, step }));
+    pairs.tiedUnits = new Set(tiedCandidates.filter(({ rows }) => rows.some((x) => !used.has(x))).map(({ unit }) => `${unit.list}:${unit.index}`));
     pairs.held = held;
     pairs.units = units;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
@@ -303,6 +323,59 @@ export function createLocator(kit) {
     const best = Math.max(0, ...rows.map(score));
     const top = rows.filter((x) => score(x) === best);
     return best >= 2 && top.length === 1 ? top[0] : null;
+  }
+
+  // Matches a per-unit step to its row on a multi-unit page (Progressive CoveragesRates).
+  // Disambiguates by exact normalized VIN (`vehicleId`, >= 11 chars) when one visible row carries
+  // it and no rival step shares that VIN; otherwise falls back to `vehicleHint` (`vehicleRow`) as
+  // long as no rival step ties or beats its caption score or uniquely claims that row by VIN.
+  function matchedVehicleRow(rows, step, steps, found) {
+    const rivalsFor = (row) => steps.filter((t) => t !== step && t.activeVehicle != null && found.get(t)?.includes(row));
+    const wantId = idText(step.vehicleId);
+    if (wantId.length >= 11) {
+      const byId = rows.filter((x) => idText(x.vehicleId) === wantId);
+      if (byId.length === 1) {
+        const row = byId[0];
+        return rivalsFor(row).some((t) => idText(t.vehicleId) === wantId) ? null : row;
+      }
+      if (byId.length > 1) return null;
+    }
+    if (!step.vehicleHint) return null;
+    const row = vehicleRow(rows, step.vehicleHint);
+    if (!row) return null;
+    const rivals = rivalsFor(row);
+    const rowId = idText(row.vehicleId);
+    if (rowId.length >= 11 && rivals.some((t) => idText(t.vehicleId) === rowId)) return null;
+    const score = (hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const mine = score(step.vehicleHint);
+    return rivals.some((t) => t.vehicleHint && score(t.vehicleHint) >= mine) ? null : row;
+  }
+
+  // Rows on which an unmatched per-unit step genuinely tied (same VIN or full-hint caption tie
+  // with no higher-scoring rival and no conflicting VIN): excludes unrelated missing units that
+  // only share year + make with a tied row.
+  function tiedVehicleRows(rows, step, steps, found) {
+    const rivalsFor = (row) => steps.filter((t) => t !== step && t.activeVehicle != null && found.get(t)?.includes(row));
+    const wantId = idText(step.vehicleId);
+    if (wantId.length >= 11) {
+      const byId = rows.filter((x) => idText(x.vehicleId) === wantId);
+      if (byId.length > 1 || (byId.length === 1 && rivalsFor(byId[0]).some((t) => idText(t.vehicleId) === wantId))) return byId;
+    }
+    if (!step.vehicleHint || step.vehicleHint.length < 2) return [];
+    const score = (row, hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const best = Math.max(0, ...rows.map((x) => score(x, step.vehicleHint)));
+    if (best < 2 || best !== step.vehicleHint.length) return [];
+    const top = rows.filter((x) => {
+      if (score(x, step.vehicleHint) !== best) return false;
+      const rowId = idText(x.vehicleId);
+      if (wantId.length >= 11 && rowId.length >= 11 && rowId !== wantId) return false;
+      const rivals = rivalsFor(x);
+      if (rowId.length >= 11 && rivals.some((t) => idText(t.vehicleId) === rowId)) return false;
+      return !rivals.some((t) => t.vehicleHint && score(x, t.vehicleHint) > best);
+    });
+    if (top.length > 1) return top;
+    if (top.length === 1 && rivalsFor(top[0]).some((t) => t.vehicleHint && score(top[0], t.vehicleHint) === best)) return top;
+    return [];
   }
 
   const unmatchedRowNote = (step) => `${step.name}: this row's vehicle matches none of the intake's vehicles and trailers (or two of them alike), so it wasn't filled. Answer it yourself.`;

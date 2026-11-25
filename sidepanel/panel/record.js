@@ -160,12 +160,12 @@ function firstView(intake) {
   return intake?.warnings?.some((w, i) => checkShown(w, intake) && !intake.done?.includes(i)) ? 'check' : 'page';
 }
 
-// The feed's filters: every answer ('all'), what still needs the agent ('needs'), or what is in
-// ('done'), whose answers are read back from the page then (refreshAnswers).
+// The feed's tabs: Needs ('needs'), Worth a look ('worth'), or All ('all'), whose answers are read
+// back from the page when inspecting filled answers (refreshAnswers).
 function setFilter(filter) {
   state.filter = filter;
   renderSteps();
-  if (filter === 'done') refreshAnswers();
+  if (filter === 'worth' || filter === 'all' || filter === 'done') refreshAnswers();
 }
 
 // Step 1, Intake: one card per thing that looked wrong or missing, with its field to fix,

@@ -158,6 +158,9 @@ function actionSteps(carrier, record, active) {
       // The answers on the page are read as it is clicked and checked once its result shows: one
       // the fill gave that changed is given back once, and every change is the agent's (W43-31).
       keepAnswers: !!a.keepAnswers,
+      // Button text pattern clicked during `keepAnswers` verification when recalculation collapses
+      // editable controls back to read-only cards (GEICO PA's Edit on Quote Summary).
+      reopen: resolve(a.reopen) ?? null,
       // Clicked by the kit itself where the carrier's buttons are pressed from the page's own world
       // (`pressInPage`): GEICO's Print Quote Proposal opened nothing pressed from there (2026-10-23).
       kitClick: !!a.kitClick,
@@ -348,10 +351,13 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
-    // trailer's "2019 Wilson"): the step's unit's year/make/model picks its row.
+    // trailer's "2019 Wilson"): the step's unit's year/make/model (and VIN when present on the
+    // page) picks its row.
     const v = scope === 'vehicle' && unitRows(record) ? (unit === 'trailers' ? record.trailers?.[active.trailers ?? 0] : record.vehicles[active.vehicles ?? 0])
       : scope === 'trailer' ? record.trailers?.[active.trailers ?? 0] : null;
     const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
+    const rawVehicleId = v?.vin ? String(v.vin).toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+    const vehicleId = rawVehicleId.length >= 11 ? rawVehicleId : null;
     /** @type {Omit<FieldStep, 'resolution'>} */
     const step = {
       id,
@@ -375,8 +381,11 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       // carrier and in every quote), for the usage log, where the step's id and its path for a rule
       // without a path or q are its place in the plan.
       concept: rule.concept ?? null,
-      // the field's data-model name (Duck Creek fieldref),
+      // the field's data-model name (Duck Creek fieldref), and any swap aliases,
       field: rule.field ?? null,
+      fieldAliases: rule.fieldAliases?.length ? [...rule.fieldAliases] : null,
+      // 1-based entity row/column key (adapter().row), when the same field or caption repeats across units,
+      row: rule.row != null ? String(rule.row) : null,
       // else its question on the page: exact text(s), or `label` (re) on these pages,
       ask: rule.ask ? [].concat(rule.ask) : null,
       pages: rule.page ? [].concat(rule.page) : null,
@@ -416,9 +425,13 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
       verifyOnly,
-      // Our answer replaces what the page put there (e.g. a lookup's body type); may depend on the
-      // client (AmWINS' hazard exposure: only the intake's Yes replaces Default all answers to No's No).
-      replace: typeof rule.replace === 'function' ? !!rule.replace(record, active) : !!rule.replace,
+      // Our answer replaces what the page put there (e.g. a lookup's body type); `'lower'` replaces
+      // a choice only when the currently selected numeric dollar limit strictly exceeds the target
+      // limit (GEICO PA UMBI/UMPD capping); may depend on the client.
+      replace: (() => {
+        const raw = typeof rule.replace === 'function' ? rule.replace(record, active) : rule.replace;
+        return raw === 'lower' ? 'lower' : !!raw;
+      })(),
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
       masked: !!rule.masked,
@@ -458,6 +471,7 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
+      vehicleId,
       activeVehicle,
       // The unit whose row the step takes, for a page that shows a few units' rows at a time
       // (carrier `unitPager`): each unit no row read as is named for the agent.

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Policyholder</span>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Policyholder Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Current Insurance</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Vehicles</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Vehicle Information</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Drivers</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">License History</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Select Drivers with Incidents</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Discounts</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Groups or Organizations</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Quote</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Quote Summary</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Finalize</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Details</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Communication Options</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Payment</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Payment Plan</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Payment Type</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div><gds-section-header>Policyholder Information</gds-section-header></div>
+
+      <div class="row sales-columnset">
+        <div class="col-lg-6">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveFirstName_90857"><span>First Name</span></gds-label-legend>
+            <input id="Id_GiveFirstName_90857" name="Id_GiveFirstName_90857" type="text" slot="input" aria-label="First Name" maxlength="20" value="Alex">
+          </gds-input-wrapper>
+        </div>
+        <div class="col-lg-6">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveLastName_10793"><span>Last Name</span></gds-label-legend>
+            <input id="Id_GiveLastName_10793" name="Id_GiveLastName_10793" type="text" slot="input" aria-label="Last Name" maxlength="20" value="Sample">
+          </gds-input-wrapper>
+        </div>
+      </div>
+
+      <div>
+        <gds-date-input-wrapper>
+          <gds-input-wrapper mask-type="date-full-prefix">
+            <gds-label-legend slot="label" for="Id_GiveDateOfBirth_95389">
+              <span>Date of Birth</span>
+              <gds-tooltip><p>Enter MM/DD/YYYY.</p></gds-tooltip>
+            </gds-label-legend>
+            <input id="Id_GiveDateOfBirth_95389" name="Id_GiveDateOfBirth_95389" type="text" slot="input" inputmode="numeric">
+          </gds-input-wrapper>
+        </gds-date-input-wrapper>
+      </div>
+
+      <div class="hide" style="display: none;">
+        <gds-radio-button-group id="Id_GiveEmancipatedMinorYesNoRequest_62201" active-index="-1">
+          <span slot="legend"><span>Is the applicant an emancipated minor and did you receive a copy of the court emancipation order?</span></span>
+          <gds-radio-button id="Id_GiveEmancipatedMinorYesNoRequest_622010" name="Id_GiveEmancipatedMinorYesNoRequest_62201" value="Yes">
+            <template shadowrootmode="open"><input id="Id_GiveEmancipatedMinorYesNoRequest_622010-shadow" name="Id_GiveEmancipatedMinorYesNoRequest_62201" type="radio" value="Yes"></template>
+            <span slot="label">Yes</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_GiveEmancipatedMinorYesNoRequest_622011" name="Id_GiveEmancipatedMinorYesNoRequest_62201" value="No">
+            <template shadowrootmode="open"><input id="Id_GiveEmancipatedMinorYesNoRequest_622011-shadow" name="Id_GiveEmancipatedMinorYesNoRequest_62201" type="radio" value="No"></template>
+            <span slot="label">No</span>
+          </gds-radio-button>
+        </gds-radio-button-group>
+      </div>
+
+      <div class="row sales-columnset">
+        <div class="col-lg-6">
+          <gds-address-auto-complete-wrapper>
+            <gds-input-wrapper slot="input-wrapper" mask-type="none">
+              <gds-label-legend slot="label" for="Id_GiveStreet_59106"><span>Address</span></gds-label-legend>
+              <input id="Id_GiveStreet_59106" name="Id_GiveStreet_59106" type="search" slot="input" placeholder="Enter a location" aria-autocomplete="list" aria-controls="address-dropdown-list" maxlength="45" value="1 Test Way">
+            </gds-input-wrapper>
+          </gds-address-auto-complete-wrapper>
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveZip_14049"><span>5-Digit ZIP Code</span></gds-label-legend>
+            <input id="Id_GiveZip_14049" name="Id_GiveZip_14049" type="text" slot="input" aria-label="5-Digit ZIP Code" maxlength="5" value="00000">
+          </gds-input-wrapper>
+        </div>
+        <div class="col-lg-6">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveUnitNumber_58140"><span>Apt #</span></gds-label-legend>
+            <input id="Id_GiveUnitNumber_58140" name="Id_GiveUnitNumber_58140" type="text" slot="input" aria-label="Apt #" maxlength="6">
+          </gds-input-wrapper>
+        </div>
+      </div>
+
+      <div>
+        <gds-radio-button-group id="Id_GiveOwnOrRent_79310" active-index="0">
+          <span slot="legend"><span>Do you own or rent your home?</span><gds-tooltip><p>Homeownership tooltip.</p></gds-tooltip></span>
+          <gds-radio-button id="Id_GiveOwnOrRent_793100" name="Id_GiveOwnOrRent_79310" value="Own" checked="">
+            <template shadowrootmode="open"><input id="Id_GiveOwnOrRent_793100-shadow" name="Id_GiveOwnOrRent_79310" type="radio" value="Own" checked=""></template>
+            <span slot="label">Own</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_GiveOwnOrRent_793101" name="Id_GiveOwnOrRent_79310" value="Rent">
+            <template shadowrootmode="open"><input id="Id_GiveOwnOrRent_793101-shadow" name="Id_GiveOwnOrRent_79310" type="radio" value="Rent"></template>
+            <span slot="label">Rent</span>
+          </gds-radio-button>
+        </gds-radio-button-group>
+      </div>
+
+      <div class="row sales-columnset">
+        <div class="col-lg-6">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveEmail_78096"><span>Email Address</span><gds-tooltip><p>Email help.</p></gds-tooltip></gds-label-legend>
+            <input id="Id_GiveEmail_78096" name="Id_GiveEmail_78096" type="text" slot="input" aria-label="Email Address" maxlength="40" value="alex@example.test">
+          </gds-input-wrapper>
+        </div>
+        <div class="col-lg-6">
+          <gds-input-wrapper mask-type="phone">
+            <gds-label-legend slot="label" for="Id_GivePhoneNumber_76864"><span>Mobile Phone Number</span></gds-label-legend>
+            <input id="Id_GivePhoneNumber_76864" name="Id_GivePhoneNumber_76864" type="text" slot="input" aria-label="Mobile Phone Number">
+          </gds-input-wrapper>
+        </div>
+      </div>
+
+      <div>
+        <gds-date-input-wrapper>
+          <gds-input-wrapper mask-type="date-full-prefix">
+            <gds-label-legend slot="label" for="Id_GiveEffectiveDate_58039"><span>Coverage Start Date</span><gds-tooltip><p>Effective date help.</p></gds-tooltip></gds-label-legend>
+            <input id="Id_GiveEffectiveDate_58039" name="Id_GiveEffectiveDate_58039" type="text" slot="input" inputmode="numeric">
+          </gds-input-wrapper>
+        </gds-date-input-wrapper>
+      </div>
+
+      <div>
+        <gds-input-wrapper mask-type="ssn">
+          <gds-label-legend slot="label" for="Id_GiveSocialSecurityNumber_74851"><span>Social Security Number</span><gds-tooltip><p>Consumer report notice.</p></gds-tooltip></gds-label-legend>
+          <input id="Id_GiveSocialSecurityNumber_74851" name="Id_GiveSocialSecurityNumber_74851maskedField" type="tel" slot="input" aria-label="Social Security Number" placeholder="___-__-____">
+          <gds-input-value-visibility-toggle slot="right-visual" state="visible"></gds-input-value-visibility-toggle>
+          <span id="form-message-error-Id_GiveSocialSecurityNumber_74851" slot="error-message" class="form-message"></span>
+        </gds-input-wrapper>
+      </div>
+
+      <div id="Id_NameDobContactInfoComboActivityDataActions_56867">
+        <div class="button-group-right">
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Save and Continue
+          </gds-button>
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Discard Changes
+          </gds-button>
+        </div>
+      </div>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+      <input id="ssotoken" name="ssotoken" type="hidden" value="synthetic-token">
+    </form>
+  </main>
+</body>
+</html>

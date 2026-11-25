@@ -217,7 +217,8 @@ test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list ke
   const cities = geico.rules.filter((r) => r.field === 'GiveCity');
   assert.ok(cities.length >= 2 && cities.every((r) => r.keepUnlisted && r.kind === 'choice' && r.path === 'garaging.city'));
   const p = plan(intake());
-  assert.ok(p.filter((s) => s.path === 'garaging.city').every((s) => s.keepUnlisted && s.value === 'Testville'));
+  assert.ok(p.filter((s) => s.field === 'GiveCity').every((s) => s.keepUnlisted && s.value === 'Testville'));
+  assert.ok(p.filter((s) => s.field === 'GiveOtherCity').every((s) => !s.keepUnlisted && s.path === 'garaging.city' && s.value === 'Testville'));
   assert.equal(p.find((s) => s.name === 'Start quote: ZIP (the garaging ZIP)').replace, true);
 });
 
@@ -255,10 +256,11 @@ const STANDARDS = [
 ];
 // TNI, 2026-10-26 (W44-25): "Owner Drivers if not excluded, in every case".
 const OWNER_DRIVES = 'Owner is a driver (TNI: Yes when the intake leaves it blank, unless excluded)';
+const OWNER_DRIVES_OWNER = 'Owner is a driver (owner\'s form; TNI: Yes when the intake leaves it blank, unless excluded)';
 const OWNER_DRIVES_ADD = 'Owner is a driver (Add Driver; TNI: Yes when the intake leaves it blank, unless excluded)';
 // TNI, 2026-10-27: Yes when the owner drives, No otherwise; with the owner-drives box blank, TNI's.
 const OWNER_DAILY = 'Owner involved in daily operations (Yes when the owner drives)';
-STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_ADD, OWNER_DAILY);
+STANDARDS.push(OWNER_DRIVES, OWNER_DRIVES_OWNER, OWNER_DRIVES_ADD, OWNER_DAILY);
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
@@ -1356,9 +1358,10 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
   assert.deepEqual([mobile.value, mobile.field, mobile.steps], ['(555) 010-0100', 'GiveMobilePhoneNumber', [DRV]]);
   // A phone that isn't 10 digits: the agent's. (A blank owner-drives box is TNI's Yes: W44-25, above.)
   agents(one(plan(with_({ 'applicant.phone': '555-0100' }, two()), { drivers: 1 }), 'Owner\'s mobile phone (the intake\'s phone)'));
-  // Business & Owner Info's own question stays the intake's answer there.
+  // Business & Owner Info's own question stays the intake's answer there; Drivers & Incidents has
+  // both the owner's own row (unlessShown) and Add Driver (whenShown).
   assert.deepEqual(plan(two(), { drivers: 1 }).filter((s) => s.field === 'GiveOwnerActiveDriverStatusYesNo').map((s) => [s.name, s.steps, s.value]),
-    [[OWNER_DRIVES, [BOI], true], [OWNER_DRIVES_ADD, [DRV], true]]);
+    [[OWNER_DRIVES, [BOI], true], [OWNER_DRIVES_OWNER, [DRV], true], [OWNER_DRIVES_ADD, [DRV], true]]);
 });
 
 test('ELD: the intake\'s answer; blank is the agent\'s (W43-29)', () => {
@@ -1865,9 +1868,10 @@ test('a vehicle\'s coverage rows: by the coverage their id ends in, one step per
   agents(one(plan(with_({ 'notes.text': 'liability only' })), 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)'));
   assert.equal(one(plan(with_({ 'notes.text': 'liability only' })), 'Fire and theft (TNI: Not Included)').value, 'Not Included');
   // GEICO offers collision only once comprehensive is set, and rental and road service once both are
-  // (`needs`, per vehicle: GEICO live run, 2026-10-28); comprehensive and fire and theft need nothing.
+  // (`needs`, per vehicle: GEICO live run, 2026-10-28); comprehensive, fire and theft, and per-vehicle
+  // UMPD need nothing.
   assert.deepEqual(Object.fromEntries(p.filter((s) => s.activeVehicle && s.selector?.startsWith('[id$="_')).map((s) => [s.q, s.needs])),
-    { COMP: null, COLL: ['COMP'], FT: null, Rental: ['COMP', 'COLL'], RRWDT: ['COMP', 'COLL'], ERS: ['COMP', 'COLL'], HVRS: ['COMP', 'COLL'] });
+    { COMP: null, COLL: ['COMP'], FT: null, Rental: ['COMP', 'COLL'], RRWDT: ['COMP', 'COLL'], ERS: ['COMP', 'COLL'], HVRS: ['COMP', 'COLL'], UMPD: null });
   // The customization boxes there name no vehicle: the value only with one vehicle.
   const values = p.filter((s) => s.name === 'Vehicle value without customizations' && s.steps.includes(QC));
   assert.deepEqual(values.map((s) => [s.path, s.value]), [['vehicles[0].value', 45000], ['vehicles[1].value', 30000]]);
@@ -2101,4 +2105,124 @@ test('a blank CDL on the intake is No, as TNI\'s standard', () => {
   // A driver the intake doesn't have: nothing, as before.
   const none = one(plan(blankCdl, { drivers: 5 }), 'Driver has a CDL (TNI: No when the intake leaves it blank)');
   assert.deepEqual([none.value, none.source], [null, 'intake']);
+});
+
+// TNI, 2026-11-25 (W49-11): GEICO's Vehicles anti-theft question keeps GEICO's pre-selected choice
+// (keepPreset) and asks the agent as a client fact (source: 'fact') when left empty.
+test('GEICO anti-theft (W49-11): keepPreset with source fact on Vehicles, never on the trailer form', () => {
+  const r = RECORDS()[1];
+  const steps = plan(r, { vehicles: 0, trailers: 0, drivers: 0 }).filter((s) => s.field === 'GiveAnyAntiTheftDeviceInstalledYesNo');
+  assert.equal(steps.length, 1);
+  const s = steps[0];
+  assert.deepEqual([s.concept, s.steps, s.kind, s.source, s.keepPreset, s.standard, s.manualOnly, s.value],
+    ['vehicle.anti-theft', [VEH], 'bool', 'fact', true, false, true, null]);
+  assert.deepEqual(s.whenShown, { field: 'YesNoPreQuoteHaveFullVinActivity', label: null, unit: 'vehicles' });
+  assert.deepEqual(s.ask, ['Are there any anti-theft devices installed on this vehicle?']);
+  assert.ok(s.note && /intake/i.test(s.note), s.note);
+});
+
+// TNI, 2026-11-25 (W49-12): Stacked PIP (MN and any state showing it) and Extended PIP (FL) keep
+// GEICO's page preset via pipKept, matching Is Stacked, PIP Options and Excluded Work Loss.
+test('GEICO Stacked PIP and Extended PIP (W49-12): keep GEICO\'s preset via pipKept', () => {
+  const mn = plan(with_({ 'garaging.state': 'MN' }));
+  const stackedMn = one(mn, 'Stacked PIP', QC);
+  assert.deepEqual([stackedMn.concept, stackedMn.q, stackedMn.ask, stackedMn.control, stackedMn.ignore, stackedMn.value, stackedMn.source],
+    ['coverage.pip', 'StackedPip', ['Stacked PIP'], 'select', true, null, null]);
+  assert.match(stackedMn.emptyNote, /left stacked PIP empty/);
+  // Any other state that renders Stacked PIP also keeps GEICO's preset.
+  assert.equal(one(plan(with_({ 'garaging.state': 'CO' })), 'Stacked PIP', QC).ignore, true);
+
+  // Extended PIP in FL keeps GEICO's preset; outside FL stays a client fact (matching PIP Options).
+  const fl = plan(with_({ 'garaging.state': 'FL' }));
+  const extFl = one(fl, 'Extended PIP', QC);
+  assert.deepEqual([extFl.concept, extFl.q, extFl.ask, extFl.control, extFl.ignore, extFl.value, extFl.source, extFl.note],
+    ['coverage.pip', 'ExtendedPip', ['Extended PIP'], 'select', true, null, null, null]);
+  assert.match(extFl.emptyNote, /left extended PIP empty/);
+  const extTx = one(plan(with_({ 'garaging.state': 'TX' })), 'Extended PIP', QC);
+  agents(extTx);
+  assert.deepEqual([extTx.ignore, extTx.source, extTx.manualOnly], [false, 'fact', true]);
+});
+
+// W49-13: per-vehicle cov:UMPD rows on Quote & Coverages (CO/UT/OH) are client facts like policy-level UMPD.
+test('GEICO per-vehicle UMPD (W49-13): source fact per vehicle while policy-level UMPD stays unchanged', () => {
+  const two = with_({ 'garaging.state': 'CO', vehicles: [intake().vehicles[0], SECOND_VEHICLE] });
+  const p = plan(two, { vehicles: 0 });
+  const rows = p.filter((s) => s.q === 'UMPD' && s.steps?.includes(QC));
+  assert.equal(rows.length, 2);
+  for (const s of rows) {
+    agents(s);
+    assert.deepEqual([s.concept, s.selector, s.scope, s.source, s.manualOnly, s.needs],
+      ['coverage.umpd', '[id$="_UMPD"]', 'vehicle', 'fact', true, null]);
+  }
+  assert.deepEqual(rows.map((s) => s.vehicleHint), [['2021', 'ford', 'f 650'], ['2019', 'ram', 'promaster']]);
+  // Policy-level UMPD stays unchanged.
+  const policy = one(p, 'Uninsured motorist property damage', QC);
+  agents(policy);
+  assert.deepEqual([policy.q, policy.ask, policy.control, policy.source, policy.manualOnly],
+    ['UninsuredMotoristPd', ['Uninsured Motorist Property Damage (UMPD)'], 'select', 'fact', true]);
+});
+
+// W49-16: GiveOwnerActiveDriverStatusYesNo on the owner's row of Drivers & Incidents (OWNER_DRIVER_FORM),
+// preserving W46-02 (unanswered ownerDrives === false never excludes the owner) and leaving Add Driver unaffected.
+test('GEICO Drivers & Incidents owner-driver row (W49-16): maps GiveOwnerActiveDriverStatusYesNo preserving W46-02', () => {
+  const owner = { ...intake().drivers[0], excluded: null };
+  const two = (changes = {}) => with_({ drivers: [owner, CASEY], ...changes });
+  const ownerStep = (r) => one(plan(r, { drivers: 0 }), OWNER_DRIVES_OWNER, DRV);
+
+  const yes = ownerStep(two({ 'applicant.ownerDrives': true }));
+  assert.deepEqual([yes.concept, yes.tni, yes.field, yes.path, yes.value, yes.source, yes.warn],
+    ['owner.drives', 'general.owner-drives', 'GiveOwnerActiveDriverStatusYesNo', 'applicant.ownerDrives', true, 'intake', null]);
+  assert.deepEqual([yes.unlessShown, yes.whenShown], [{ field: 'GiveDriverRelationshipToBusiness', label: null, unit: null }, null]);
+
+  const blankBox = ownerStep(two({ 'applicant.ownerDrives': null }));
+  assert.deepEqual([blankBox.value, blankBox.source, blankBox.standard, blankBox.warn], [true, 'standard', true, null]);
+
+  // W46-02: intake says ownerDrives === false, unanswered -> stays Yes with check warning (never excludes owner).
+  const pending = ownerStep(two({ 'applicant.ownerDrives': false }));
+  assert.deepEqual([pending.value, pending.source, pending.standard], [true, 'derived', false]);
+  assert.match(pending.warn, /Until you answer "Does the owner drive\?" in the intake checks, the owner is quoted as a driver/);
+
+  // Answered No -> false (intake), no warning.
+  const answered = ownerStep(two({ 'applicant.ownerDrives': false, 'applicant.ownerDrivesAnswered': true }));
+  assert.deepEqual([answered.value, answered.source, answered.warn], [false, 'intake', null]);
+
+  // Counterexample: Add Driver for non-owner driver uses ADD_DRIVER_FORM (whenShown) and is unaffected.
+  const addStep = one(plan(two({ 'applicant.ownerDrives': true }), { drivers: 1 }), OWNER_DRIVES_ADD, DRV);
+  assert.deepEqual([addStep.whenShown, addStep.unlessShown, addStep.value],
+    [{ field: 'GiveDriverRelationshipToBusiness', label: null, unit: 'drivers' }, null, true]);
+});
+
+// W49-18: GiveOtherCity mapped field-scoped to garaging.city on Business & Owner Info and Vehicles.
+test('GEICO GiveOtherCity (W49-18): field-scoped garaging.city on Business & Owner Info and Vehicles', () => {
+  const p = plan(RECORDS()[1], { vehicles: 0, trailers: 0, drivers: 0 });
+  const other = p.filter((s) => s.field === 'GiveOtherCity');
+  assert.equal(other.length, 4, 'BOI, Vehicles owner-check, vehicle form, trailer form');
+  assert.deepEqual(other.map((s) => [s.steps, s.whenShown?.field ?? null, s.whenShown?.unit ?? null]), [
+    [[BOI], null, null],
+    [[VEH], 'GiveSocialSecurityNumber', null],
+    [[VEH], 'YesNoPreQuoteHaveFullVinActivity', 'vehicles'],
+    [[VEH], 'GiveOtherVehicleType', 'trailers'],
+  ]);
+  for (const s of other) {
+    assert.deepEqual([s.path, s.source, s.value, s.keepUnlisted, s.ask],
+      ['garaging.city', 'intake', 'Testville', false, ['If other, please enter the city name']], s.name);
+  }
+});
+
+// W49-21: GiveCustomMake >25 chars holds with a note quoting raw intake text instead of failing answer.too-long.
+test('GEICO trailer GiveCustomMake >25 chars (W49-21): held with note quoting intake text; <=25 chars fills normally', () => {
+  const makeStep = (make) => plan(with_({ trailers: [{ ...TRAILER, make }] }), { vehicles: 0, trailers: 0, drivers: 0 })
+    .find((s) => s.field === 'GiveCustomMake');
+  const exact25 = '1234567890123456789012345';
+  assert.equal(exact25.length, 25);
+  const ok = makeStep(exact25);
+  assert.deepEqual([ok.value, ok.source, ok.note], [exact25, 'intake', null]);
+
+  const over25 = 'UTILITY TRAILER MANUFACTURING CO';
+  assert.ok(over25.length > 25);
+  const held = makeStep(over25);
+  agents(held);
+  assert.equal(held.value, null, 'never truncated');
+  assert.ok(held.note.includes(`"${over25}"`), held.note);
+  assert.match(held.note, /25/, held.note);
 });

@@ -4,14 +4,13 @@ import { act, cleanup, fireEvent, render } from '@testing-library/react';
 import { storeState } from '../../sidepanel/panel/state-store.js';
 import { Feed, mountFeed } from '../../sidepanel/panel/feed-view.jsx';
 
-// The page's list around its answers in React (React PR 6, 2026-11-01): what renderSteps wrote on
-// the page's own elements, drawn from what it says now (state.feed: the safety test 'the page's list
-// says what it shows…' checks what it says). Here, that the page shows it with the ids and wording
-// the e2e reads (#page-menu options, #key-btn, #past-back, #report, #past), that the lists' own
-// places are left to the panel, and what each control asks the panel to do.
+// The unified Model 2 single tabbed sheet (feed-view.jsx): one header (page title, earlier-page
+// menu, answer key button, help link, summary subtitle) above one white tabbed sheet with three
+// segment tabs (Needs | Worth a look | All), inline live search in All, the lists left to the panel
+// (#live-root, #report, #past), and the integrated footer (#unmark + total field count).
 
 let state;
-beforeEach(() => { state = storeState({ feed: null }); });
+beforeEach(() => { state = storeState({ feed: null, reportFor: null }); });
 afterEach(cleanup);
 
 const acts = () => {
@@ -19,37 +18,65 @@ const acts = () => {
   const call = (name) => (...args) => { calls.push([name, ...args]); };
   return { calls, act: { setFilter: call('setFilter'), showPast: call('showPast'), toggleKey: call('toggleKey'), clearMarks: call('clearMarks') } };
 };
-const feed = (more = {}) => ({ shown: true, title: 'Answers on this page', pages: [], pastKey: null, pastWhen: '', report: true, filter: 'all',
-  counts: { all: 4, needs: 1, done: 3 }, empty: null, keyOpen: false, unmark: true, age: null, ...more });
+const feed = (more = {}) => ({
+  shown: true,
+  title: 'Household Members',
+  filledCount: 3,
+  pages: [],
+  pastKey: null,
+  pastWhen: '',
+  report: true,
+  filter: 'needs',
+  counts: { all: 4, needs: 1, worth: 2, done: 3 },
+  empty: null,
+  keyOpen: false,
+  unmark: true,
+  age: null,
+  ...more,
+});
 const $ = (container, id) => container.querySelector(`#${id}`);
 const filters = (container) => [...container.querySelectorAll('#filters button')].map((b) => [b.dataset.filter, b.textContent, b.getAttribute('aria-pressed')]);
 
-test('this page\'s answers: the title, the filters with their counts, the key, Clear the marks; the lists left to the panel', () => {
+test('this page\'s unified sheet: title, summary, 3 segment tabs, key, Clear page marks; the lists left to the panel', () => {
   const t = acts();
   const { container } = render(<Feed act={t.act} />);
   act(() => { state.feed = feed(); });
-  expect([$(container, 'feed').hidden, $(container, 'feed-title').textContent, $(container, 'page-menu').hidden]).toEqual([false, 'Answers on this page', true]);
-  expect(filters(container)).toEqual([['all', 'All 4', 'true'], ['needs', 'Need you 1', 'false'], ['done', 'Filled 3', 'false']]);
-  expect([$(container, 'report').hidden, $(container, 'report').dataset.filter, $(container, 'past').hidden, $(container, 'past-head').hidden]).toEqual([false, 'all', true, true]);
+  expect([$(container, 'feed').hidden, $(container, 'feed-title').textContent, $(container, 'page-menu').hidden]).toEqual([false, 'Household Members', true]);
+  expect(container.querySelector('.feed-sub').textContent).toBe('3 filled · 1 needs you');
+  expect(filters(container)).toEqual([['needs', 'Needs 1', 'true'], ['worth', 'Worth a look 2', 'false'], ['all', 'All 4', 'false']]);
+  expect([$(container, 'report').hidden, $(container, 'report').dataset.filter, $(container, 'past').hidden, $(container, 'past-head').hidden]).toEqual([false, 'needs', true, true]);
   expect([$(container, 'key-btn').hidden, $(container, 'key-btn').getAttribute('aria-expanded'), $(container, 'answer-key').hidden]).toEqual([false, 'false', true]);
-  expect([$(container, 'unmark').hidden, $(container, 'feed-empty').hidden, $(container, 'report-age').hidden]).toEqual([false, true, true]);
+  expect([$(container, 'unmark').hidden, $(container, 'unmark').textContent, $(container, 'feed-empty').hidden, $(container, 'report-age').hidden]).toEqual([false, 'Clear page marks', true, true]);
+  expect(container.querySelector('.feed-total').textContent).toBe('4 fields total');
+
   // The panel's own nodes in the lists stay as the list is drawn again.
   const row = $(container, 'report').appendChild(document.createElement('div'));
   const live = $(container, 'live-root').appendChild(document.createElement('div'));
-  act(() => { state.feed = feed({ filter: 'needs', counts: { all: 4, needs: 0, done: 4 }, empty: 'Nothing needs you on this page.', keyOpen: true, age: 'From the fill at 3:05 PM. Fill again if the page changed.' }); });
-  expect([row.isConnected, live.isConnected, $(container, 'report').dataset.filter]).toEqual([true, true, 'needs']);
-  expect(filters(container)[1]).toEqual(['needs', 'Need you 0', 'true']);
+  act(() => {
+    state.feed = feed({
+      filter: 'worth',
+      filledCount: 4,
+      counts: { all: 4, needs: 0, worth: 0, done: 4 },
+      empty: 'Nothing flagged as worth a look on this page.',
+      keyOpen: true,
+      age: 'From the fill at 3:05 PM. Fill again if the page changed.',
+    });
+  });
+  expect([row.isConnected, live.isConnected, $(container, 'report').dataset.filter]).toEqual([true, true, 'worth']);
+  expect(container.querySelector('.feed-sub').textContent).toBe('4 filled · all set');
+  expect(filters(container)[1]).toEqual(['worth', 'Worth a look 0', 'true']);
   expect([$(container, 'feed-empty').textContent, $(container, 'feed-empty').hidden, $(container, 'answer-key').hidden, $(container, 'key-btn').getAttribute('aria-expanded')])
-    .toEqual(['Nothing needs you on this page.', false, false, 'true']);
+    .toEqual(['Nothing flagged as worth a look on this page.', false, false, 'true']);
   expect([$(container, 'report-age').textContent, $(container, 'report-age').hidden]).toEqual(['From the fill at 3:05 PM. Fill again if the page changed.', false]);
   expect($(container, 'answer-key').textContent).toContain('Marks on the rater page:');
   // A mark is named with its tag's word: AI for the assistant's answers, You for the agent's.
   const marks = [...container.querySelectorAll('.legend > span')].filter((s) => s.querySelector('.mark.ai, .mark.agent')).map((s) => s.textContent);
   expect(marks).toEqual(['AI', 'You']);
-  fireEvent.click(container.querySelector('#filters [data-filter="done"]'));
+
+  fireEvent.click(container.querySelector('#filters [data-filter="all"]'));
   fireEvent.click($(container, 'key-btn'));
   fireEvent.click($(container, 'unmark'));
-  expect(t.calls).toEqual([['setFilter', 'done'], ['toggleKey'], ['clearMarks']]);
+  expect(t.calls).toEqual([['setFilter', 'all'], ['toggleKey'], ['clearMarks']]);
 });
 
 // From the e2e: an earlier step's answers from the page menu, read-only, and back to this step's.
@@ -110,71 +137,47 @@ test('the answer key shows Your default only while the feature is on', () => {
   expect([...container.querySelectorAll('#answer-key .tag.own, #answer-key .mark.own')].length).toBe(2);
 });
 
-test('grouped Review marks #feed data-grouped without setting #report hidden; All answers switches to data-all', () => {
+test('inline live search appears on All when a page has > 6 fields, filters rows, and resets on tab switch', () => {
   const { container } = render(<Feed act={acts().act} />);
-  const entry = { list: [{ type: 'answer' }] };
-  act(() => {
-    state.reportFor = entry;
-    state.allAnswers = false;
-    state.allAnswersFor = null;
-    state.filling = false;
-    state.feed = feed();
-  });
-  expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual(['true', undefined, false]);
-  act(() => {
-    state.allAnswers = true;
-    state.allAnswersFor = entry;
-  });
-  expect([$(container, 'feed').dataset.grouped, $(container, 'feed').dataset.all, $(container, 'report').hidden]).toEqual([undefined, 'true', false]);
-  expect(container.querySelector('.filters-thumb')).toBeNull();
-});
+  const rowsHost = $(container, 'report').appendChild(document.createElement('div'));
+  rowsHost.className = 'rows';
+  const mkRow = (label, val) => {
+    const r = document.createElement('div');
+    r.className = 'row';
+    r.innerHTML = `<span class="row-label">${label}</span><span class="row-value">${val}</span>`;
+    rowsHost.appendChild(r);
+    return r;
+  };
+  const r1 = mkRow('Marital Status', 'Married');
+  const r2 = mkRow('Driver License Type', 'Personal Auto');
 
-test('open need outside All answers marks #report data-focus="need" and clears it in All answers or once settled', () => {
-  const { container } = render(<Feed act={acts().act} />);
-  const need = { type: 'need', open: true, settled: '', pending: false, gone: false };
-  const entry = { list: [need] };
-  act(() => {
-    state.reportFor = entry;
-    state.allAnswers = false;
-    state.allAnswersFor = null;
-    state.filling = false;
-    state.rowsDrawn = 1;
-    state.feed = feed();
-  });
-  expect($(container, 'report').dataset.focus).toBe('need');
+  // On Needs tab, search bar is omitted.
+  act(() => { state.feed = feed({ filter: 'needs', counts: { all: 12, needs: 1, worth: 4, done: 11 } }); });
+  expect(container.querySelector('.feed-search')).toBeNull();
 
-  // Switching to All answers clears focus mode.
-  act(() => {
-    state.allAnswers = true;
-    state.allAnswersFor = entry;
-  });
-  expect($(container, 'report').dataset.focus).toBeUndefined();
+  // On All tab with > 6 fields, search bar appears and filters rows live.
+  act(() => { state.feed = feed({ filter: 'all', counts: { all: 12, needs: 1, worth: 4, done: 11 } }); });
+  const input = /** @type {HTMLInputElement} */ ($(container, 'feed-search-input'));
+  expect(container.querySelector('.feed-search')).not.toBeNull();
+  expect(input.placeholder).toBe('Filter 12 fields on this page…');
 
-  // Back in grouped Review with an AI pending pick still open: focus mode returns.
-  act(() => {
-    need.settled = 'ai';
-    need.pending = true;
-    state.allAnswers = false;
-    state.allAnswersFor = null;
-    state.rowsDrawn = 2;
-  });
-  expect($(container, 'report').dataset.focus).toBe('need');
+  fireEvent.change(input, { target: { value: 'license' } });
+  expect(r1.getAttribute('data-search-hide')).toBe('1');
+  expect(r2.hasAttribute('data-search-hide')).toBe(false);
+  expect($(container, 'feed-empty').hidden).toBe(true);
 
-  // Once approved/settled and no longer pending, focus mode ends.
-  act(() => {
-    need.pending = false;
-    state.rowsDrawn = 3;
-  });
-  expect($(container, 'report').dataset.focus).toBeUndefined();
+  fireEvent.change(input, { target: { value: 'zzz-nothing' } });
+  expect(r1.getAttribute('data-search-hide')).toBe('1');
+  expect(r2.getAttribute('data-search-hide')).toBe('1');
+  expect([$(container, 'feed-empty').hidden, $(container, 'feed-empty').textContent]).toEqual([false, 'No matching fields on this page.']);
 
-  // Focus-mode CSS hides only non-open rows and Review's grouped lists while keeping .report-head,
-  // .ai-holder, and #see-all-answers visible.
-  const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
-  expect(css).toContain('#page-view:has(#report[data-focus="need"]) #review :is(.pane-head, .review-group) { display: none; }');
-  // Closed needs are out of view and out of the Tab order, not 1px boxes a keyboard user tabs onto
-  // (#595 review); the dock's Show the next one moves between needs.
-  expect(css).toContain('#report[data-focus="need"] .rows > .row.need:not(.open) { display: none; }');
-  expect(css).not.toMatch(/#report\[data-focus="need"\][^{]*\.(report-head|ai-holder)/);
+  // Switching back to Needs clears the query and unhides all rows; returning to All starts fresh.
+  act(() => { state.feed = feed({ filter: 'needs', counts: { all: 12, needs: 1, worth: 4, done: 11 } }); });
+  expect(container.querySelector('.feed-search')).toBeNull();
+  expect(r1.hasAttribute('data-search-hide')).toBe(false);
+  expect(r2.hasAttribute('data-search-hide')).toBe(false);
+  act(() => { state.feed = feed({ filter: 'all', counts: { all: 12, needs: 1, worth: 4, done: 11 } }); });
+  expect(/** @type {HTMLInputElement} */ ($(container, 'feed-search-input')).value).toBe('');
 });
 
 const findNestedHas = (source) => {
@@ -212,12 +215,12 @@ const findNestedHas = (source) => {
   return nested;
 };
 
-test('grouped Review CSS avoids nested :has(), uses #feed-root display:contents, and fuses portaled bottom tools', () => {
+test('unified sheet CSS avoids nested :has(), retires data-focus="need" and #review, and keeps #feed-root display:contents', () => {
   const css = fs.readFileSync('sidepanel/sidepanel.css', 'utf8');
   expect(findNestedHas('.a:has(> .b:not(:has(.c))) {}')).toHaveLength(1);
   expect(findNestedHas(css)).toEqual([]);
   expect(css).toContain('#feed-root { display: contents; }');
-  expect(css).toContain('#feed-tools-root:not(:has(> :not([hidden]))) { display: none; }');
-  expect(css).toContain('#page-view:has(#see-all-answers:not([hidden])):has(#feed-tools-root > .feed-tools:not([hidden])):has(#report:not([data-focus="need"]))');
-  expect(css).not.toContain('#page-view:has(#report[data-focus="need"]) > #feed-root { order:');
+  expect(css).toContain('.report[data-filter="worth"] .row:not([data-worth="1"]) { display: none; }');
+  expect(css).not.toContain('data-focus="need"');
+  expect(css).not.toContain('#review-worth');
 });

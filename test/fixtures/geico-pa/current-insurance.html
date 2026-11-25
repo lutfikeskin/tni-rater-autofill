@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Policyholder</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Policyholder Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Current Insurance</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Vehicles</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Vehicle Information</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div><gds-section-header>Current Insurance</gds-section-header></div>
+
+      <div>
+        <gds-radio-button-group id="Id_GiveCurrentAutoInsuranceStatus_35743" active-index="0">
+          <span slot="legend"><span>Do you currently have auto insurance?</span></span>
+          <span slot="descriptive-copy"><span>Only select "Yes" if you are the named insured on your current policy.</span></span>
+          <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357430" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="Yes" checked="">
+            <template shadowrootmode="open"><input id="Id_GiveCurrentAutoInsuranceStatus_357430-shadow" name="Id_GiveCurrentAutoInsuranceStatus_35743" type="radio" value="Yes" checked=""></template>
+            <span slot="label">Yes</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357431" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="No, I haven't needed insurance">
+            <template shadowrootmode="open"><input id="Id_GiveCurrentAutoInsuranceStatus_357431-shadow" name="Id_GiveCurrentAutoInsuranceStatus_35743" type="radio" value="No, I haven't needed insurance"></template>
+            <span slot="label">No, I haven't needed insurance</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357432" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="No">
+            <template shadowrootmode="open"><input id="Id_GiveCurrentAutoInsuranceStatus_357432-shadow" name="Id_GiveCurrentAutoInsuranceStatus_35743" type="radio" value="No"></template>
+            <span slot="label">No</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357433" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="No, I was deployed (Military/Government)">
+            <template shadowrootmode="open"><input id="Id_GiveCurrentAutoInsuranceStatus_357433-shadow" name="Id_GiveCurrentAutoInsuranceStatus_35743" type="radio" value="No, I was deployed (Military/Government)"></template>
+            <span slot="label">No, I was deployed (Military/Government)</span>
+          </gds-radio-button>
+        </gds-radio-button-group>
+      </div>
+
+      <div class="form-field">
+        <gds-label-legend for="Id_GiveCurrentAutoInsuranceProvider_38641"><span>Who is your current auto insurance provider?</span></gds-label-legend>
+        <div>
+          <select id="Id_GiveCurrentAutoInsuranceProvider_38641" class="select2-hidden-accessible" required="" aria-label="Who is your current auto insurance provider?" data-select2-id="Id_GiveCurrentAutoInsuranceProvider_38641" tabindex="-1" aria-hidden="true">
+            <option value=""></option>
+            <option value="99502">Allstate/Encompass</option>
+            <option value="99546">Progressive</option>
+            <option value="99550">State Farm</option>
+          </select>
+          <span class="select2 select2-container select2-container--default" data-select2-id="97">
+            <span class="selection"><span class="select2-selection select2-selection--single" role="combobox" aria-expanded="false"><span id="select2-Id_GiveCurrentAutoInsuranceProvider_38641-container" class="select2-selection__rendered" role="textbox"><span class="select2-selection__placeholder">Please Select</span></span></span></span>
+          </span>
+        </div>
+        <span id="form-message-error-Id_GiveCurrentAutoInsuranceProvider_38641" class="form-message"></span>
+      </div>
+
+      <div class="form-field hidden" style="display: none;">
+        <gds-label-legend for="Id_GivePreviousAutoInsuranceProvider_59820"><span>Who was your prior auto insurance provider?</span></gds-label-legend>
+        <div>
+          <select id="Id_GivePreviousAutoInsuranceProvider_59820" class="select2-hidden-accessible" required="" aria-label="Who was your prior auto insurance provider?" data-select2-id="Id_GivePreviousAutoInsuranceProvider_59820" tabindex="-1" aria-hidden="true">
+            <option value=""></option>
+            <option value="99546">Progressive</option>
+            <option value="999">Not Applicable</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="hide" style="display: none;">
+        <gds-radio-button-group id="Id_YesNoLastThirtyDays_96493" active-index="-1">
+          <span slot="legend"><span>Have you had insurance within the last 30 days?</span></span>
+          <gds-radio-button id="Id_YesNoLastThirtyDays_964930" name="Id_YesNoLastThirtyDays_96493" value="Yes">
+            <template shadowrootmode="open"><input id="Id_YesNoLastThirtyDays_964930-shadow" name="Id_YesNoLastThirtyDays_96493" type="radio" value="Yes"></template>
+            <span slot="label">Yes</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_YesNoLastThirtyDays_964931" name="Id_YesNoLastThirtyDays_96493" value="No">
+            <template shadowrootmode="open"><input id="Id_YesNoLastThirtyDays_964931-shadow" name="Id_YesNoLastThirtyDays_96493" type="radio" value="No"></template>
+            <span slot="label">No</span>
+          </gds-radio-button>
+        </gds-radio-button-group>
+      </div>
+
+      <div id="Id_BundlePersonalVehiclesInsuranceComboDataActions_71674">
+        <div class="button-group-right">
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Next
+          </gds-button>
+        </div>
+      </div>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

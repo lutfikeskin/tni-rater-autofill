@@ -1,8 +1,8 @@
 // @ts-check
 // The report's list in React: each answer and each item left for the agent, one row each, drawn from
-// its record (report-rows.js). The panel changes a record and drawRow (fill.js) has the list draw
-// that row again; a row that didn't change isn't drawn again, so the button the agent is on keeps its
-// focus. What a row's buttons do is the panel's (`act`, rowActs in fill.js).
+// its record (report-rows.js) in the unified Option B (Accent Bar + Inset Tray) style.
+// The panel changes a record and drawRow (fill.js) has the list draw that row again; a row that
+// didn't change isn't drawn again, so the button the agent is on keeps its focus.
 // One part of the panel; renderReport mounts it in a report (rowsHost).
 import { memo, useId, useLayoutEffect, useMemo, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -11,9 +11,8 @@ import { useStore } from 'zustand';
 import { panelStore } from './state-store.js';
 import { NEEDS } from './messages.js';
 import { choiceSaid } from './report-model.js';
-import { needId, needSay, nowSaid, optionsSaid, rowClass, rowHead } from './report-rows.js';
+import { needId, needSay, nowSaid, optionsSaid, rowClass, rowHead, worthRank } from './report-rows.js';
 import { AiCard } from './ai-view.jsx';
-import { HelpLink } from './help-link.jsx';
 
 const VIN_PATH = /^(vehicles|trailers)\[\d+\]\.vin$/;
 let onJumpPath = null;
@@ -39,9 +38,7 @@ function Note({ note }) {
 }
 
 // The choices the panel may put in for the agent: buttons, or a list past six; the page's answer now
-// pressed, and the AI's pick marked. `onPick(choice, button)`. A choice the page lists twice is
-// offered once (Change answer's come as the page has them; an item's are deduplicated already,
-// needRecord), keyed by itself.
+// pressed, and the AI's pick marked. `onPick(choice, button)`.
 function Choices({ options: all, pressed = null, aiPick = null, onPick }) {
   const options = useMemo(() => [...new Set(all)], [all]);
   const select = useRef(null);
@@ -74,56 +71,65 @@ function Choices({ options: all, pressed = null, aiPick = null, onPick }) {
   );
 }
 
-// The row's head: icon, label, what it shows, its tag; opens or closes the row.
-function Head({ rec, head, act, bodyId, children }) {
+// The row's head: collapsed 1-line Label | Value + chevron; expanded Label above Value + tag + chevron.
+function Head({ rec, head, act, bodyId, tagOverride = undefined, children }) {
+  const tag = tagOverride !== undefined ? tagOverride : head.tag;
   return (
     <button type="button" className="row-head" aria-expanded={!!rec.open} aria-controls={bodyId} onClick={() => act.toggleRow(rec)}>
       <span className="row-icon" aria-hidden="true">{head.icon}</span>
       {children}
-      {head.tag ? <Tag tag={head.tag} /> : null}
+      <span className="row-right">
+        {tag ? <Tag tag={tag} /> : null}
+        <span className="row-chev" aria-hidden="true">{rec.open ? '\u25be' : '\u25b8'}</span>
+      </span>
     </button>
   );
 }
 
-// The expanded body of a filled answer row: its source, inline Change answer choices, Change answer
-// and See in intake actions, where-on-page note and settlement note. Shared by AnswerRow (All answers)
-// and inline-expanded Worth a look rows in grouped Review.
+// The expanded body of a filled answer row (Option B Inset Tray): source, inline Change answer
+// choices, slim footer actions (Change answer, See in intake), where-on-page note and settlement note.
 function AnswerBody({ rec, ctx, act }) {
   const source = rec.source ?? {};
   const { change } = rec;
+  const hasFoot = (rec.answer && rec.key) || source.place;
   return (
-    <>
-      <div className="src-box"><span className="src-title">{source.title}</span>{source.quote ? <span className="src-quote">{source.quote}</span> : null}</div>
-      <div className="change-slot">
-        {change ? <><p className="why">Pick the answer to put in instead:</p>
-          <Choices options={change.options} pressed={change.current} onPick={(choice, button) => act?.pickRow?.(rec, choice, ctx, button)} /></> : null}
+    <div className="row-tray">
+      <div className="row-tray-info">
+        <div className="src-box">
+          <span className="src-title">{source.title}</span>
+          {source.quote ? <span className="src-quote">{source.quote}</span> : null}
+        </div>
+        <div className="change-slot">
+          {change ? <><p className="why">Pick the answer to put in instead:</p>
+            <Choices options={change.options} pressed={change.current} onPick={(choice, button) => act?.pickRow?.(rec, choice, ctx, button)} /></> : null}
+        </div>
+        {rec.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
+        <Note note={rec.note} />
       </div>
-      {(rec.answer && rec.key) || source.place ? (
-        <div className="row-actions">
-          {rec.answer && rec.key ? <button type="button" className="ghost change" aria-label={`Change answer: ${rec.label}`} onClick={() => act?.changeRow?.(rec, ctx)}>Change answer</button> : null}
-          {source.place ? <button type="button" className="ghost src intake-action" title={source.seeTitle} onClick={() => act?.seeRow?.(rec)}>See in intake</button> : null}
+      {hasFoot ? (
+        <div className="row-tray-foot row-actions">
+          {rec.answer && rec.key ? <button type="button" className="tray-link change" aria-label={`Change answer: ${rec.label}`} onClick={() => act?.changeRow?.(rec, ctx)}>Change answer</button> : null}
+          {source.place ? <button type="button" className="tray-link src intake-action" title={source.seeTitle} onClick={() => act?.seeRow?.(rec)}>See in intake</button> : null}
         </div>
       ) : null}
-      {rec.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
-      <Note note={rec.note} />
-    </>
+    </div>
   );
 }
 
-// One answer in the page's list: what went in and where it came from (rec.source, answerSource),
-// opening to its source with Change answer and See in intake. `rec.kind` 'clicked', 'page' (left as
-// the page had it) or 'yours' (the agent's own answer, not filled); otherwise an answer, by its
-// source. `v`: the record's draw count, so the row is drawn again when it changes.
+// One answer in the page's list: what went in and where it came from (rec.source, answerSource).
 const AnswerRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any }} props */ function AnswerRow({ rec, ctx, act }) {
   const source = rec.source ?? {};
   const head = rowHead(rec, source.tag ?? null);
   const bodyId = useId();
+  const worth = worthRank(rec) >= 0;
+  const tone = rec.kind === 'yours' || rec.kind === 'edited' ? 'you' : undefined;
   const data = rec.key ? { 'data-key': rec.key, 'data-field': rec.field ?? '', 'data-value': String(rec.value), 'data-step': rec.stepId ?? '', 'data-offpage': rec.offPage ? '1' : '' } : {};
   return (
-    <div className={rowClass(rec)} hidden={!!rec.gone} ref={(el) => { act.node(rec, el); }} {...data}>
+    <div className={rowClass(rec)} hidden={!!rec.gone} ref={(el) => { act.node(rec, el); }} data-worth={worth ? '1' : undefined} data-tone={tone} {...data}>
       <Head rec={rec} head={head} act={act} bodyId={bodyId}>
         <span className="row-text">
-          <span className="row-label">{rec.label}</span><span className="row-value">{head.value}</span>
+          <span className="row-label">{rec.label}</span>
+          <span className="row-value">{head.value}</span>
           {rec.key ? <span className="kv-now" hidden={!rec.changed}>{rec.changed ?? ''}</span> : null}
         </span>
         {/* From the intake is the usual source: no tag to read past, said to screen readers. */}
@@ -136,50 +142,64 @@ const AnswerRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: 
   );
 });
 
-// One item left for the agent: why, and its choices where the panel may put the agent's pick in
-// (rec.pickable; the AI's pick marked), with Show on page and Mark done. The AI's card in its slot
-// is the record's (`aiCard`, renderAi says it; ai-view.jsx), drawn with the row, so a row drawn
-// again keeps it and the agent's focus on its buttons.
-const NeedRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any, needPos?: number, needTotal?: number }} props */ function NeedRow({ rec, ctx, act, needPos = 1, needTotal = 1 }) {
+// One item left for the agent (or settled since): unified Option B Accent Bar + Inset Tray.
+const NeedRow = memo(/** @param {{ rec: Record<string, any>, v?: number, ctx: any, act: any, needPos?: number, needTotal?: number }} props */ function NeedRow({ rec, ctx, act }) {
   const { x, label } = rec;
   const head = rowHead(rec);
   const bodyId = useId();
   const markNoteId = useId();
-  // Mark done: an item's field, or a helper's reminder the carrier marks markable (its `action`);
-  // gone once the agent settled it (answered, put in, marked done).
   const markable = !!x.key || !!x.action;
   const marked = ['answered', 'picked', 'marked'].includes(rec.settled);
+  const settledClean = Boolean(rec.settled) && !rec.pending;
+  const worth = settledClean && worthRank(rec) >= 0;
+  const tone = settledClean ? 'you' : rec.pending ? 'ai' : rec.kind === 'failed' ? 'bad' : 'need';
   const vinFix = typeof x.path === 'string' && VIN_PATH.test(x.path);
   const jumpPath = act.jumpPath ?? onJumpPath;
   return (
     <div className={rowClass(rec)} hidden={!!rec.gone} tabIndex={-1} ref={(el) => { act.node(rec, el); }}
-      data-need={needId(rec)} data-key={rec.key} data-field={rec.field} data-offpage={rec.offPage ? '1' : ''} data-icon={rec.icon} data-wait={rec.wait} data-finish={rec.finish ? '1' : ''}>
-      <div className="need-card-head">
-        <p className="eyebrow amber need-eyebrow">{NEEDS.eyebrow(needPos, needTotal)}</p>
-        <HelpLink topic="page" />
-      </div>
+      data-need={needId(rec)} data-key={rec.key} data-field={rec.field} data-offpage={rec.offPage ? '1' : ''} data-icon={rec.icon} data-wait={rec.wait} data-finish={rec.finish ? '1' : ''}
+      data-worth={worth ? '1' : undefined} data-tone={tone}>
       <Head rec={rec} head={head} act={act} bodyId={bodyId}>
         <span className="row-text"><span className="row-label">{label}</span><span className="row-value">{head.value}</span></span>
       </Head>
       <div id={bodyId} className="row-body" hidden={!rec.open}>
-        <p className="why">{x.why}<span className="page-now">{nowSaid(rec.now)}</span></p>
-        <div className="ai-slot">{rec.aiCard ? <AiCard card={rec.aiCard} /> : null}</div>
-        {rec.pickable ? <Choices options={rec.options} pressed={rec.pressed} aiPick={rec.aiPick} onPick={(choice, button) => act.pickRow(rec, choice, ctx, button)} />
-          : <p className="row-say">{needSay(rec)}</p>}
-        {rec.offered ? <div className="options" hidden={!rec.offered.length}>{optionsSaid(rec.offered)}</div> : null}
-        <div className="row-actions">
-          {vinFix ? <button type="button" className="ghost vin-fix" onClick={() => jumpPath?.(x.path)}>{NEEDS.vinFix}</button> : null}
-          {/* Scrolls the carrier page to its field and flashes its mark: changes nothing. */}
-          {x.key ? <button type="button" className="ghost show-on-page" title="Scroll the carrier page to this question and flash its mark"
-            aria-label={`Show on page: ${label}`} onClick={() => act.showRow(rec, ctx)}>Show on page</button> : null}
-          {markable ? <button type="button" className="ghost mark-done" hidden={marked}
-            aria-describedby={marked ? undefined : markNoteId}
-            title={x.key ? 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page' : 'You did it on the page: the panel stops waiting on it for this quote'}
-            aria-label={`Mark done: ${label}`} onClick={() => act.markRow(rec, ctx)}>Mark done</button> : null}
+        <div className="row-tray">
+          <div className="row-tray-info">
+            <Note note={rec.note} />
+            <p className="why">{x.why}<span className="page-now">{nowSaid(rec.now)}</span></p>
+            <div className="ai-slot">{rec.aiCard ? <AiCard card={rec.aiCard} /> : null}</div>
+            {!marked ? (
+              rec.pickable ? <Choices options={rec.options} pressed={rec.pressed} aiPick={rec.aiPick} onPick={(choice, button) => act.pickRow(rec, choice, ctx, button)} />
+                : <p className="row-say">{needSay(rec)}</p>
+            ) : null}
+            {!marked && rec.offered ? <div className="options" hidden={!rec.offered.length}>{optionsSaid(rec.offered)}</div> : null}
+            {!marked ? (
+              <div className="row-actions need-btns">
+                {vinFix ? <button type="button" className="ghost vin-fix" onClick={() => jumpPath?.(x.path)}>{NEEDS.vinFix}</button> : null}
+                {x.key ? <button type="button" className="primary show-on-page" title="Scroll the carrier page to this question and flash its mark"
+                  aria-label={`Show on page: ${label}`} onClick={() => act.showRow(rec, ctx)}>Show on page</button> : null}
+                {markable ? <button type="button" className="ghost mark-done" hidden={marked}
+                  aria-describedby={marked ? undefined : markNoteId}
+                  title={x.key ? 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page' : 'You did it on the page: the panel stops waiting on it for this quote'}
+                  aria-label={`Mark done: ${label}`} onClick={() => act.markRow(rec, ctx)}>Mark done</button> : null}
+              </div>
+            ) : null}
+            {x.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
+          </div>
+          {markable || (marked && x.key) ? (
+            <div className="row-tray-foot">
+              {marked && x.key ? (
+                <button type="button" className="tray-link show-on-page" title="Scroll the carrier page to this question and flash its mark"
+                  aria-label={`Show on page: ${label}`} onClick={() => act.showRow(rec, ctx)}>Show on page</button>
+              ) : null}
+              {markable && marked ? (
+                <button type="button" className="ghost mark-done" hidden
+                  aria-label={`Mark done: ${label}`} onClick={() => act.markRow(rec, ctx)}>Mark done</button>
+              ) : null}
+              {markable ? <p id={markNoteId} className="mark-done-note" hidden={marked}>{x.key ? NEEDS.markDoneNote : NEEDS.markActionNote}</p> : null}
+            </div>
+          ) : null}
         </div>
-        {markable ? <p id={markNoteId} className="mark-done-note" hidden={marked}>{x.key ? NEEDS.markDoneNote : NEEDS.markActionNote}</p> : null}
-        {x.key ? <span className="need-where" hidden={!rec.where}>{rec.where ?? ''}</span> : null}
-        <Note note={rec.note} />
       </div>
     </div>
   );
@@ -198,7 +218,7 @@ function ReportRows({ entry, ctx, act }) {
 }
 
 // Draws a report's list into its host (the report's `.rows`), before it returns; the function it
-// returns takes it down (a report replaced or forgotten).
+// returns unmounts the list when the report is dropped (dropReports).
 function mountRows(host, entry, ctx, act) {
   const root = createRoot(host);
   flushSync(() => root.render(<ReportRows entry={entry} ctx={ctx} act={act} />));

@@ -882,6 +882,13 @@ export const progressive = {
       // one the lookup can't find yet (then there's no registered name to pick).
       { concept: 'business.name', q: '230', source: 'derived', field: 'AccountInput.BusinessName', ask: 'Business Name', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => companyName(r.applicant.name) || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
       { concept: 'business.dba', q: '233', field: 'AccountInput.DBA', ask: 'DBA Name', optional: true, name: 'DBA name (always left empty)', ignore: true },
+      // USDOT-prefill quotes replace AccountInput.DBA with a radio choice and text box (W49-15):
+      // the commercial intake has no DBA field, so never invent or auto-pick one; keep both as
+      // known client facts so neither triggers renamed/pageChanged or leftRequired.
+      { concept: 'business.dba', source: 'fact', field: 'AccountInputNonShredded.DBAPrefillOptions', ask: 'DBA Name', kind: 'choice', name: 'DBA name (USDOT prefill)',
+        note: "Progressive found a DBA name from the USDOT lookup, and the intake doesn't list a DBA: choose it or enter one yourself." },
+      { concept: 'business.dba', source: 'fact', field: 'AccountInputNonShredded.DBADup', kind: 'text', name: 'DBA name (USDOT entry)',
+        note: "The intake doesn't list a DBA name: enter it yourself if the business uses one." },
       // Owner home address box, shown when there's no registered address to pick ("2AA" after
       // "Enter a different address", "2A9" when there's no choice at all): the whole address,
       // then Progressive's first suggestion, which fills ZIP and city. The ZIP/city rules then
@@ -1160,8 +1167,10 @@ export const progressive = {
         source: (r, a) => (cdlStandard(r.drivers?.[a.drivers ?? 0]) ? 'standard' : 'intake'), value: (r, a) => cdlAnswer(r.drivers?.[a.drivers ?? 0]) },
       { concept: 'driver.license-number', q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
       // FL (2026-10-07): with a CDL, the year it was issued, from the intake; "Year is unknown" is
-      // the agent's when the intake has no year.
-      { concept: 'driver.cdl-year', q: '295E', field: 'DriverInputNonShredded.YearCDLIssuedUI', ask: 'Year CDL Issued', path: 'drivers[].cdlYear' },
+      // the agent's when the intake has no year. Filling YearCDLIssuedUI causes Progressive to swap
+      // it for DriverInput.YearCDLIssued (W49-05): alias both on one rule so verification follows it.
+      { concept: 'driver.cdl-year', q: '295E', field: 'DriverInputNonShredded.YearCDLIssuedUI', fieldAliases: ['DriverInput.YearCDLIssued'],
+        ask: ['Year CDL Issued', "What year was the Commercial Driver's License (CDL) originally issued?"], path: 'drivers[].cdlYear' },
       { concept: 'driver.cdl-year', q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
       // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
       // intake's description box mentions is the agent's. (299D: the id when it was first seen,
@@ -1266,6 +1275,10 @@ export const progressive = {
       { concept: 'coverage.fire-theft', q: '200F', tni: 'progressive.fire-theft', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       // One per vehicle (UT 2026-10-07: two vehicles, two rows, no caption on either).
       { concept: 'coverage.umpd', q: '1FDD', tni: 'progressive.umpd', source: 'standard', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
+      // Policy-level UMPD Added On / Reduced Limit (GA; TNI, 2026-11-25, W49-17): Not selected when
+      // offered, else leave to the agent with a note rather than inventing a deductible.
+      { concept: 'coverage.umpd', tni: 'progressive.umpd', source: 'standard', field: 'LineInput.UMPDAddedOnReducedLimit', ask: 'Uninsured Motorist Property Damage', name: 'UMPD limit (standard: Not selected when offered)', kind: 'choice', value: () => 'Not selected', scope: 'policy',
+        unofferedNote: 'Progressive does not offer "Not selected" for Uninsured Motorist Property Damage here: choose the deductible yourself.' },
       // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle):
       // $5,000 wherever Progressive offers it (TNI, 2026-10-26, W44-26).
       { concept: 'coverage.medpay', q: '1FE4', tni: 'progressive.medpay', source: 'standard', field: 'MedicalPaymentInput.Limit', name: `Medical payments per person (standard: ${usd(STANDARDS.medPay)})`, kind: 'choice', value: () => MED_PAY, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0,
@@ -1361,11 +1374,19 @@ export const progressive = {
       { concept: 'quote.save', q: '2D55', ask: 'Customer Email Address', name: 'Save Quote contact details (the agent\'s)', ignore: true },
     ]),
 
+    // --- Post-MVR accident dispute (TellUsWhatHappened) ------------------------------------------
+    ...onPage('TellUsWhatHappened', [
+      { concept: 'driver.claims', source: 'fact', field: 'IntegrationAccidentsViolationsInput.DisputeAccidentDriverAtFault', ask: 'Was this driver at fault?', kind: 'choice', name: 'Disputed accident driver at fault (the agent\'s)',
+        note: "Whether the driver was at fault in a disputed MVR accident isn't on the intake: answer it yourself." },
+    ]),
+
     // --- Finish & buy (AdditionalDetails) --------------------------------------------------------
     ...onPage('AdditionalDetails', [
       { concept: 'quote.agency', q: '396', label: 'agent of record', name: 'Agent of Record (preserve prefilled value)', ignore: true },
       { concept: 'business.ein', q: '3E3', label: 'employer identification', name: 'Employer Identification Number (finish flow; agent review)', ignore: true },
       { concept: 'quote.reports', q: '450', label: '\\b(mvr|clue)\\b', name: 'Order MVR/CLUE reports', note: 'Agent decision — not filled' },
+      { concept: 'vehicle.loan-lease', q: '471', source: 'fact', field: 'AdditionalOtherInterestInput.LoanLeaseCompany', ask: 'Loan Company', kind: 'choice', name: 'Loan company (the agent\'s)',
+        note: "The lienholder / loan company name isn't on the commercial intake: pick it yourself." },
     ]),
   ],
 };

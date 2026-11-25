@@ -71,7 +71,7 @@ export const progressive = {
       { id: 'progressive.liability-limit', kind: 'intake', text: 'Bodily injury and property damage liability: the intake\'s requested limit ("$1M CSL" is "$1 million CSL"); on a non-trucking liability quote, Not selected.' },
       { id: 'progressive.medpay', kind: 'standard', text: `Medical payments per person (per vehicle): ${usd(STANDARDS.medPay)} per person.` },
       { id: 'progressive.um', kind: 'standard', text: `UM/UIM: ${usdK(STANDARDS.umCsl)} CSL (also when asked separately as Uninsured and Underinsured Motorist; South Carolina\'s combined BI & PD: "${usdK(STANDARDS.umCsl)} CSL w/ $200 Deductible" uninsured, "${usdK(STANDARDS.umCsl)} CSL w/ $0 Deductible" underinsured).` },
-      { id: 'progressive.umpd', kind: 'standard', text: 'UMPD limit (per vehicle): Not selected.' },
+      { id: 'progressive.umpd', kind: 'standard', text: 'UMPD limit (per vehicle, and policy-level Added On / Reduced Limit such as GA when offered): Not selected; if Not selected is not offered, leave it to the agent.' },
       { id: 'progressive.deductibles', kind: 'standard', text: `Comprehensive and collision deductibles: ${usd(STANDARDS.deductible)} (South Carolina lists comprehensive as "${usd(STANDARDS.deductible)} Deductible w/ $0 Glass Deductible").` },
       { id: 'progressive.rental', kind: 'standard', text: `Rental: "${usd(STANDARDS.rental.perDay)} per day, ${usd(STANDARDS.rental.max)} max".` },
       { id: 'progressive.rental-downtime', kind: 'standard', text: 'Rental with Downtime (offered for a truck tractor): Not selected.' },

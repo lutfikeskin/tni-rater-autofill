@@ -3,6 +3,7 @@
 
 import { oneLine, squash, humanize, isPlaceholderOption } from './text.js';
 import { adapter, closestOwn, withAdapter, fieldRef, dataName, premiumReady } from './adapter.js';
+import { hasPrivateOptions } from '../redaction.js';
 
 /**
  * @typedef {object} PageControlOption
@@ -28,6 +29,7 @@ import { adapter, closestOwn, withAdapter, fieldRef, dataName, premiumReady } fr
  * @property {string} [hint]
  * @property {boolean} [required]
  * @property {string | null} [vehicle]
+ * @property {string | null} [vehicleId]
  * @property {HTMLInputElement[]} [radios]
  * @property {PageControlOption[]} [options]
  */
@@ -364,7 +366,11 @@ export function collectControls() {
     if (!c.row || !VEHICLE_LABEL.test(c.label ?? '')) continue;
     rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
   }
-  for (const c of out) c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
+  const rowIds = out.some((c) => c.row) ? (a.rowIds?.() ?? null) : null;
+  for (const c of out) {
+    c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
+    c.vehicleId = (c.row && rowIds?.get(c.row)) || null;
+  }
   hiddenOf.set(out, hidden);
   return out;
 }
@@ -408,7 +414,7 @@ export function optionsOf(c) {
 }
 
 export function describe(c) {
-  const options = /agent|producer/i.test(c.label ?? '') ? []
+  const options = /agent|producer/i.test(c.label ?? '') || hasPrivateOptions(c) ? []
     : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))];
   return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (textValue(c.el) ? 'has a value' : null) : selectedText(c) };
 }
