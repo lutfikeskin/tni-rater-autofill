@@ -11527,6 +11527,162 @@ test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswer
   assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
 });
 
+// TNI, 2026-11-25 (W49-11): GEICO Vehicles GiveAnyAntiTheftDeviceInstalledYesNo keeps GEICO's
+// pre-selected Yes/No (also with overwrite/replaceChoices) and leaves a blank field to the agent as
+// a client fact (noData, manualOnly, holds Continue, never unfamiliar).
+test('GEICO Vehicles anti-theft (W49-11): keeps pre-selected Yes/No and asks agent when blank', async () => {
+  const record = { ...geicoRecord(), operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Box Truck', year: 2021, make: 'FORD', model: 'F-650', vin: null }] };
+  const plan = buildPlan(record, geico, { vehicles: 0 });
+  const buildPage = (checked) => {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, 'Vehicles');
+    const vin = radioGroup('Entering the customer\'s VIN can help speed things up. Do you have it handy?',
+      ...['Yes', 'No'].map((v, i) => makeInput({ id: `Id_YesNoPreQuoteHaveFullVinActivity_10${i}-shadow`, name: 'Id_YesNoPreQuoteHaveFullVinActivity_10', type: 'radio', value: v })));
+    const anti = radioGroup('Are there any anti-theft devices installed on this vehicle?',
+      ...['Yes', 'No'].map((v, i) => makeInput({ id: `Id_GiveAnyAntiTheftDeviceInstalledYesNo_20${i}-shadow`, name: 'Id_GiveAnyAntiTheftDeviceInstalledYesNo_20', type: 'radio', value: v, checked: checked === v })));
+    h.document.body.append(vin, anti);
+    return { h, anti };
+  };
+  for (const preset of ['Yes', 'No']) {
+    for (const overwrite of [false, true]) {
+      const { h, anti } = buildPage(preset);
+      const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true, overwrite });
+      const where = `preset=${preset} overwrite=${overwrite}`;
+      assert.equal(report.unknown.length, 0, where);
+      assert.ok(report.kept.some((x) => x.key === 'ref:GiveAnyAntiTheftDeviceInstalledYesNo'), where);
+      assert.ok(!report.noData.some((x) => x.key === 'ref:GiveAnyAntiTheftDeviceInstalledYesNo'), where);
+      assert.ok(!report.filled.some((x) => x.key === 'ref:GiveAnyAntiTheftDeviceInstalledYesNo'), where);
+      const selected = anti.querySelectorAll('input').find((el) => el.checked)?.value;
+      assert.equal(selected, preset, where);
+    }
+  }
+  const { h } = buildPage(null);
+  const blankReport = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.equal(blankReport.unknown.length, 0);
+  const item = blankReport.noData.find((x) => x.key === 'ref:GiveAnyAntiTheftDeviceInstalledYesNo');
+  assert.ok(item, `blank anti-theft reported in noData: ${JSON.stringify(blankReport.noData)}`);
+  assert.deepEqual([item.source, item.manualOnly], ['fact', true]);
+  assert.ok(blankReport.blockers.some((b) => /anti-theft/i.test(b)), JSON.stringify(blankReport.blockers));
+});
+
+// TNI, 2026-11-25 (W49-12) & W49-13: Stacked PIP (MN), Extended PIP (FL), and per-vehicle cov:UMPD (CO/UT/OH)
+// on GEICO Quote & Coverages.
+test('GEICO Quote & Coverages (W49-12, W49-13): Stacked/Extended PIP keep preset, per-vehicle UMPD is fact', async () => {
+  const makeCovSelect = (caption, options, value, suffix = '') => {
+    const id = `Id_${randomUUID()}_100${suffix ? `_${suffix}` : ''}`;
+    const box = new FakeNode('div');
+    const legend = new FakeNode('gds-label-legend', { attrs: { element: 'label', for: id } });
+    legend.append(new FakeNode('span', { textContent: caption }));
+    const select = new SelectNode(options, { id, ariaLabel: caption, value });
+    box.append(legend, select);
+    return { box, select };
+  };
+
+  // Stacked PIP (MN): pre-selected No stays kept; empty triggers emptyNote.
+  for (const val of ['No', '']) {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    const sp = makeCovSelect('Stacked PIP', [{ text: '', value: '' }, 'No', 'Yes'], val);
+    h.document.body.append(sp.box);
+    const rec = { ...geicoRecord(), garaging: { state: 'MN' }, operations: { businessClass: 'Expediter' } };
+    const report = await h.kit.fill(buildPlan(rec, geico), { maxRounds: 3, replaceChoices: true });
+    assert.equal(report.unknown.length, 0, `Stacked PIP val=${val}`);
+    assert.equal(sp.select.value, val, `Stacked PIP val=${val}`);
+    assert.equal(report.noData.filter((x) => x.key === 'cov:stacked pip').length, val ? 0 : 1, `Stacked PIP val=${val}`);
+  }
+
+  // Extended PIP (FL): pre-selected stays kept; empty triggers emptyNote.
+  for (const val of ['Basic', '']) {
+    const h = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    const ep = makeCovSelect('Extended PIP', [{ text: '', value: '' }, 'Basic', 'Extended'], val);
+    h.document.body.append(ep.box);
+    const rec = { ...geicoRecord(), garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' } };
+    const report = await h.kit.fill(buildPlan(rec, geico), { maxRounds: 3, replaceChoices: true });
+    assert.equal(report.unknown.length, 0, `Extended PIP val=${val}`);
+    assert.equal(ep.select.value, val, `Extended PIP val=${val}`);
+    assert.equal(report.noData.filter((x) => x.key === 'cov:extended pip').length, val ? 0 : 1, `Extended PIP val=${val}`);
+  }
+
+  // Per-vehicle cov:UMPD#1 (CO): reported as client fact (noData, manualOnly, 0 unknown).
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const umpd = makeCovSelect('2021 FORD F-650', ['I decline', 'Not Included'], 'Not Included', 'UMPD');
+  h.document.body.append(umpd.box);
+  const co = { ...geicoRecord(), garaging: { state: 'CO' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Box Truck', year: 2021, make: 'FORD', model: 'F-650', vin: null }] };
+  const coReport = await h.kit.fill(buildPlan(co, geico, { vehicles: 0 }), { maxRounds: 3, replaceChoices: true });
+  assert.equal(coReport.unknown.length, 0, `cov:UMPD#1 not unfamiliar: ${JSON.stringify(coReport.unknown)}`);
+  const umpdItem = coReport.noData.find((x) => x.key === 'cov:UMPD#1');
+  assert.ok(umpdItem, `cov:UMPD#1 in noData: ${JSON.stringify(coReport.noData)}`);
+  assert.deepEqual([umpdItem.source, umpdItem.manualOnly], ['fact', true]);
+});
+
+// W49-16, W49-18, W49-21: GEICO owner-driver GiveOwnerActiveDriverStatusYesNo, GiveOtherCity on BOI/Vehicles,
+// and GiveCustomMake >25 chars guard.
+test('GEICO owner-driver (W49-16), GiveOtherCity (W49-18), and GiveCustomMake >25 chars (W49-21)', async () => {
+  // W49-16: owner row on Drivers & Incidents (no GiveDriverRelationshipToBusiness).
+  const drvRec = {
+    ...geicoRecord(),
+    applicant: { owner1: 'Amina Kone', ownerDrives: false },
+    drivers: [{ first: 'Amina', last: 'Kone', dob: '01/02/1980', licenseState: 'MN', cdl: false, excluded: null }],
+  };
+  const hDrv = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(hDrv, 'Drivers & Incidents');
+  const ownerDrivesRadio = radioGroup('Is the owner a driver on the policy?',
+    ...['Yes', 'No'].map((v, i) => makeInput({ id: `Id_GiveOwnerActiveDriverStatusYesNo_50${i}-shadow`, name: 'Id_GiveOwnerActiveDriverStatusYesNo_50', type: 'radio', value: v })));
+  hDrv.document.body.append(ownerDrivesRadio);
+  const drvReport = await hDrv.kit.fill(buildPlan(drvRec, geico, { drivers: 0 }), { maxRounds: 3, replaceChoices: true });
+  assert.equal(drvReport.unknown.length, 0, `no unfamiliar on owner-driver row: ${JSON.stringify(drvReport.unknown)}`);
+  assert.equal(ownerDrivesRadio.querySelectorAll('input').find((el) => el.checked)?.value, 'Yes', 'W46-02 unanswered No stays Yes');
+  assert.ok(drvReport.checks.some((x) => x.key === 'ref:GiveOwnerActiveDriverStatusYesNo' && /Does the owner drive/.test(x.note)));
+
+  // W49-18: GiveOtherCity filled on BOI and Vehicles when GiveCity selects OTHER; untouched when city is listed.
+  for (const step of ['Business & Owner Info', 'Vehicles']) {
+    const hCity = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(hCity, step);
+    if (step === 'Vehicles') {
+      hCity.document.body.append(radioGroup('Entering the customer\'s VIN can help speed things up. Do you have it handy?',
+        ...['Yes', 'No'].map((v, i) => makeInput({ id: `Id_YesNoPreQuoteHaveFullVinActivity_11${i}-shadow`, name: 'Id_YesNoPreQuoteHaveFullVinActivity_11', type: 'radio', value: v, checked: v === 'No' }))));
+    }
+    const cityList = geicoList('GiveCity', 41, 'City', ['OTHER', 'SMALLTOWN'], { value: 'OTHER' });
+    const otherCity = geicoBox('GiveOtherCity', 42, 'If other, please enter the city name');
+    hCity.document.body.append(cityList, otherCity);
+    const cityRec = { ...geicoRecord(), garaging: { city: 'Testville', state: 'MN', zip: '55001' }, vehicles: [{ type: 'Box Truck', vin: null }] };
+    const cityReport = await hCity.kit.fill(buildPlan(cityRec, geico, { vehicles: 0 }), { maxRounds: 4, replaceChoices: true });
+    assert.equal(cityReport.unknown.length, 0, `${step}: ${JSON.stringify(cityReport.unknown)}`);
+    assert.equal(otherCity.value, 'Testville', `${step}: GiveOtherCity filled`);
+  }
+  // Counterexample: listed city fills GiveCity and never touches GiveOtherCity.
+  const hListed = harness({ adapter: 'geico', pathname: '/quote' });
+  geicoBar(hListed, 'Business & Owner Info');
+  const listedCity = geicoList('GiveCity', 43, 'City', ['TESTVILLE', 'OTHER'], { value: 'OTHER' });
+  hListed.document.body.append(listedCity);
+  const listedRec = { ...geicoRecord(), garaging: { city: 'Testville', state: 'MN', zip: '55001' } };
+  const listedReport = await hListed.kit.fill(buildPlan(listedRec, geico), { maxRounds: 3, replaceChoices: true });
+  assert.equal(listedCity.value, 'TESTVILLE');
+  assert.ok(!listedReport.filled.some((x) => x.key === 'ref:GiveOtherCity'));
+
+  // W49-21: GiveCustomMake >25 chars held as noData (0 failed / no answer.too-long); <=25 chars filled.
+  for (const [make, expectFill] of [['UTILITY TRAILER MANUFACTURING CO', false], ['GREAT DANE TRAILERS', true]]) {
+    const hTr = harness({ adapter: 'geico', pathname: '/quote' });
+    geicoBar(hTr, 'Vehicles');
+    const trType = geicoList('GiveOtherVehicleType', 60, 'Which of the following best describes the customer\'s trailer?', ['Please Select', 'Dry Freight Trailer'], { value: 'Dry Freight Trailer' });
+    const trMake = geicoBox('GiveCustomMake', 61, 'Make', { maxLength: 25 });
+    hTr.document.body.append(trType, trMake);
+    const trRec = { ...geicoRecord(), trailers: [{ type: 'Dry Van', year: 2020, make, value: 15000 }] };
+    const trReport = await hTr.kit.fill(buildPlan(trRec, geico, { trailers: 0 }), { maxRounds: 4, replaceChoices: true });
+    assert.equal(trReport.failed.length, 0, `${make}: no answer.too-long failure`);
+    if (expectFill) {
+      assert.equal(trMake.value, make);
+      assert.ok(trReport.filled.some((x) => x.key === 'ref:GiveCustomMake'));
+    } else {
+      assert.equal(trMake.value, '');
+      const held = trReport.noData.find((x) => x.key === 'ref:GiveCustomMake');
+      assert.ok(held && held.note.includes(`"${make}"`), JSON.stringify(trReport.noData));
+    }
+  }
+});
+
 // W49-06: Progressive CoveragesRates with duplicate identical Year Make Model vehicles.
 // Disambiguates via RiskInput.VIN display divs when present and unique; whenever a true tie
 // remains, records the tied rows in namedRows -> unmatchedRows instead of unfamiliar + pageChanged.

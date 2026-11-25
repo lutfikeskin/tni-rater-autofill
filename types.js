@@ -212,7 +212,7 @@
  * @property {boolean} [trustPage]  an answer already on the page that differs from the rule's is kept, with no item saying it differs
  * @property {boolean} [masked]  the page masks typed text after save (e.g. "*****1234" on Progressive PA License Number): treat a matching masked value as agreeing with the written answer
  * @property {boolean} [keepChoice]
- * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
+ * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup, or GEICO's anti-theft radio) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered (or left to the agent when `source` is `'fact'`)
  * @property {boolean} [keepUnlisted]  a list without the answer that already holds the page's own (not Other): kept, with a check naming the answer (GEICO's cities for the ZIP, W43-35)
  * @property {string} [firstNot]  with `kind: 'first-option'`: a first option matching this pattern is not picked; the question is the agent's, with `unofferedNote` (Progressive's Primary Business Address listing "Enter a different address" first)
  * @property {boolean} [whenOffered]
