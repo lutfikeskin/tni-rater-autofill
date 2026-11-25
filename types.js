@@ -505,6 +505,7 @@
  * @property {string | null} scope
  * @property {number | null | undefined} scopeIndex
  * @property {string[] | null} vehicleHint  the unit's year, make and model, which pick its row
+ * @property {string | null} [vehicleId]  the unit's normalized VIN (>= 11 chars), used to disambiguate identical year/make/model rows on CoveragesRates
  * @property {boolean | null} activeVehicle
  * @property {{ list: 'vehicles' | 'trailers', index: number, name: string } | null} [unit]  the unit whose row a per-unit step takes (its year, make and model as `name`): a page whose `unitPager` shows a few units at a time pages until each unit's row was read, and names a unit none read as
  * @property {string[] | null} businessNames
@@ -1314,6 +1315,7 @@
  * @property {(widget: any) => string} optionText  a radio option's words, from its widget
  * @property {(widget: any, el: Element) => string | null} question  the page's own question id (logged; never how a rule finds a field)
  * @property {(widget: any, el: Element) => string | null} row  the row of a repeating question (one per vehicle on Progressive's Rates)
+ * @property {() => Map<string, string | null> | null} rowIds  row id -> normalized unit identifier (Progressive CoveragesRates RiskInput.VIN display divs)
  * @property {(widget: any) => boolean} required
  * @property {(widget: any, el: Element) => any} value  the widget's value
  * @property {(widget: any) => string | null} shown  the text a list widget shows

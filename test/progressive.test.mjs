@@ -2510,6 +2510,33 @@ test('non-owned trailer physical damage: matching the interchange limit in full 
   assert.deepEqual([offCount.value, offCount.manualOnly], [null, true]);
 });
 
+// W49-06: multi-vehicle Progressive CoveragesRates plans carry each unit's normalized VIN as
+// `vehicleId` so duplicate identical Year Make Model vehicles can be disambiguated without guessing.
+test('multi-vehicle and trailer plans carry normalized vehicleId (VIN) alongside vehicleHint (W49-06)', () => {
+  const record = baseRecord();
+  record.vehicles = [
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1synthetic0000001', value: 31000 },
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC-0000002', value: 45000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: null, value: 17000 },
+  ];
+  record.trailers = [
+    { type: 'Dry Van', year: 2020, make: 'WABASH', model: null, vin: '1w1synthetic00004', value: 25000 },
+  ];
+  const plan = buildPlan(record, progressive, { vehicles: 0, trailers: 0 });
+  const worth = plan.filter((s) => s.q === '2CE8');
+  assert.deepEqual(worth.map((s) => s.vehicleHint), [
+    ['2025', 'ram', 'promaster 2500'],
+    ['2025', 'ram', 'promaster 2500'],
+    ['2019', 'mercedes benz', 'sprinter'],
+  ]);
+  assert.deepEqual(worth.map((s) => s.vehicleId), ['1SYNTHETIC0000001', '1SYNTHETIC0000002', null]);
+  const trComp = plan.find((s) => s.q === 'TR1FCD');
+  assert.equal(trComp.vehicleId, '1W1SYNTHETIC00004');
+  // Single-vehicle quote: no row matching needed, so vehicleId stays null.
+  const single = buildPlan(baseRecord(), progressive, {});
+  assert.equal(single.find((s) => s.q === '1FCD').vehicleId, null);
+});
+
 // W49-05: Progressive AddDriver swaps DriverInputNonShredded.YearCDLIssuedUI into
 // DriverInput.YearCDLIssued after filling; both map to drivers[].cdlYear.
 test('AddDriver CDL year maps both YearCDLIssuedUI and swapped DriverInput.YearCDLIssued; non-CDL untouched (W49-05)', () => {

@@ -334,10 +334,13 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
-    // trailer's "2019 Wilson"): the step's unit's year/make/model picks its row.
+    // trailer's "2019 Wilson"): the step's unit's year/make/model (and VIN when present on the
+    // page) picks its row.
     const v = scope === 'vehicle' && unitRows(record) ? (unit === 'trailers' ? record.trailers?.[active.trailers ?? 0] : record.vehicles[active.vehicles ?? 0])
       : scope === 'trailer' ? record.trailers?.[active.trailers ?? 0] : null;
     const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
+    const rawVehicleId = v?.vin ? String(v.vin).toUpperCase().replace(/[^A-Z0-9]/g, '') : '';
+    const vehicleId = rawVehicleId.length >= 11 ? rawVehicleId : null;
     /** @type {Omit<FieldStep, 'resolution'>} */
     const step = {
       id,
@@ -451,6 +454,7 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
+      vehicleId,
       activeVehicle,
       // The unit whose row the step takes, for a page that shows a few units' rows at a time
       // (carrier `unitPager`): each unit no row read as is named for the agent.

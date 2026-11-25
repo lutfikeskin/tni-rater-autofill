@@ -462,9 +462,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
     });
   };
-  // `needs`: one unit's steps are those naming the same unit (a per-vehicle row's year, make and
-  // model; a page with one vehicle has no hint, and every step there is its).
-  const sameUnit = (a, b) => (a.scope ?? null) === (b.scope ?? null) && (a.vehicleHint ?? []).join(' ') === (b.vehicleHint ?? []).join(' ');
+  // `needs`: one unit's steps are those naming the same unit (its intake list & index when carried,
+  // else its year, make and model; a page with one vehicle has no hint, and every step there is its).
+  const sameUnit = (a, b) => (a.scope ?? null) === (b.scope ?? null)
+    && (a.unit && b.unit ? a.unit.list === b.unit.list && a.unit.index === b.unit.index : (a.vehicleHint ?? []).join(' ') === (b.vehicleHint ?? []).join(' '));
   const needsOf = (step) => (step.needs?.length ? plan.filter((s) => s.id !== step.id && s.q != null && step.needs.includes(s.q) && sameUnit(s, step)) : []);
   // The answers on a step's unit still to give that need it: on the page, not the agent's, not
   // given or left yet, and not already showing their answer.
@@ -2331,9 +2332,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
     state.report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
     const matched = new Set(pairs.map((p) => p.control));
+    const unmatchedFinal = new Set((stillHere ? pairs.unmatchedRows : []).map((r) => r.control));
     for (const c of stillHere ? controls : []) {
       if (!matched.has(c) && state.report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
-      if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c) && !pairs.held.has(c)) {
+      if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c) && !pairs.held.has(c) && !unmatchedFinal.has(c)) {
         state.report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q != null ? String(c.q) : null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }

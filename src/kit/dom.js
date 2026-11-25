@@ -29,6 +29,7 @@ import { hasPrivateOptions } from '../redaction.js';
  * @property {string} [hint]
  * @property {boolean} [required]
  * @property {string | null} [vehicle]
+ * @property {string | null} [vehicleId]
  * @property {HTMLInputElement[]} [radios]
  * @property {PageControlOption[]} [options]
  */
@@ -365,7 +366,11 @@ export function collectControls() {
     if (!c.row || !VEHICLE_LABEL.test(c.label ?? '')) continue;
     rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
   }
-  for (const c of out) c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
+  const rowIds = out.some((c) => c.row) ? (a.rowIds?.() ?? null) : null;
+  for (const c of out) {
+    c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
+    c.vehicleId = (c.row && rowIds?.get(c.row)) || null;
+  }
   hiddenOf.set(out, hidden);
   return out;
 }

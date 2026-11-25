@@ -21,6 +21,7 @@ export const NO_ADAPTER = {
   optionText: () => '',
   question: () => null,
   row: () => null,
+  rowIds: () => null,
   required: () => false,
   value: (widget, el) => /** @type {any} */ (el)?.value ?? null,
   shown: () => null,
