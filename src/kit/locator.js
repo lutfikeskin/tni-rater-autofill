@@ -75,6 +75,10 @@ export function createLocator(kit) {
     // distinguishing VINs) is a check naming the row for the agent, never an unfamiliar question
     // (pairs.unmatchedRows).
     const namedRows = new Map();
+    // Units whose step genuinely tied on one or more labelled rows (VIN tie or full-hint caption
+    // tie, never an unrelated unit sharing only year+make): `makePager` uses this to avoid emitting
+    // a contradictory "No row on this page reads as Vehicle N" note alongside `unmatchedRows`.
+    const tiedCandidates = [];
     const page = currentPage();
     // The step on screen, read only for a plan kept to steps ('' when no step is named: then no
     // stepped rule is live, and GEICO's fields stay the agent's).
@@ -151,6 +155,10 @@ export function createLocator(kit) {
           c = s.activeVehicle && same.length === 1 ? same[0] : null;
         } else {
           c = matchedVehicleRow(same, s, steps, found);
+          if (!c && s.unit) {
+            const tied = tiedVehicleRows(same, s, steps, found);
+            if (tied.length) tiedCandidates.push({ unit: s.unit, rows: tied });
+          }
           for (const x of same) if ((x.vehicle || x.vehicleId) && !namedRows.has(x)) namedRows.set(x, s);
         }
         if (c && used.has(c)) c = null;
@@ -228,6 +236,7 @@ export function createLocator(kit) {
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
     pairs.unmatchedRows = [...namedRows].filter(([x]) => !used.has(x)).map(([control, step]) => ({ control, step }));
+    pairs.tiedUnits = new Set(tiedCandidates.filter(({ rows }) => rows.some((x) => !used.has(x))).map(({ unit }) => `${unit.list}:${unit.index}`));
     pairs.held = held;
     pairs.units = units;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
@@ -338,6 +347,33 @@ export function createLocator(kit) {
     const score = (hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
     const mine = score(step.vehicleHint);
     return rivals.some((t) => t.vehicleHint && score(t.vehicleHint) >= mine) ? null : row;
+  }
+
+  // Rows on which an unmatched per-unit step genuinely tied (same VIN or full-hint caption tie
+  // with no higher-scoring rival and no conflicting VIN): excludes unrelated missing units that
+  // only share year + make with a tied row.
+  function tiedVehicleRows(rows, step, steps, found) {
+    const rivalsFor = (row) => steps.filter((t) => t !== step && t.activeVehicle != null && found.get(t)?.includes(row));
+    const wantId = idText(step.vehicleId);
+    if (wantId.length >= 11) {
+      const byId = rows.filter((x) => idText(x.vehicleId) === wantId);
+      if (byId.length > 1 || (byId.length === 1 && rivalsFor(byId[0]).some((t) => idText(t.vehicleId) === wantId))) return byId;
+    }
+    if (!step.vehicleHint || step.vehicleHint.length < 2) return [];
+    const score = (row, hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const best = Math.max(0, ...rows.map((x) => score(x, step.vehicleHint)));
+    if (best < 2 || best !== step.vehicleHint.length) return [];
+    const top = rows.filter((x) => {
+      if (score(x, step.vehicleHint) !== best) return false;
+      const rowId = idText(x.vehicleId);
+      if (wantId.length >= 11 && rowId.length >= 11 && rowId !== wantId) return false;
+      const rivals = rivalsFor(x);
+      if (rowId.length >= 11 && rivals.some((t) => idText(t.vehicleId) === rowId)) return false;
+      return !rivals.some((t) => t.vehicleHint && score(x, t.vehicleHint) > best);
+    });
+    if (top.length > 1) return top;
+    if (top.length === 1 && rivalsFor(top[0]).some((t) => t.vehicleHint && score(top[0], t.vehicleHint) === best)) return top;
+    return [];
   }
 
   const unmatchedRowNote = (step) => `${step.name}: this row's vehicle matches none of the intake's vehicles and trailers (or two of them alike), so it wasn't filled. Answer it yourself.`;

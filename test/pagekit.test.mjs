@@ -11697,4 +11697,28 @@ test('Progressive CoveragesRates: duplicate identical vehicles disambiguate by V
   assert.deepEqual(plain(repPaged.checks), []);
   assert.deepEqual(plain(repPaged.noData), []);
   assert.equal(repPaged.pageChanged, false);
+
+  // 6) Regression (PR #608 review): two tied identical-model rows ("2020 FORD F150") must NOT
+  // suppress the missing-row `noData` note for an unrelated missing intake unit sharing the same
+  // year and make ("2020 Ford Transit").
+  const missingSameYearMake = ratesRecord([
+    { type: 'Pickup Truck', year: 2020, make: 'FORD', model: 'F150', vin: null, value: 30000 },
+    { type: 'Pickup Truck', year: 2020, make: 'FORD', model: 'F150', vin: null, value: 32000 },
+    { type: 'Van', year: 2020, make: 'FORD', model: 'Transit', vin: null, value: 28000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: null, value: 17000 },
+  ]);
+  const planMissing = buildPlan(missingSameYearMake, progressive, { vehicles: 0 }).filter((s) => s.kind !== 'action');
+  const hMissing = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const m1 = addVehicleSection(hMissing, '8_1', '2020 FORD F150');
+  const m2 = addVehicleSection(hMissing, '8_2', '2020 FORD F150');
+  const m3 = addVehicleSection(hMissing, '8_3', '2019 MERCEDES-BENZ SPRINTER');
+  const repMissing = await hMissing.kit.fill(planMissing, { maxRounds: 40, replaceChoices: true, pager: progressive.unitPager });
+  assert.equal(repMissing.halted, false);
+  assert.equal(m3.acv.input.value, '17000', 'distinct Sprinter fills normally');
+  assert.equal(m1.acv.input.value, '', 'tied F150 rows stay untouched');
+  assert.equal(m2.acv.input.value, '');
+  assert.deepEqual(plain(repMissing.unknown), []);
+  assert.equal(repMissing.pageChanged, false);
+  assert.deepEqual(Array.from(repMissing.noData, (x) => x.label), ['Vehicle 3'], 'missing 2020 Ford Transit still gets its missing-row note');
+  assert.match(repMissing.noData[0].note, /^No row on this page reads as Vehicle 3 \(2020 FORD Transit\)/);
 });

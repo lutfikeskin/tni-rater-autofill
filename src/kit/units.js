@@ -145,7 +145,6 @@ export function makePager(plan, pager, startPage) {
   const unitId = (s) => (s.unit ? `${s.unit.list}:${s.unit.index}` : null);
   const unitSteps = on ? (/** @type {any[]} */ (plan)).filter((s) => s.activeVehicle != null && (s.vehicleHint || s.vehicleId) && s.unit && s.pages?.includes(startPage)) : [];
   const units = new Map(unitSteps.map((s) => [unitId(s), s.unit]));
-  const unitHints = new Map(unitSteps.filter((s) => s.vehicleHint).map((s) => [unitId(s), s.vehicleHint]));
   const seen = new Set();
   const ambiguous = new Set();
   let rowsShown = false;
@@ -185,15 +184,9 @@ export function makePager(plan, pager, startPage) {
         if (skipped(p.control)) skippedRows.set(p.step.id, { step: p.step, label: p.control.label, key: fieldKey(p.control), unit: id });
         else seen.add(id);
       }
-      // A tied/unmatched row reading as a unit (e.g. duplicate identical Year Make Model vehicles
-      // without distinguishing VINs) is already surfaced as an `unmatchedRows` check; don't also
-      // claim "No row on this page reads as Vehicle N".
-      for (const { control } of pairs.unmatchedRows ?? []) {
-        if (!control.vehicle) continue;
-        for (const [id, hint] of unitHints) {
-          if (hint.filter((h) => ` ${control.vehicle} `.includes(` ${h} `)).length >= 2) ambiguous.add(id);
-        }
-      }
+      // Units that genuinely tied on unmatched rows (recorded by locator.js `tiedUnits`, never an
+      // unrelated missing unit sharing only year+make) are already surfaced via `unmatchedRows`.
+      for (const id of pairs.tiedUnits ?? []) if (units.has(id)) ambiguous.add(id);
       if (startGroup && group !== startGroup) for (const c of controls) elsewhere.add(fieldKey(c));
     },
     next() {
