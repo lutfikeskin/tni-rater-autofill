@@ -174,9 +174,9 @@ test('carrierForUrl disambiguates carriers sharing a host across products', () =
   assert.equal(carrierForUrl(url, { product: 'personal-auto', carriers })?.id, 'progressive-pa');
   // Non-matching product returns null rather than falling back.
   assert.equal(carrierForUrl(url, { product: 'homeowners', carriers }), null);
-  // Production CARRIERS list was not mutated: geico-pa has no rules yet, progressive-pa has its rules.
+  // Production CARRIERS list was not mutated: both personal-auto carriers have their rules.
   const pa = CARRIERS.filter((c) => c.product === 'personal-auto');
   assert.deepEqual(pa.map((c) => c.id), ['geico-pa', 'progressive-pa']);
-  assert.equal(pa[0].rules.length, 0);
+  assert.ok(pa[0].rules.length > 0);
   assert.ok(pa[1].rules.length > 0);
 });

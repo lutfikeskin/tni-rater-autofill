@@ -152,7 +152,10 @@ function Dock({ act }) {
           const shown = !!d && d.button === id;
           // The dock's Continue is a fill that replaces nothing (`go`: fillPage `continuing`).
           const held = shown && id !== 'fill-stop' && !!d.busy;
-          return <DockButton key={id} id={id} className={className} label={shown ? d.label : text} shown={shown}
+          const label = shown ? d.label : text;
+          // When a focused Need card already shows the primary "Show on page" CTA, keep Skip secondary.
+          const btnClass = id === 'dock-next' && shown && /^skip\b/i.test(String(label ?? '')) ? 'ghost big' : className;
+          return <DockButton key={id} id={id} className={btnClass} label={label} shown={shown}
             disabled={shown && (!!d.disabled || held)} why={held ? BUSY : ''} go={id === 'fill' ? d?.go ?? '' : undefined}
             onClick={(button) => act[does](id === 'fill' ? d?.go ?? '' : button)} />;
         })}

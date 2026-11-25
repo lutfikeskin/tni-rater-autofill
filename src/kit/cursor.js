@@ -5,7 +5,7 @@ import { oneLine, squash, loose } from "./text.js";
 import {
   adapter, currentPage,
   pageAt, pageBusy, perfNow, recentRequests, requestSentSince, setComponentPrefix, watchRequests, watchingRequests, settle,
-  pause, stopWaitsWhen, INTERRUPTED, ratesStale, premiumReady,
+  pause, stopWaitsWhen, INTERRUPTED, ratesStale, premiumReady, noteOwnAction,
 } from "./adapter.js";
 import {
   deepQueryAll, buttonText, collectControls, fieldKey, optionsOf,
@@ -16,7 +16,7 @@ import {
 } from "./dom.js";
 import {
   COVERED, COVERED_HELPER, closedSection,
-  findAdvanceButton, findButton, pressButton, coveredBy, agentPress,
+  findAdvanceButton, findButton, pressButton, downloadLinkUrl, coveredBy, agentPress,
 } from "./actions.js";
 import { mark, clear } from "./marks.js";
 import { makePager, setFillUnits, getFillUnits, setKnownUnitMarkers, unitFormsNow } from "./units.js";
@@ -24,7 +24,7 @@ import { guardEdits, EDIT_HALT, STOP_HALT, STOP_STEP_HALT, STEP_UNREAD_HALT } fr
 import { kitTrace } from "./trace.js";
 import {
   assign, matchOption, holdingCondition, moneyTokens, businessNameKey, uniqueBusinessNames,
-  heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, looseMatch, looseNote,
+  heldFormNote, unitName, unitNoun, unmatchedRowNote, witnessName, apply, agreesWith, exceedsTarget, looseMatch, looseNote,
   summaryAccepted, waitedOut, unpicked, waitedOutUndrawn, WAIT_MS, WAIT_ROUND_MS,
   AFTER_WAIT_QUIET_MS, LOAD_MS, LOAD_RESULT_MS, LOAD_QUIET_MS, LOAD_HALT, KEPT_WATCH_MS, FILL_BUDGET_MS, BUDGET_HALT,
   ONCE_UNVERIFIED, NOTHING_LEFT, AGENT_PRESSED, CONTINUE_REFUSED, RESET_QUIET_MS,
@@ -250,7 +250,7 @@ export function resolveItems(report, plan) {
  * @param {FillOptions} [options]
  * @returns {Promise<FillReport>}
  */
-export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], premiumPages = null, units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false } = {}) {
+export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], premiumPages = null, units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, budgetMs = FILL_BUDGET_MS, deadline = null, filledBefore = [], expectPage = null, formUnit = null, givenBefore = {}, pager = null, restarted = false, openDownloadInPanel = false } = {}) {
   // A fill still running here as this one begins was left by a panel that went away (closed while it
   // ran, or reloaded): it stops as on Stop, and this one begins only once it has ended, so two fills
   // never run in one frame: its waits, drivers and cleanup (the hidden selectors, the fill's units)
@@ -444,7 +444,7 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
   state.lastAnswered = null;
   state.judgedTo = Infinity;
   state.provisionalLeft = 0;
-  const halt = (reason) => { state.report.halted = true; state.report.reason = reason; };
+  const halt = (reason) => { state.report.halted = true; state.report.reason = reason; delete state.report.openDocumentUrl; };
   // A wait that ended unsettled: the fill halts for it, unless it ended because the fill had stopped
   // already (Stop, or the agent's edit), whose reason stays.
   const stalled = (reason) => { if (!state.report.halted) halt(reason); };
@@ -742,6 +742,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     for (const c of controls) {
       if (!mapped.has(c) || skippedField(c) || !hasValue(c) || !invalidControl(c)) continue;
       const own = allPairs.find((p) => p.control === c)?.step;
+      // Already queued for refill by answerPasses (e.g. awaiting keepWait after a transient
+      // post-DOB invalidation): let that retry run without double-burning retryOnce or adding
+      // a duplicate answer.invalid failure.
+      if (own && state.refill.has(own.id) && !state.handled.has(own.id)) continue;
       const ours = !!own && state.handled.get(own.id)?.note !== IDENTITY_NOTE
         && (!(own.keepChoice || own.keepPreset) || state.refill.has(own.id) || state.report.filled.some((x) => x.stepId === own.id));
       if (ours && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
@@ -1001,9 +1005,18 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             break;
           }
         }
+        // `replace: 'lower'`: only lowers a currently-selected choice whose numeric dollar limit
+        // strictly exceeds the target limit (never raises, never turns "I decline" into coverage).
+        const lowerOnly = step.replace === 'lower';
+        const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
+        if (lowerOnly && isChoice && !exceedsTarget(step, c)) {
+          if (notYet()) continue;
+          state.report.kept.push(item);
+          state.handled.set(step.id, { status: null });
+          continue;
+        }
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
-        const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         // `keepChoice`: a question the carrier never pre-selects, so a differing choice already
         // there is a person's: kept and flagged, not replaced.
         // An answer an earlier fill gave here that the page has since taken back (`takenBack`).
@@ -1048,7 +1061,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
-        if (legacyHold || sameAnswer || presetKept || changedSince || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        const shouldReplace = lowerOnly ? exceedsTarget(step, c) : (step.replace === true && !agreesWith(step, c));
+        if (legacyHold || sameAnswer || presetKept || changedSince || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !state.refill.has(step.id) && !shouldReplace)) {
           if (notYet()) continue;
           state.report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
@@ -1114,9 +1128,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         }
         // An answer still to give, in the second pass: the next round's.
         if (thisRound.judgeOnly) { thisRound.retry = true; continue; }
-        // An answer the page didn't keep is given again once the page and its own requests have been
-        // quiet (`keepWait`), each time, and read again first.
-        if (state.keepWait.has(step.id) && !state.keepSettled.has(step.id) && !agreesWith(step, c)) {
+        // An answer the page didn't keep (cleared, changed, or transiently marked invalid while a
+        // postback settles) is given again once the page and its own requests have been quiet
+        // (`keepWait`), each time, and read again first.
+        if (state.keepWait.has(step.id) && !state.keepSettled.has(step.id) && (!agreesWith(step, c) || invalidControl(c))) {
           cursor();
           state.keepSettled.add(step.id);
           phase('waiting');
@@ -1170,7 +1185,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             changed: [...before.keys()].filter((k) => k !== mine && after.has(k) && after.get(k) !== before.get(k)).length,
           };
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
-          if (fresh) judged = fresh;
+          if (fresh) {
+            judged = fresh;
+            // If the carrier swapped the control to an aliased field after filling (e.g. Progressive
+            // YearCDLIssuedUI -> YearCDLIssued), follow the live control's key and label.
+            const freshKey = fieldKey(fresh);
+            if (freshKey !== item.key) Object.assign(item, { key: freshKey, label: fresh.label, q: fresh.q ?? null });
+          }
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || state.report.halted) {
@@ -1506,11 +1527,12 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       return false;
     }
     // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
-    // watched until KEPT_WATCH_MS after the click when they held.
+    // watched until KEPT_WATCH_MS after the click when they held (skipped when `reopen` verified
+    // freshly reopened server-persisted controls).
     let keptBroken = false;
     if (accepted && a.kept) {
       keptBroken = await answersKept(a);
-      if (!keptBroken) keptBroken = await watchKept(a);
+      if (!keptBroken && !a.reopen) keptBroken = await watchKept(a);
     }
     if (accepted && a.verify === 'premium') {
       if (keptBroken || state.report.halted) {
@@ -1700,15 +1722,56 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       return c && answerShown(c) !== k.shown ? [{ k, c }] : [];
     });
   }
+  function visibleErrors() {
+    const sels = adapter().selectors?.errors ?? [];
+    if (!sels.length) return '';
+    const texts = [];
+    for (const el of deepQueryAll(document, sels.join(', '))) {
+      if (!el.getClientRects().length) continue;
+      const t = oneLine(el.textContent ?? '');
+      if (t) texts.push(t);
+    }
+    return texts.join('; ');
+  }
   async function answersKept(a) {
-    if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) return false;
+    let now = new Map(answerPlaces(collectControls()));
+    // A carrier that collapses its editable controls when Recalculate finishes (GEICO PA's
+    // Quote Summary collapses its coverage selects back to read-only cards): reopen them once
+    // (`reopen`) so every kept answer is verified against the server-persisted values.
+    if (a.reopen && a.kept.some((k) => !now.has(k.at))) {
+      const reopenBtn = findButton({ text: a.reopen });
+      if (reopenBtn && !coveredBy(reopenBtn)) {
+        if (thisFill.timeUp()) return false;
+        pressButton(reopenBtn);
+        await settle({ quietMs: 250, maxMs: 5000, why: 'reopen' });
+        if (state.report.halted) return false;
+        now = new Map(answerPlaces(collectControls()));
+      }
+      const missing = a.kept.filter((k) => !now.has(k.at));
+      if (missing.length) {
+        state.premiumRejected = true;
+        delete state.report.premium;
+        state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, code: 'answer.changed',
+          reason: `could not verify ${missing.length === 1 ? 'an answer' : `${missing.length} answers`} after recalculation: click Edit to confirm the coverages before printing.` });
+        return true;
+      }
+    }
+    const errText = visibleErrors();
+    if (errText) {
+      state.premiumRejected = true;
+      delete state.report.premium;
+      state.report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, code: 'answer.changed',
+        reason: `the page showed an error after recalculation ("${errText.slice(0, 120)}"): review coverages and click Recalculate yourself.` });
+      return true;
+    }
+    if (!keptChanged(a, now).length) return false;
     // A change counts only if it is still there once the page and its own requests have been
     // quiet again. A request still running can't be seen, and a value the page then draws back
     // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
     // back, which the agent saw right the whole time).
     await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !state.report.halted, why: 'kept' });
     if (state.report.halted) return false;
-    const now = new Map(answerPlaces(collectControls()));
+    now = new Map(answerPlaces(collectControls()));
     traceRead(a, now);
     const changed = keptChanged(a, now);
     if (!changed.length) return false;
@@ -1969,6 +2032,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       }
       delete x.gone;
       delete x.offPage;
+      const key = fieldKey(c);
+      if (key !== x.key) Object.assign(x, { key, label: c.label, q: c.q ?? null });
       if (!sure) return;
       x.now = shownNow(c);
       // Not the fill's answer any more: neither what it put in nor the answer as the fill judges it
@@ -2152,20 +2217,28 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       if ((a.loads || a.quietMs) && !(state.quiet?.action === a.action && state.quiet.sig === signature())) { state.loadDue = a.action; return false; }
       // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
       if (coveredBy(button)) { holdCovered(a, button); continue; }
+      // In MAIN world, clicking a target="_blank" link after an async fill lacks a user gesture so
+      // Chrome's popup blocker swallows it (GEICO PA Print Quote Proposal). When `openDownloadInPanel`
+      // is set, hand back the same-origin link URL instead of clicking in-page.
+      const docUrl = openDownloadInPanel && a.verify === 'download' ? downloadLinkUrl(button) : null;
       // Its time spent meanwhile: nothing more is clicked.
       if (thisFill.timeUp()) return false;
       state.quiet = null;
       state.clicked.add(a.action);
       state.report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
-      // What the page shows as the button is clicked (the round's controls are older: answers
-      // have landed since): what a `revealed` / `appears` check compares with afterwards.
       state.pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
         : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
           : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now(), trace: traceStart() } : a;
       const trace = state.pendingAction.trace;
       snapshotPremium(premiumPages == null && !!a.needsPremium);
-      const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null, kit: a.kitClick });
-      if (trace) trace.press = how;
+      if (docUrl) {
+        noteOwnAction();
+        state.report.openDocumentUrl = docUrl;
+        kitTrace('press', { button: { text: buttonText(button).slice(0, 60) }, how: 'kit' });
+      } else {
+        const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null, kit: a.kitClick });
+        if (trace) trace.press = how;
+      }
       return true;
     }
     return false;

@@ -178,6 +178,16 @@ const NOT_MAPPED = {
     'claims.hasClaims': 'incidents on Drivers & Incidents are added by the agent (not mapped)',
     'claims.notes': 'nothing GEICO asks on the mapped steps reads the claims box\'s other answers',
   },
+  'geico-pa': {
+    'applicant.applicationDate': 'Coverage start date keeps GEICO\'s prefilled default or fills today if empty (D7)',
+    'residence.timeAtAddress': 'not asked on GEICO PA pre-quote steps',
+    'residence.priorAddress': 'not asked on GEICO PA pre-quote steps',
+    'drivers[].middle': 'GEICO PA Policyholder Information and Driver Information have no middle initial field (D6)',
+    'drivers[].suffix': 'GEICO PA Policyholder Information and Driver Information have no suffix field',
+    'vehicles[].damage': 'not asked on GEICO PA Vehicle Information',
+    'vehicles[].lienholder.city': 'lienholder details are after Quote Summary on Finalize stopSteps',
+    'vehicles[].lienholder.state': 'lienholder details are after Quote Summary on Finalize stopSteps',
+  },
   'progressive-pa': {
     'applicant.applicationDate': 'Policy effective date keeps Progressive\'s prefilled default or fills today if empty (D4)',
     'drivers[].education': 'not asked on the captured Progressive PA Tennessee Household Members step',
@@ -219,9 +229,23 @@ const READ_INDIRECTLY = {
     'drivers[].excluded': 'util.driverExcluded (the excluded-driver warning on Add Driver)',
     'trailerInfo.interchangeLimit': 'util.interchangeLimitPick (the intake\'s trailer interchange limit, or the next one up)',
   },
+  'geico-pa': {
+    'garaging.city': 'oneLineAddress(r) sends street, city, state and ZIP to GEICO\'s address autocomplete',
+    'garaging.state': 'oneLineAddress(r) sends street, city, state and ZIP to GEICO\'s address autocomplete',
+    'vehicles[].commuteMiles': 'commuteMilesValue reads vehicles[i].commuteMiles for Commute primary use',
+    'vehicles[].commuteDays': 'commuteDaysValue reads vehicles[i].commuteDays for Commute primary use',
+    'vehicles[].fullCoverage': 'resolveVehicleDeductible reads vehicles[i].fullCoverage for each vehicle on Quote Summary',
+    'coverage.compDeductible': 'resolveVehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+    'coverage.collDeductible': 'resolveVehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+    'notes.text': 'notesOf(r) checks additional notes for military/gov, excluded drivers, incidents, groups, and no-insurance exceptions',
+  },
   'progressive-pa': {
-    'coverage.compDeductible': 'vehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
-    'coverage.collDeductible': 'vehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+    'residence.timeAtAddress': 'answers.recentlyMoved reads residence.timeAtAddress for Named Insured RecentlyMoved',
+    'residence.priorAddress': 'answers.recentlyMoved reads residence.priorAddress for Named Insured RecentlyMoved',
+    'vehicles[].fullCoverage': 'answers.resolveVehicleDeductible reads vehicles[i].fullCoverage for each vehicle on Coverages',
+    'coverage.compDeductible': 'answers.resolveVehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+    'coverage.collDeductible': 'answers.resolveVehicleDeductible reads r.coverage[field] for each vehicle with fullCoverage',
+    'notes.text': 'answers.notesOf checks additional notes for rideshare/delivery, SR-22, excluded drivers, and extra residents',
   },
 };
 

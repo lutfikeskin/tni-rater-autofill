@@ -3,6 +3,7 @@
 
 import { oneLine, squash, humanize, isPlaceholderOption } from './text.js';
 import { adapter, closestOwn, withAdapter, fieldRef, dataName, premiumReady } from './adapter.js';
+import { hasPrivateOptions } from '../redaction.js';
 
 /**
  * @typedef {object} PageControlOption
@@ -413,7 +414,7 @@ export function optionsOf(c) {
 }
 
 export function describe(c) {
-  const options = /agent|producer/i.test(c.label ?? '') ? []
+  const options = /agent|producer/i.test(c.label ?? '') || hasPrivateOptions(c) ? []
     : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))];
   return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (textValue(c.el) ? 'has a value' : null) : selectedText(c) };
 }

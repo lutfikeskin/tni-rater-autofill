@@ -20,6 +20,7 @@ import { KEPT_WORK_MS, KEPT_WORK_PREFIX, checksOn, keptFresh, keptWorkOf, pruneK
 import { get as getPath, set as setPath } from '../src/shared/record-paths.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
+import { geicoPa } from '../src/carriers/geico-pa.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { progressivePa } from '../src/carriers/progressive-pa.js';
 import { quoteProgress, ratersFor, ratersSaid, stopScreen } from '../src/carriers.js';
@@ -188,7 +189,7 @@ function extractFunction(name) {
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards come along as data (issueSaid), an intake field's box as data (fieldSaid), and the report's rows as data (report-rows.js,
         // answerOf); drawRow only counts a draw (report-view.jsx draws them, test/panel).
-        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'listCounts', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey', 'logFieldChanges', 'isCoalescedText', 'formsKeyOf', 'samePendingText', 'shouldFlushBefore']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'fillTimeline', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'pageEditScope', 'pageEditScopes', 'hasAgentPageEdit', 'unitScope', 'issueSaid', 'fieldSaid', 'answerRecord', 'needRecord', 'needId', 'rowHead', 'rowClass', 'setHead', 'settleRow', 'reopenRow', 'showLive', 'leftOf', 'worthRank', 'listCounts', 'defaultFilter', 'drawRow', 'drawList', 'drawRowNow', 'answerOf', 'answerSource', 'nowSaid', 'optionsSaid', 'needSay', 'stepOf', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'noteTabLeft', 'filledReport', 'firstUnits', 'finishingAction', 'fillShown', 'fillingSaid', 'fillShare', 'continuedKey', 'logFieldChanges', 'isCoalescedText', 'formsKeyOf', 'samePendingText', 'shouldFlushBefore']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // Free-text field_change coalescer state (sidepanel/panel/usage.js, #587).
@@ -2641,7 +2642,7 @@ test('done actions are kept per intake and tab, restored once after a reload', a
 // `memory`: the store's contents; `writes`: each key written.
 function journalHarness(memory, { session = { intakeId: 'intake-a' }, tabId = 7 } = {}) {
   const writes = [];
-  const state = { tab: { id: tabId }, tabSessions: new Map(), quoteStates: new Map(), doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set() };
+  const state = { tab: { id: tabId }, tabSessions: new Map(), quoteStates: new Map(), doneSteps: new Set(), autoPages: new Set(), autoPaused: false, advanceRetried: new Set(), agentPageEdits: new Set() };
   const context = {
     state, usage: { currentSession: () => session },
     store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { writes.push(k); memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
@@ -2659,7 +2660,7 @@ test('a tab’s continued steps, pause, filled pages and quote state outlive the
   const session = { intakeId: 'intake-a' };
   const pick = { carrier: 'progressive', code: 'CA', session: 's1', dismissed: null };
   const before = journalHarness(memory, { session });
-  Object.assign(before.state, { doneSteps: new Set(['application|v0|Vehicles@next']), autoPages: new Set(['application']), autoPaused: true, advanceRetried: new Set(['application|v1|Vehicles@next']) });
+  Object.assign(before.state, { doneSteps: new Set(['application|v0|Vehicles@next']), autoPages: new Set(['application']), autoPaused: true, advanceRetried: new Set(['application|v1|Vehicles@next']), agentPageEdits: new Set(['/quote|s:Policyholder Information']) });
   before.state.quoteStates.set(7, pick);
   await before.context.keepJournal(7);
   await before.context.keepJournal(7);
@@ -2669,13 +2670,13 @@ test('a tab’s continued steps, pause, filled pages and quote state outlive the
   await before.context.keepJournal(8);
   assert.deepEqual(plain([memory['journal:8'].doneSteps, memory['journal:8'].quoteState]), [['Drivers|d0|next'], null]);
   // No answer or client text: keys, pages and the state's code only.
-  assert.deepEqual(Object.keys(memory['journal:7']).sort(), ['advanceRetried', 'autoPages', 'autoPaused', 'doneSteps', 'quoteState', 'scope']);
+  assert.deepEqual(Object.keys(memory['journal:7']).sort(), ['advanceRetried', 'agentPageEdits', 'autoPages', 'autoPaused', 'doneSteps', 'quoteState', 'scope']);
 
   // The panel opened again on that tab: all of it is back, once.
   const after = journalHarness(memory, { session });
   await after.context.restoreJournal(7);
-  assert.deepEqual(plain([[...after.state.doneSteps], [...after.state.autoPages], after.state.autoPaused, [...after.state.advanceRetried], after.state.quoteStates.get(7)]),
-    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next'], pick]);
+  assert.deepEqual(plain([[...after.state.doneSteps], [...after.state.autoPages], after.state.autoPaused, [...after.state.advanceRetried], [...after.state.agentPageEdits], after.state.quoteStates.get(7)]),
+    [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next'], ['/quote|s:Policyholder Information'], pick]);
   after.state.autoPaused = false;
   after.state.doneSteps.clear();
   await after.context.restoreJournal(7);
@@ -2724,7 +2725,7 @@ test('a tab’s journal written before it is read back keeps what was stored, ea
   early.state.quoteStates.set(7, pick);
   await early.context.keepJournal(7);
   assert.deepEqual(plain(memory['journal:7']), { scope: 'intake-a', doneSteps: ['application|v0|Vehicles@next'], autoPages: ['application'], autoPaused: true,
-    advanceRetried: ['application|v1|Vehicles@next'], quoteState: pick }, 'the stored journal stays, with the quote state added');
+    advanceRetried: ['application|v1|Vehicles@next'], agentPageEdits: [], quoteState: pick }, 'the stored journal stays, with the quote state added');
   await early.context.restoreJournal(7);
   assert.deepEqual(plain([[...early.state.doneSteps], [...early.state.autoPages], early.state.autoPaused, [...early.state.advanceRetried]]),
     [['application|v0|Vehicles@next'], ['application'], true, ['application|v1|Vehicles@next']]);
@@ -4923,41 +4924,44 @@ test('the page menu lists the other pages filled on this tab, by name, and shows
 // counts, what an empty list says, the key, Clear the marks and a kept report's age. React PR 7: the
 // cards above it it says (state.cards, cards-view.jsx): the rater to open, and the last fill's error.
 test('the page\'s list says what it shows: this page\'s report, an earlier one read-only, or the fill going in', () => {
-  const list = [{ type: 'answer' }, { type: 'answer' }, { type: 'need' }, { type: 'need', settled: 'marked' }];
+  const list = [{ type: 'answer', kind: 'intake' }, { type: 'answer', kind: 'standard' }, { type: 'need' }, { type: 'need', settled: 'marked' }];
   const report = { key: '1|Quote||', tabId: 1, fields: 4, filled: 3, list, at: Date.UTC(2026, 10, 1, 15, 5) };
   const earlier = { key: '1|AddDriver|d1|', tabId: 1, fields: 2, at: Date.UTC(2026, 10, 1, 14, 50), nodes: ['row'] };
   const past = [];
-  const state = { intake: { warnings: [], done: [] }, tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, view: 'page', filter: 'all',
+  const state = { intake: { warnings: [], done: [] }, tab: { id: 1, url: 'Quote', carrier: { id: 'progressive' } }, view: 'page', filter: 'needs',
     filling: false, fillingFor: null, keyOpen: false, pastKey: null, pastNodes: null };
   const el = () => ({ dataset: {}, replaceChildren() {} });
   const ui = { past: { replaceChildren: (...nodes) => past.splice(0, past.length, ...nodes) } };
   let reports = [];
   const context = { state, inExtension: true, popped: false, Date, $: (id) => (ui[id] ??= el()), renderDock() {}, renderPickers() {}, checkShown: () => true,
     pageOf: (u) => u, stopNoteFor: () => null, showReport: () => report, earlierReports: () => reports, quoteFinished: () => false, pendingAi: () => [],
-    listCounts: (l = []) => ({ all: l.length, needs: l.filter((r) => r.type === 'need' && !r.settled).length, done: l.filter((r) => r.type !== 'need' || r.settled).length }) };
+    listCounts: (l = []) => ({ all: l.length, needs: l.filter((r) => r.type === 'need' && !r.settled).length, worth: l.filter((r) => r.kind === 'standard' || r.settled).length, done: l.filter((r) => r.type !== 'need' || r.settled).length }) };
   vm.runInNewContext(['renderSteps', 'pageTabSaid', 'reportTitle'].map(extractFunction).join('\n'), context);
   const at = (t) => new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   context.renderSteps();
   assert.deepEqual({ ...state.feed, pages: [...state.feed.pages], counts: { ...state.feed.counts } }, {
-    shown: true, title: 'Answers on this page', pages: [], pastKey: null, pastWhen: '', report: true, filter: 'all',
-    counts: { all: 4, needs: 1, done: 3 }, empty: null, keyOpen: false, unmark: true, age: null });
-  // The Need you filter with nothing left: the list says so. The key opened.
+    shown: true, title: 'Quote', filledCount: 3, pages: [], pastKey: null, pastWhen: '', report: true, filter: 'needs',
+    counts: { all: 4, needs: 1, worth: 2, done: 3 }, empty: null, keyOpen: false, unmark: true, age: null });
+  // The Needs and Worth a look filters with nothing left: the list says so. The key opened.
   Object.assign(state, { filter: 'needs', keyOpen: true });
-  report.list = [{ type: 'answer' }];
+  report.list = [{ type: 'answer', kind: 'intake' }];
   context.renderSteps();
   assert.deepEqual([state.feed.filter, state.feed.empty, state.feed.keyOpen], ['needs', 'Nothing needs you on this page.', true]);
+  state.filter = 'worth';
+  context.renderSteps();
+  assert.deepEqual([state.feed.filter, state.feed.empty], ['worth', 'Nothing flagged as worth a look on this page.']);
   // Kept while another page was in front: its age. Another page filled earlier: the menu, titled.
   Object.assign(state, { filter: 'all', keyOpen: false });
   report.restored = true;
   reports = [earlier];
   context.renderSteps();
   assert.deepEqual([state.feed.title, JSON.parse(JSON.stringify(state.feed.pages)), state.feed.age],
-    ['Answers', [{ key: '1|AddDriver|d1|', title: 'Add Driver · Driver 2' }], `From the fill at ${at(report.at)}. Fill again if the page changed.`]);
-  // That page picked: shown read-only in place of this one, with no filters, Clear the marks or age.
+    ['Quote', [{ key: '1|AddDriver|d1|', title: 'Add Driver · Driver 2' }], `From the fill at ${at(report.at)}. Fill again if the page changed.`]);
+  // That page picked: shown read-only in place of this one, with no filters, Clear page marks or age.
   state.pastKey = earlier.key;
   context.renderSteps();
-  assert.deepEqual([state.feed.pastKey, state.feed.pastWhen, state.feed.report, state.feed.counts, state.feed.unmark, state.feed.age, state.feed.empty, state.feed.keyOpen],
-    ['1|AddDriver|d1|', `Add Driver · Driver 2 · filled ${at(earlier.at)} · view only`, false, null, false, null, null, false]);
+  assert.deepEqual([state.feed.title, state.feed.pastKey, state.feed.pastWhen, state.feed.report, state.feed.counts, state.feed.unmark, state.feed.age, state.feed.empty, state.feed.keyOpen],
+    ['Answers', '1|AddDriver|d1|', `Add Driver · Driver 2 · filled ${at(earlier.at)} · view only`, false, null, false, null, null, false]);
   assert.deepEqual(past, ['row'], 'its rows moved into #past');
   // A fill going in on the tab: its answers in place of all that, no menu, no key.
   Object.assign(state, { filling: true, fillingFor: { tabId: 1, filled: 2, rows: [{}] } });
@@ -9075,7 +9079,7 @@ test('the kit is told the stop steps by name, and the plan\'s units with the for
     active: { vehicles: 0, drivers: 0, trailers: 0 }, count: { vehicles: 0, drivers: 0, trailers: 0 }, bound: { vehicles: {}, drivers: {}, trailers: {} } }]);
   // Both fills hand over the units their plan was built for.
   // and whether the unit list on screen holds every intake unit (GEICO's Looks Good: advanceFor).
-  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed, ctx\);/g) ?? []).length, 2);
+  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance && !editedOnPage, ctx\.active, ctx\.unitsListed, ctx\);/g) ?? []).length, 2);
   const start = SIDEPANEL.indexOf('const fillOptions =');
   assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /stopSteps: Object\.keys\(carrier\.stopSteps \?\? \{\}\)/);
 });
@@ -11249,14 +11253,14 @@ test('nothing scrolls the panel\'s body: it is clipped, and the dock shrinks bef
 
 // The intake PDF opened at 200%, and at a side panel's width the agent scrolled sideways to find
 // anything (the maintainer, 2026-10-23). It opens at the panel's width; a marked item still at 200%;
-// the page drags with the mouse and zooms with Ctrl + wheel.
-test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or zooms with the wheel', () => {
+// the page pans with left-click drag and zooms toward the cursor with the scroll wheel.
+test('the PDF opens at the panel\'s width, a marked item at 200%, and pans or zooms with the wheel', () => {
   assert.match(SIDEPANEL, /const PDF_OPEN_ZOOM = 1;/);
   assert.match(SIDEPANEL, /const PDF_FOCUS_ZOOM = 2;/);
   const pan = extractFunction('pdfPan');
   assert.match(pan, /addEventListener\('pointerdown'/);
   assert.match(pan, /scroll\.scrollLeft = drag\.left - \(e\.clientX - drag\.x\);/);
-  assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!\(e\.ctrlKey \|\| e\.metaKey\) \|\| !state\.pdf\) return;\s+e\.preventDefault\(\);/);
+  assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!state\.pdf \|\| !e\.deltaY\) return;\s+e\.preventDefault\(\);/);
   assert.match(extractFunction('wire'), /pdfPan\(\$\('pdf-scroll'\)\);/);
 });
 
@@ -11460,7 +11464,8 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
 test('client details hide the fields the intake leaves blank unless flagged, fold by section, and a jump brings a hidden field out', async () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   assert.match(css, /\.drawer-panel\[data-empty="hidden"\] \.field\.empty:not\(\.flagged\) \{ display: none; \}/);
-  assert.match(css, /\.field \{[^}]*min-height: 30px;/);
+  const fieldHeight = Number(css.match(/\.field \{[^}]*min-height:\s*(\d+)px;/)?.[1]);
+  assert.ok(fieldHeight > 0 && fieldHeight <= 30, `dense .field min-height <= 30px, got ${fieldHeight}`);
   // What the drawer says (renderSections; details-view.jsx draws it, with data-empty on the
   // panel: test/panel/details-view.test.jsx).
   const { get } = await import('../src/shared/record-paths.js');
@@ -11682,9 +11687,18 @@ test('client details offer the intake form\'s dropdown options, and keep a value
 test('a PDF drag ends when the button is no longer held, or the capture is lost', () => {
   const listeners = {};
   const cls = new Set();
-  const scroll = { addEventListener: (type, fn) => { listeners[type] = fn; }, setPointerCapture() {}, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) }, scrollLeft: 100, scrollTop: 100 };
+  const scroll = {
+    addEventListener: (type, fn) => { listeners[type] = fn; },
+    setPointerCapture() {},
+    getBoundingClientRect: () => ({ left: 10, top: 20 }),
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) },
+    scrollLeft: 100,
+    scrollTop: 100,
+  };
   const zooms = [];
-  const context = { state: { pdf: { zoom: 1 } }, PDF_ZOOMS: [1, 1.5, 2], pdfZoom: (z) => zooms.push(z), Date };
+  let now = 1000;
+  const FakeDate = { now: () => now };
+  const context = { state: { pdf: { zoom: 1 } }, PDF_ZOOMS: [1, 1.5, 2], pdfZoom: (z, opts) => zooms.push([z, opts?.anchor ?? null]), Date: FakeDate };
   vm.runInNewContext(extractFunction('pdfPan'), context);
   context.pdfPan(scroll);
   listeners.pointerdown({ button: 0, pointerId: 1, clientX: 50, clientY: 50 });
@@ -11698,14 +11712,39 @@ test('a PDF drag ends when the button is no longer held, or the capture is lost'
   assert.equal(cls.has('panning'), true);
   listeners.lostpointercapture({ pointerId: 2 });
   assert.equal(cls.has('panning'), false);
-  // The right button, or no PDF, starts nothing; Ctrl + wheel zooms a step, once per gesture.
+  // The right button, or no PDF, starts nothing; plain scroll wheel zooms toward the cursor, once per tick window.
   listeners.pointerdown({ button: 2, pointerId: 3, clientX: 0, clientY: 0 });
   assert.equal(cls.has('panning'), false);
   const prevented = [];
-  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
-  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
-  listeners.wheel({ ctrlKey: false, deltaY: -100, preventDefault: () => prevented.push(1) });
-  assert.deepEqual([zooms, prevented.length], [[1.5], 2]);
+  listeners.wheel({ ctrlKey: false, deltaY: -100, clientX: 90, clientY: 70, preventDefault: () => prevented.push(1) });
+  // Rapid second tick within 120ms is prevented without skipping another step.
+  now += 50;
+  listeners.wheel({ ctrlKey: false, deltaY: -100, clientX: 90, clientY: 70, preventDefault: () => prevented.push(1) });
+  // After the debounce window, zooming out works too (with or without Ctrl).
+  now += 150;
+  context.state.pdf.zoom = 1.5;
+  listeners.wheel({ ctrlKey: true, deltaY: 100, clientX: 60, clientY: 50, preventDefault: () => prevented.push(1) });
+  // Horizontal-only wheel (deltaY 0) is ignored.
+  listeners.wheel({ ctrlKey: false, deltaY: 0, clientX: 60, clientY: 50, preventDefault: () => prevented.push(1) });
+  assert.deepEqual(JSON.parse(JSON.stringify(zooms)), [[1.5, { x: 80, y: 50 }], [1, { x: 50, y: 30 }]]);
+  assert.equal(prevented.length, 3);
+
+  // pdfZoom keeps the anchored cursor point fixed in the viewport after the page redraws at the new scale.
+  const zoomScroll = { scrollLeft: 0, scrollTop: 0, clientWidth: 360, clientHeight: 480, scrollWidth: 360, scrollHeight: 480 };
+  const zoomCtx = {
+    state: { pdf: { zoom: 1 } },
+    $: () => zoomScroll,
+    drawPdf: () => {
+      zoomScroll.scrollWidth = 720;
+      zoomScroll.scrollHeight = 960;
+      return Promise.resolve();
+    },
+  };
+  vm.runInNewContext(extractFunction('pdfZoom'), zoomCtx);
+  zoomCtx.pdfZoom(2, { anchor: { x: 270, y: 120 } });
+  return Promise.resolve().then(() => {
+    assert.deepEqual([zoomScroll.scrollLeft, zoomScroll.scrollTop], [270, 120]);
+  });
 });
 
 // Live recording, 2026-10-24 (Progressive, Let me look before Continue on, one vehicle): on the vehicle
@@ -13879,4 +13918,305 @@ test('fill-time quote_premium logs once across navigation/tab switch, deduplicat
   // A second no-op autoFill with the same premium deduplicates via premiumsSeen.
   await af.context.autoFill('CoveragesRates');
   assert.equal(af.seen.logged.filter((e) => e.type === PREMIUM_EVENT).length, 1);
+});
+
+test('direct rater-page edit suppresses autoAdvance in autoFill and automatic fillPage on that step/page only', async () => {
+  const seenAdvance = [];
+  const af = fillHarness({ carrier: geicoPa });
+  af.state.tab = { id: 7, url: 'https://sales.geico.com/quote', carrier: geicoPa };
+  af.state.tabSteps = new Map([[7, 'Policyholder Information']]);
+  af.state.agentPageEdits = new Set();
+  af.state.reportFor = { filled: 0 };
+  af.context.pageOf = () => '/quote';
+  af.context.appendRows = () => {};
+  af.context.announce = () => {};
+  af.context.fillOptions = (carrier, extra, autoAdvance) => {
+    seenAdvance.push(autoAdvance);
+    return { ...extra, advance: autoAdvance ? advanceFor(carrier, false) : null };
+  };
+  af.context.runKit = async (tabId, carrier, fn, args) => {
+    af.seen.options = args[1];
+    return [{ frameId: 0, result: { fields: 2, filled: [{ key: 'k2', shown: 'Yes' }], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], actions: [], blockers: [], invalidatedActions: [], protectedKeys: [], labels: [], choices: [], halted: false, stepKey: af.state.tabSteps.get(7) } }];
+  };
+  // Before any rater-page edit: autoFill and automatic fillPage allow autoAdvance.
+  await af.context.autoFill('/quote');
+  assert.equal(af.state.autoPaused, false, 'autoFill completes without pausing');
+  assert.equal(seenAdvance.length, 1);
+  assert.equal(seenAdvance.at(-1), true, 'autoFill allows autoAdvance before any page edit');
+  assert.ok(af.seen.options.advance, 'kit receives advance before any page edit');
+
+  // Record a direct rater-page edit on Policyholder Information via onRecorderMessage (field_changes with agent: true).
+  let stepsRendered = 0;
+  const recCtx = {
+    state: af.state, URL, $: af.context.$, usage: af.context.usage, redactor: () => (s) => s, redactionTerms: () => [],
+    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, viewOf: () => 't1',
+    scheduleLayout() {}, scheduleAutoFill() {}, quoteStatePick: () => undefined, persistAgentKeys() {},
+    settleRejectedAi: async () => false, answeredOnPage() {}, renderSteps: () => { stepsRendered++; },
+  };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('onRecorderMessage')}`, recCtx);
+  recCtx.onRecorderMessage({
+    ra: 'usage', event: 'field_changes', page: '/quote', step: 'Policyholder Information',
+    changes: [{ key: 'ref:Opt', before: 'No', after: 'Yes', agent: true }],
+  }, { tab: { id: 7 }, frameId: 0 });
+  assert.ok(af.state.agentPageEdits.has('/quote|s:Policyholder Information'), 'field_changes records step-scoped agentPageEdits');
+  assert.equal(stepsRendered, 1, 'dock redraws when a new page edit scope is recorded');
+
+  // Follow-up autoFill on Policyholder Information still runs and fills, but suppresses autoAdvance.
+  await af.context.autoFill('/quote');
+  assert.equal(af.state.autoPaused, false);
+  assert.equal(seenAdvance.length, 2, 'follow-up autoFill actually ran after page edit');
+  assert.equal(seenAdvance.at(-1), false, 'autoFill suppresses autoAdvance after rater-page edit');
+  assert.equal(af.seen.options.advance, null, 'kit receives advance: null in autoFill after rater-page edit');
+
+  // Automatic fillPage ({ auto: 'page' } and { auto: 'retry' }) also suppresses autoAdvance.
+  await af.context.fillPage({ auto: 'page' });
+  assert.equal(seenAdvance.length, 3);
+  assert.equal(seenAdvance.at(-1), false, 'automatic fillPage (page) suppresses autoAdvance after rater-page edit');
+  assert.equal(af.seen.options.advance, null);
+  await af.context.fillPage({ auto: 'retry' });
+  assert.equal(seenAdvance.length, 4);
+  assert.equal(seenAdvance.at(-1), false, 'automatic fillPage (retry) suppresses autoAdvance after rater-page edit');
+  assert.equal(af.seen.options.advance, null);
+
+  // Manual Fill this page (!auto) still honors autoAdvance.
+  await af.context.fillPage({ auto: false });
+  assert.equal(seenAdvance.length, 5);
+  assert.equal(seenAdvance.at(-1), true, 'manual fillPage keeps autoAdvance');
+  assert.ok(af.seen.options.advance);
+
+  // Moving to the next step (Current Insurance) does NOT carry the suppression over.
+  af.state.tabSteps.set(7, 'Current Insurance');
+  await af.context.autoFill('/quote');
+  assert.equal(seenAdvance.length, 6);
+  assert.equal(seenAdvance.at(-1), true, 'autoFill restores autoAdvance on the next step');
+  assert.ok(af.seen.options.advance);
+  await af.context.fillPage({ auto: 'page' });
+  assert.equal(seenAdvance.length, 7);
+  assert.equal(seenAdvance.at(-1), true, 'automatic fillPage restores autoAdvance on the next step');
+  assert.ok(af.seen.options.advance);
+});
+
+test('rememberFill records agentPageEdits when guarded rater-page edits (protectedKeys) occur during a fill', () => {
+  const h = harness();
+  h.state.tab = { id: 7, url: 'https://sales.geico.com/quote', carrier: geico };
+  h.state.tabSteps = new Map([[7, 'Vehicles']]);
+  h.state.agentPageEdits = new Set();
+  h.state.active = { vehicles: 0, drivers: 0, trailers: 0 };
+  h.context.persistUnitForms = () => {};
+  h.rememberFill([{
+    fields: 2, filled: [], kept: [], failed: [], noData: [], leftRequired: [], unknown: [], actions: [],
+    protectedKeys: ['ref:GiveYear'], stepKey: 'Vehicles', unitForm: { list: 'vehicles', id: 'Id_V0' },
+  }], { tabId: 7, carrier: geico, page: '/quote', scope: '/quote|v0', active: { vehicles: 0, drivers: 0, trailers: 0 } });
+  assert.ok(h.state.agentPageEdits.has('/quote|v0'), 'records unit scope for protectedKeys');
+  assert.ok(h.state.agentPageEdits.has('/quote|f:Id_V0'), 'records unitForm scope for protectedKeys');
+  // Switching to vehicle 1 or another step does not inherit suppression.
+  const ctx = { state: h.state };
+  vm.runInNewContext(extractFunction('hasAgentPageEdit'), ctx);
+  assert.equal(ctx.hasAgentPageEdit(h.state, '/quote', geico, 'Vehicles', { active: { vehicles: 0 }, shown: { step: 'Vehicles', list: 'vehicles', id: 'Id_V0', held: false } }), true);
+  assert.equal(ctx.hasAgentPageEdit(h.state, '/quote', geico, 'Vehicles', { active: { vehicles: 1 }, shown: { step: 'Vehicles', list: 'vehicles', id: 'Id_V1', held: false } }), false);
+  assert.equal(ctx.hasAgentPageEdit(h.state, '/quote', geico, 'Business & Owner Info', { active: { vehicles: 0 } }), false);
+});
+
+test('agentPageEdits is preserved across tab switches and cleared on New Quote and Clear', async () => {
+  const h = harness();
+  h.state.agentPageEdits = new Set(['AddVehicle|v0']);
+  h.state.tab = { id: 1, url: 'https://progressive.test/quote?pageName=AddVehicle', carrier: progressive };
+  h.state.intake = { record: {} };
+  let activeTab = { id: 2, url: 'https://progressive.test/quote?pageName=BusinessOwnerInfo', windowId: 1 };
+  h.context.inExtension = true;
+  h.context.popped = false;
+  h.context.chrome = {
+    tabs: { query: async () => [activeTab], get: async () => null },
+    windows: { getLastFocused: async () => ({ id: 1 }) },
+  };
+  h.context.carrierForUrl = () => progressive;
+  h.context.restoreAgentKeys = async () => {};
+  h.context.restoreDoneActions = async () => {};
+  h.context.restoreReports = async () => {};
+  h.context.retireAiOrigins = async () => {};
+  h.context.renderPickers = () => {};
+  h.context.renderSite = () => {};
+  h.context.ensureRecorder = () => {};
+  h.context.seedQuoteState = () => {};
+  h.context.showHeldNote = () => {};
+  h.context.pageOf = (u) => new URL(u).searchParams.get('pageName');
+  // Switch from tab 1 -> tab 2.
+  await h.context.refreshTab();
+  assert.equal(h.state.tab.id, 2);
+  assert.equal(h.state.agentPageEdits.size, 0, 'new tab starts with empty agentPageEdits');
+  assert.ok(h.state.tabSessions.get(1).agentPageEdits.has('AddVehicle|v0'), 'tab 1 session preserves agentPageEdits');
+  // Switch back to tab 1.
+  activeTab = { id: 1, url: 'https://progressive.test/quote?pageName=AddVehicle', windowId: 1 };
+  await h.context.refreshTab();
+  assert.equal(h.state.tab.id, 1);
+  assert.ok(h.state.agentPageEdits.has('AddVehicle|v0'), 'returning to tab 1 restores agentPageEdits');
+
+  // Verify New Quote, loadFile, and Clear all reset agentPageEdits.
+  assert.match(extractFunction('newQuote'), /state\.agentPageEdits = new Set\(\);/);
+  assert.match(extractFunction('loadFile'), /state\.agentPageEdits = new Set\(\);/);
+  assert.match(extractFunction('clearClient'), /state\.agentPageEdits = new Set\(\);/);
+});
+
+test('continueSaid tells the agent to continue manually after a rater-page edit, never claiming auto-advance', () => {
+  const ui = { 'auto-advance': { checked: true }, 'auto-followups': { checked: true }, 'check-continue': { checked: false } };
+  const state = {
+    tab: { id: 5, url: 'https://sales.geico.com/quote', carrier: geicoPa },
+    tabSteps: new Map([[5, 'Policyholder Information']]),
+    tabSessions: new Map(),
+    agentPageEdits: new Set(),
+    active: { vehicles: 0, drivers: 0, trailers: 0 },
+  };
+  const ctx = { state, $: (id) => ui[id] };
+  vm.runInNewContext(extractFunction('continueSaid'), ctx);
+
+  // Before page edit: dock claims auto-advance will continue (when holding) and offers Continue button (when ready).
+  const beforeHold = ctx.continueSaid({ page: '/quote', filled: 3, left: 1, tabId: 5 }, geicoPa);
+  assert.equal(beforeHold.sub, MESSAGES.CONTINUE.next.followUps);
+  const beforeReady = ctx.continueSaid({ page: '/quote', filled: 4, left: 0, tabId: 5 }, geicoPa);
+  assert.equal(beforeReady.button, 'fill');
+  assert.equal(beforeReady.label, MESSAGES.CONTINUE.ready.label);
+
+  // After a direct rater-page edit on Policyholder Information: dock says manual Continue both when holding and when ready,
+  // and even overrides checkBeforeContinue / held so it never asks for Looks right.
+  state.agentPageEdits.add('/quote|s:Policyholder Information');
+  const afterHold = ctx.continueSaid({ page: '/quote', filled: 3, left: 1, tabId: 5 }, geicoPa);
+  assert.equal(afterHold.sub, MESSAGES.CONTINUE.next.editedOnPage);
+  const afterReady = ctx.continueSaid({ page: '/quote', filled: 4, left: 0, tabId: 5 }, geicoPa);
+  assert.equal(afterReady.phase, 'ready-continue');
+  assert.equal(afterReady.button, undefined, 'no auto-continue primary button after page edit');
+  assert.equal(afterReady.sub, MESSAGES.CONTINUE.ready.editedOnPage);
+
+  ui['check-continue'].checked = true;
+  const afterHeld = ctx.continueSaid({ page: '/quote', filled: 4, left: 0, held: 'check', tabId: 5 }, geicoPa);
+  assert.equal(afterHeld.phase, 'ready-continue');
+  assert.equal(afterHeld.sub, MESSAGES.CONTINUE.ready.editedOnPage);
+
+  // Next step (Current Insurance): auto-advance dock copy is back to normal.
+  state.tabSteps.set(5, 'Current Insurance');
+  ui['check-continue'].checked = false;
+  const nextStepReady = ctx.continueSaid({ page: '/quote', filled: 2, left: 0, tabId: 5 }, geicoPa);
+  assert.equal(nextStepReady.button, 'fill');
+  assert.equal(nextStepReady.label, MESSAGES.CONTINUE.ready.label);
+});
+
+test('panel-side Put it in (agentAnswer) and Mark done do NOT add to agentPageEdits', async () => {
+  const state = {
+    intake: { record: {} }, intakeRevision: 0, filling: false, closing: false,
+    tab: { id: 3, url: 'https://progressive.test/quote?pageName=BusinessOwnerInfo', carrier: progressive },
+    tabSessions: new Map(), tabSteps: new Map(), agentKeys: new Map(), agentPageEdits: new Set(),
+    filled: new Map(), labels: new Map(), choices: new Map(), active: { vehicles: 0, drivers: 0, trailers: 0 },
+    aiCache: new Map(), reportFor: { list: [] },
+  };
+  const snapshot = [{ frameId: 0, documentId: 'd1', result: JSON.stringify(['BusinessOwnerInfo', [{ key: 'k1', label: 'Hauls hazmat?', section: '', kind: 'radio', current: '', options: ['Yes', 'No'] }]]) }];
+  const ctx = {
+    state, crypto, pageOf: () => 'BusinessOwnerInfo', agentPickable: () => true,
+    agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
+    usage: { currentSession: () => ({ id: 's1', intakeId: 'i1', keySalt: 'salt' }), log() {} },
+    tellRecorder: async () => {}, scheduleLayout() {}, scheduleAutoFill() {}, resumeHeldFill() {},
+    noteChangedAfterDone: () => false, persistAiPending() {}, syncAiBanner() {},
+    aiSnapshotFieldMatches: () => [{ frame: { frameId: 0 }, field: { key: 'k1', label: 'Hauls hazmat?', section: '', kind: 'radio', current: '', options: ['Yes', 'No'] } }],
+    redactor: () => (s) => s, redactionTerms: () => [], fieldChangeEvent: () => ({ type: 'field_change' }),
+    checkDismissedEvent: () => ({ type: 'check_dismissed' }), knownStep, viewOf: () => 't1',
+    choiceSaid: (v) => v, settleNeed() {}, persistAgentKeys: async () => {},
+    runKit: async (tabId, carrier, fn, args) => {
+      const src = String(fn);
+      if (src.includes("answerEdits('end'")) return [{ frameId: 0, result: [] }];
+      if (src.includes('answerEdits')) return [{ frameId: 0, result: true }];
+      if (src.includes('decisionSnapshot')) return snapshot;
+      return [{ frameId: 0, result: [{ key: 'k1', ok: true, shown: 'No' }] }];
+    },
+  };
+  vm.createContext(ctx);
+  vm.runInContext([extractFunction('agentAnswer'), extractFunction('markDone')].join('\n'), ctx);
+  const rec = { type: 'need', key: 'k1', x: { key: 'k1', label: 'Hauls hazmat?' } };
+  await ctx.agentAnswer(rec, rec.x, 'No', { tabId: 3, page: 'BusinessOwnerInfo', carrier: progressive });
+  assert.equal(state.agentPageEdits.size, 0, 'Put it in from panel does not add to agentPageEdits');
+  assert.ok(state.agentKeys.get('BusinessOwnerInfo')?.has('k1'), 'Put it in still protects the field in agentKeys');
+  await ctx.markDone(rec, 'k2', 3, 'BusinessOwnerInfo', { key: 'k2', label: 'Other' });
+  assert.equal(state.agentPageEdits.size, 0, 'Mark done from panel does not add to agentPageEdits');
+  assert.ok(state.agentKeys.get('BusinessOwnerInfo')?.has('k2'), 'Mark done still protects the field in agentKeys');
+});
+
+test('direct rater-page edit while AI picks are pending suppresses Approve & continue in dockFor and decide/confirmRejected', async () => {
+  // 1. dockFor dynamically suppresses aiDock.canContinue when agentPageEdits is updated after renderAi.
+  const pendingPick = { key: 'k1', label: 'Q1', choice: 'Yes', done: 'auto', approved: false, confirmed: false, rejected: false, unconfirmed: false };
+  const dockState = {
+    intake: { record: {}, intakeId: 'int-1', warnings: [], done: [] }, view: 'page', filling: false,
+    tab: { id: 9, url: 'https://sales.geico.com/quote', carrier: geicoPa },
+    tabSteps: new Map([[9, 'Policyholder Information']]), tabSessions: new Map(),
+    agentPageEdits: new Set(), autoPages: new Set(), stopScreens: new Map(),
+    aiDocks: new Map([['9|/quote', { canContinue: true, go: () => {} }]]),
+    active: { vehicles: 0, drivers: 0, trailers: 0 },
+  };
+  const dockCtx = {
+    state: dockState, DOCK: MESSAGES.DOCK, inExtension: true,
+    pageOf: () => '/quote',
+    pendingAi: () => [pendingPick],
+    showReport: () => ({ page: '/quote', fields: 3, filled: 2, left: 1 }),
+    onQuotePage: () => true, stopNoteFor: () => null, stateIssue: () => null,
+    defaultsHold: () => false, quoteOwnerIssue: () => null, quoteFinished: () => false,
+    switchOn: () => true,
+  };
+  vm.createContext(dockCtx);
+  vm.runInContext(['tabMaps', 'tabStep', 'formScoped', 'editScope', 'pageEditScope', 'hasAgentPageEdit', 'dockFor'].map(extractFunction).join('\n'), dockCtx);
+
+  const beforeEdit = dockCtx.dockFor();
+  assert.equal(beforeEdit.phase, 'ai');
+  assert.equal(beforeEdit.label, MESSAGES.DOCK.ai.label(1, true), 'before direct page edit, dock offers Approve and continue');
+
+  dockState.agentPageEdits.add('/quote|s:Policyholder Information');
+  const afterEdit = dockCtx.dockFor();
+  assert.equal(afterEdit.phase, 'ai');
+  assert.equal(afterEdit.label, MESSAGES.DOCK.ai.label(1, false), 'after direct page edit, dock drops "and continue" even with stale aiDock.canContinue');
+  assert.equal(afterEdit.sub, MESSAGES.DOCK.ai.sub(false, false));
+
+  // 2. renderAi decide/confirmRejected evaluate canContinueNow() dynamically and do not call fillPage() after a direct page edit.
+  const snap = [{ frameId: 0, documentId: 'd1', result: JSON.stringify(['/quote', [{ key: 'k1', label: 'Q1', section: '', kind: 'radio', current: 'Yes', options: ['Yes', 'No'] }]]) }];
+  const pick = { key: 'k1', label: 'Q1', choice: 'Yes', done: 'auto', approved: false, confirmed: false, rejected: false, unconfirmed: false, snapshots: snap, contextKey: 'ck', contextHash: 'ch' };
+  const rejPick = { key: 'k2', label: 'Q2', choice: 'No', done: 'auto', approved: false, confirmed: false, rejected: true, unconfirmed: false, snapshots: snap, contextKey: 'ck', contextHash: 'ch' };
+  let fillCalls = 0;
+  const aiState = {
+    intake: { record: {}, intakeId: 'int-1' }, filling: false,
+    tab: { id: 9, url: 'https://sales.geico.com/quote', carrier: geicoPa },
+    tabSteps: new Map([[9, 'Policyholder Information']]), tabSessions: new Map(),
+    agentKeys: new Map(), agentPageEdits: new Set(), aiDocks: new Map(),
+    active: { vehicles: 0, drivers: 0, trailers: 0 }, reportFor: { list: [] },
+  };
+  let activePending = [pick];
+  const aiCtx = {
+    state: aiState,
+    $: (id) => (id === 'auto-advance' ? { checked: true } : null),
+    switchOn: () => true,
+    aiHolder: () => ({ say() {} }),
+    pendingAi: () => activePending.filter((x) => !x.approved && !x.confirmed),
+    assistContextKey: () => 'ck', aiFingerprint: () => 'ch',
+    aiActionCurrent: () => true, aiCurrentAnswerPresent: () => true,
+    snapshotsEqual: () => true, snapshotHashMatches: () => true,
+    runKit: async () => snap, persistAiPending: async () => {}, syncAiBanner: async () => {},
+    usage: { log() {} }, aiDecisionEvent: () => ({ type: 'ai_decision' }),
+    recount() {}, renderSteps() {}, drawRow() {}, needId: (r) => `${r.key}|${r.label}`, setHead() {},
+    fillPage: () => { fillCalls++; },
+  };
+  vm.createContext(aiCtx);
+  vm.runInContext(['tabMaps', 'tabStep', 'formScoped', 'editScope', 'pageEditScope', 'hasAgentPageEdit', 'renderAi'].map(extractFunction).join('\n'), aiCtx);
+  const ctx = { tabId: 9, page: '/quote', carrier: geicoPa, snapshots: snap };
+
+  const holder = { say() {} };
+  // Render while agentPageEdits is empty (dock initially allows continue), then record a direct page edit before clicking Approve.
+  aiCtx.renderAi(holder, [pick], ctx);
+  assert.equal(aiState.aiDocks.get('9|/quote').canContinue, true);
+  aiState.agentPageEdits.add('/quote|s:Policyholder Information');
+  await aiState.aiDocks.get('9|/quote').go();
+  assert.equal(pick.approved, true);
+  assert.equal(fillCalls, 0, 'decide checks live agentPageEdits and never auto-advances via fillPage()');
+
+  // Same for confirmRejected when a direct page edit arrives after renderAi.
+  aiState.agentPageEdits.clear();
+  activePending = [rejPick];
+  aiCtx.renderAi(holder, [rejPick], ctx);
+  assert.equal(aiState.aiDocks.get('9|/quote').canContinue, true);
+  aiState.agentPageEdits.add('/quote|s:Policyholder Information');
+  await aiState.aiDocks.get('9|/quote').go();
+  assert.equal(rejPick.confirmed, true);
+  assert.equal(fillCalls, 0, 'confirmRejected checks live agentPageEdits and never auto-advances via fillPage()');
 });

@@ -67,9 +67,17 @@ export const CARRIER_REPORTS = {
     // Its mock draws the quote with a script (test/fixtures/geico/mock.js): no static ids to compare.
     mock: null,
   },
-  // Personal auto: geico-pa has no rules yet; progressive-pa's quote runs on /Quote or /Quote/Index/
-  // and ends on Portfolio or its agent-owned stop steps (Point of Sale, Final Sale).
-  'geico-pa': { quotePage: () => false, portalPage: null, finalPage: /(?!)/, finalClick: null, loginPage: LOGIN, mock: null },
+  // Personal auto: geico-pa runs on sales.geico.com/quote and ends at /PrintQuote or its
+  // Finalize/Payment stop steps; progressive-pa runs on /Quote or /Quote/Index/ and ends on
+  // Portfolio or its agent-owned stop steps (Point of Sale, Final Sale).
+  'geico-pa': {
+    quotePage: (p) => /^\/quote(?:\/|$)/i.test(p.split(' › ')[0]),
+    portalPage: null,
+    finalPage: new RegExp(`^/PrintQuote$|› (${stopSteps('geico-pa').map(escape).join('|')})$`),
+    finalClick: { page: /› Quote Summary$/, text: /^print quote proposal$/i },
+    loginPage: LOGIN,
+    mock: null,
+  },
   'progressive-pa': {
     quotePage: (p) => /^\/Quote(?:\/Index)?(?:\/|$)/i.test(p.split(' › ')[0]),
     portalPage: (p) => /^\/home(?:\/|$)/i.test(p.split(' › ')[0]),

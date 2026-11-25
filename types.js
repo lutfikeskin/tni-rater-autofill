@@ -174,6 +174,8 @@
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
  * @property {string} [field]  the field's data-model name
+ * @property {string[]} [fieldAliases]  alternate data-model names for the same field (e.g. a server swap after fill)
+ * @property {string | number} [row]  1-based entity row/column key (`adapter().row`) when a `field` or `ask`/`label` repeats across entities (e.g. GEICO PA `.ssp-grid`, License History, Quote Summary per-vehicle coverages)
  * @property {string | string[]} [ask]  the question's exact text(s)
  * @property {string} [askAfter]  the first such question after this one, when its text repeats
  * @property {string} [selector]  a CSS selector
@@ -203,8 +205,10 @@
  * @property {boolean} [optional]
  * @property {boolean} [each]  several free controls match: the first answers it, where otherwise none would (src/kit/locator.js; Progressive's two Business Type boxes)
  * @property {boolean} [hidden]  its control (by `selector`) is filled while the page hides it
- * @property {ClientValue<boolean>} [replace]  our answer replaces a differing one already on the page (a
- *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
+ * @property {ClientValue<boolean | 'lower'>} [replace]  our answer replaces a differing one already on the page (a
+ *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); `'lower'` replaces a
+ *   choice only when the currently selected numeric dollar limit strictly exceeds the target limit
+ *   (never raises, never replaces declined/non-dollar choices: GEICO PA UMBI/UMPD capping); a function: only for these clients
  * @property {boolean} [trustPage]  an answer already on the page that differs from the rule's is kept, with no item saying it differs
  * @property {boolean} [masked]  the page masks typed text after save (e.g. "*****1234" on Progressive PA License Number): treat a matching masked value as agreeing with the written answer
  * @property {boolean} [keepChoice]
@@ -295,6 +299,7 @@
  * @property {boolean} [whenClear]  only once nothing on the page is left for the agent
  * @property {boolean} [once]  once a quote
  * @property {boolean} [keepAnswers]  answers checked once its result shows (GEICO's Recalculate)
+ * @property {ClientValue<string | null>} [reopen]  button text pattern clicked during `keepAnswers` verification when recalculation collapses editable controls (GEICO PA's Edit)
  * @property {boolean} [kitClick]  clicked by the kit even where the carrier presses its buttons from the page's own world (`pressInPage`): GEICO's Print Quote Proposal
  * @property {boolean} [onBlankPage]  clicked even while its page shows no field (a page of tiles: Progressive's Most Common Vehicles); any other helper on a page the plan has questions for waits until one shows (W44-03)
  */
@@ -456,6 +461,8 @@
  * @property {string} [defaultInfo]  why the agent's default didn't apply here (a state's own exception); shown in
  *   the report only, never a note (a step with a note is left to the agent)
  * @property {string | null} field
+ * @property {string[] | null} [fieldAliases]
+ * @property {string | null} row
  * @property {string[] | null} ask
  * @property {string[] | null} pages
  * @property {string[] | null} steps
@@ -478,7 +485,7 @@
  * @property {boolean} ignore
  * @property {boolean} every
  * @property {boolean} verifyOnly
- * @property {boolean} replace
+ * @property {boolean | 'lower'} replace
  * @property {boolean} trustPage
  * @property {boolean} masked
  * @property {boolean} keepChoice
@@ -575,6 +582,7 @@
  * @property {number | null} quietMs
  * @property {boolean} once
  * @property {boolean} keepAnswers
+ * @property {string | null} reopen
  * @property {boolean} kitClick
  * @property {boolean} onBlankPage
  * @property {string | null} unfinished
@@ -703,6 +711,9 @@
  * @property {number | null} [deadline]  the kit's own: when that fill's time in all ends, the time of the fill it began again from
  * @property {boolean} [trace]  a developer recording runs on the tab: the kit says what it waits
  *   for, answers and presses as `rater-trace` events (pagekit `kitTrace`, docs/developer-recording.md)
+ * @property {boolean} [openDownloadInPanel]  in MAIN world, return a same-origin `target="_blank"`
+ *   download/preview link URL on `FillReport.openDocumentUrl` instead of calling `.click()` in page
+ *   world (where Chrome's popup blocker swallows async clicks without a user gesture)
  */
 
 /**
@@ -896,6 +907,8 @@
  * @property {boolean} [covered]
  * @property {string[]} [coveredHelpers]
  * @property {boolean} [documentPending]
+ * @property {string} [openDocumentUrl]  in-memory only (never logged or persisted): same-origin
+ *   `target="_blank"` proposal/document URL returned for the side panel to open via `chrome.tabs.create`
  * @property {boolean} [notDrawn]
  * @property {any} [signatureBefore]
  * @property {RecalcTrace} [recalcTrace]
@@ -1269,6 +1282,7 @@
  * @property {() => string | null | undefined} [step]  the step on screen, where the carrier marks it itself in the page (Progressive Personal Auto's navigation bar, aria-current): its name, undefined where this document draws no step navigation (another frame, a page outside the quote), or null while it draws one with no step marked
  * @property {string[]} [changeAttributes]
  * @property {string | null} [components]
+ * @property {(why: string | null) => number | null} [settleMaxMs]  minimum settle() timeout ceiling in ms for a wait kind (`answer`, `round`, `list`), or null to keep the caller's ceiling
  * @property {PageAdapterKeys} [keys]  how its fields are named and keyed (field-key.js)
  * @property {(el: Element) => string} [caption]  a question's caption as the page draws it (Progressive's c_<id> label), for the recorder
  * @property {(el: Element) => boolean} [combo]  a dropdown drawn as a text box (an ExtJS combo), for the recorder
@@ -1326,6 +1340,7 @@
  * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
  * @property {(controls: any[]) => any[]} [order]  reorders collected controls before cursor matching and answering (Progressive Personal Auto's side-by-side vehicle/driver columns: fill left-to-right column by column instead of row-first DOM order)
  * @property {string | null} components  the tag prefix of the carrier's own web components (GEICO's gds-): a fill waits for those the page hasn't defined yet
+ * @property {(why: string | null) => number | null} settleMaxMs  minimum settle() timeout ceiling in ms for a wait kind (`answer`, `round`, `list`), or null to keep the caller's ceiling
  */
 
 /**

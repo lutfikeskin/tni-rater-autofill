@@ -1,0 +1,1491 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; display: flex; min-height: 100vh; background: #14171c; color: #f3f4f6; }
+    gds-drawer { width: 240px; background: #1c2026; padding: 12px; display: block; border-right: 1px solid #2d333d; }
+    gds-vertical-stepper { display: block; margin-bottom: 10px; }
+    gds-vertical-stepper-item { display: block; padding: 4px 8px; }
+    gds-vertical-stepper-item[state="current"] { background: #263244; border-left: 3px solid #60a5fa; }
+    gds-vertical-stepper-item a { color: #93c5fd; text-decoration: none; }
+    main { flex: 1; padding: 20px; }
+    .step-panel { display: none; }
+    .step-panel.active { display: block; }
+    .hide, .hidden { display: none !important; }
+    .loader-container { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 9999; display: none; }
+    .form-field { margin: 10px 0; }
+    gds-label-legend { display: block; font-weight: 600; margin-bottom: 4px; }
+    table.table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    table.table td { border: 1px solid #374151; padding: 6px 8px; vertical-align: top; }
+    .select2-hidden-accessible { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .select2-container { display: inline-block; min-width: 240px; position: relative; }
+    .select2-selection { display: block; padding: 6px 8px; background: #1f2937; border: 1px solid #4b5563; cursor: pointer; min-height: 20px; }
+    .select2-dropdown { position: fixed; top: 80px; left: 280px; background: #1f2937; border: 1px solid #60a5fa; z-index: 2000; width: 280px; padding: 6px; }
+    .select2-results__option { padding: 4px 6px; cursor: pointer; list-style: none; }
+    .select2-results__option:hover { background: #374151; }
+    .select2-selection__choice { display: inline-block; background: #374151; padding: 2px 6px; margin-right: 4px; border-radius: 3px; }
+    gds-sticky-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; background: #1f2937; padding: 12px; margin: 12px 0; border-top: 1px solid #374151; }
+    .pricing-card { background: #1f2937; padding: 12px; border: 1px solid #374151; margin: 12px 0; }
+    gds-card-selections { display: block; margin: 12px 0; }
+    gds-card-selections-card { display: inline-block; padding: 12px; margin: 6px; border: 1px solid #4b5563; background: #1f2937; cursor: pointer; min-width: 180px; }
+    gds-card-selections-card[selected] { border-color: #60a5fa; background: #263244; }
+  </style>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Policyholder</span>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="#policyholder">Policyholder Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#current-insurance">Current Insurance</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Vehicles</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#vehicles">Vehicle Information</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Drivers</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#drivers">Driver Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#license">License History</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#incidents">Select Drivers with Incidents</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Discounts</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#groups">Groups or Organizations</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Quote</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#quote">Quote Summary</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Finalize</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#driver-details">Driver Details</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#comms">Communication Options</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Payment</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#payment-plan">Payment Plan</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="#payment-type">Payment Type</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <!-- 1. Policyholder Information -->
+      <section class="step-panel active" data-step="Policyholder Information">
+        <div><gds-section-header>Policyholder Information</gds-section-header></div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveFirstName_90857"><span>First Name</span></gds-label-legend>
+            <input id="Id_GiveFirstName_90857" name="Id_GiveFirstName_90857" type="text" slot="input" aria-label="First Name" maxlength="20">
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveLastName_10793"><span>Last Name</span></gds-label-legend>
+            <input id="Id_GiveLastName_10793" name="Id_GiveLastName_10793" type="text" slot="input" aria-label="Last Name" maxlength="20">
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-date-input-wrapper>
+            <gds-input-wrapper mask-type="date-full-prefix">
+              <gds-label-legend slot="label" for="Id_GiveDateOfBirth_95389"><span>Date of Birth</span></gds-label-legend>
+              <input id="Id_GiveDateOfBirth_95389" name="Id_GiveDateOfBirth_95389" type="text" slot="input" inputmode="numeric">
+            </gds-input-wrapper>
+          </gds-date-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-address-auto-complete-wrapper>
+            <gds-input-wrapper slot="input-wrapper" mask-type="none">
+              <gds-label-legend slot="label" for="Id_GiveStreet_59106"><span>Address</span></gds-label-legend>
+              <input id="Id_GiveStreet_59106" name="Id_GiveStreet_59106" type="search" slot="input" placeholder="Enter a location" aria-autocomplete="list" aria-controls="address-dropdown-list" maxlength="45">
+            </gds-input-wrapper>
+          </gds-address-auto-complete-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveZip_14049"><span>5-Digit ZIP Code</span></gds-label-legend>
+            <input id="Id_GiveZip_14049" name="Id_GiveZip_14049" type="text" slot="input" aria-label="5-Digit ZIP Code" maxlength="5">
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveUnitNumber_58140"><span>Apt #</span></gds-label-legend>
+            <input id="Id_GiveUnitNumber_58140" name="Id_GiveUnitNumber_58140" type="text" slot="input" aria-label="Apt #" maxlength="6">
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-radio-button-group id="Id_GiveOwnOrRent_79310" active-index="-1">
+            <span slot="legend"><span>Do you own or rent your home?</span></span>
+            <gds-radio-button id="Id_GiveOwnOrRent_793100" name="Id_GiveOwnOrRent_79310" value="Own"><span slot="label">Own</span></gds-radio-button>
+            <gds-radio-button id="Id_GiveOwnOrRent_793101" name="Id_GiveOwnOrRent_79310" value="Rent"><span slot="label">Rent</span></gds-radio-button>
+          </gds-radio-button-group>
+        </div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="none">
+            <gds-label-legend slot="label" for="Id_GiveEmail_78096"><span>Email Address</span></gds-label-legend>
+            <input id="Id_GiveEmail_78096" name="Id_GiveEmail_78096" type="text" slot="input" aria-label="Email Address" maxlength="40">
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="phone">
+            <gds-label-legend slot="label" for="Id_GivePhoneNumber_76864"><span>Mobile Phone Number</span></gds-label-legend>
+            <input id="Id_GivePhoneNumber_76864" name="Id_GivePhoneNumber_76864" type="text" slot="input" aria-label="Mobile Phone Number">
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-date-input-wrapper>
+            <gds-input-wrapper mask-type="date-full-prefix">
+              <gds-label-legend slot="label" for="Id_GiveEffectiveDate_58039"><span>Coverage Start Date</span></gds-label-legend>
+              <input id="Id_GiveEffectiveDate_58039" name="Id_GiveEffectiveDate_58039" type="text" slot="input" inputmode="numeric" value="11/25/2026">
+            </gds-input-wrapper>
+          </gds-date-input-wrapper>
+        </div>
+        <div class="form-field">
+          <gds-input-wrapper mask-type="ssn">
+            <gds-label-legend slot="label" for="Id_GiveSocialSecurityNumber_74851"><span>Social Security Number</span></gds-label-legend>
+            <input id="Id_GiveSocialSecurityNumber_74851" name="Id_GiveSocialSecurityNumber_74851maskedField" type="tel" slot="input" aria-label="Social Security Number" placeholder="___-__-____">
+            <gds-input-value-visibility-toggle slot="right-visual" state="visible"></gds-input-value-visibility-toggle>
+          </gds-input-wrapper>
+        </div>
+        <div class="form-field">
+          <fieldset id="Id_GiveCreditAcknowledgement_11223" class="form-field checkbox-group" role="radiogroup">
+            <input id="checkbox-Id_GiveCreditAcknowledgement_11223-Yes" name="Id_GiveCreditAcknowledgement_11223" type="checkbox" value="Yes">
+            <label for="checkbox-Id_GiveCreditAcknowledgement_11223-Yes">The customer accepted the credit disclosure.</label>
+          </fieldset>
+        </div>
+        <div class="button-group-right">
+          <gds-button id="btn-ph-next" class="mobile-button" type="button">Save and Continue</gds-button>
+          <gds-button id="btn-ph-discard" class="mobile-button" type="button">Discard Changes</gds-button>
+        </div>
+      </section>
+
+      <!-- 1b. Vehicle Prefill (unlisted interstitial between Policyholder Info and Current Insurance) -->
+      <section class="step-panel" data-step="Vehicle Prefill">
+        <div id="Id_AboveWidgetText_Container_47784">
+          <div><gds-section-header>Select Vehicles</gds-section-header></div>
+          <div><gds-section-header>Review vehicle(s) found for this customer to add them to this quote.</gds-section-header></div>
+        </div>
+        <div id="Id_AutoVehiclePrefillMainWidgets_Container_54658">
+          <gds-card-selections id="Id_AutoVehiclePrefill_NativePrefillChoiceSet_45185" input-type="checkbox" aria-labelledby="Select automobile(s) to quote." card-style="default">
+            <span slot="legend"><span>Select automobile(s) to quote.</span></span>
+            <gds-card-selections-card input-value="mock-veh-1" icon-type="vehicle" input-type="checkbox" card-style="default">
+              <div class="image-selection-title"><p>2020 Example Sedan<br><strong>xxxxxxxxxxxxx0001</strong></p></div>
+            </gds-card-selections-card>
+            <gds-card-selections-card input-value="mock-veh-2" icon-type="vehicle" input-type="checkbox" card-style="default">
+              <div class="image-selection-title"><p>2022 Example Coupe<br><strong>xxxxxxxxxxxxx0002</strong></p></div>
+            </gds-card-selections-card>
+            <gds-card-selections-card input-value="AddVehicle" input-type="checkbox" card-style="default">
+              <div class="image-selection-title"><p>Quote a different vehicle</p></div>
+            </gds-card-selections-card>
+          </gds-card-selections>
+        </div>
+        <div id="Id_AutoVehiclePrefillAdaptiveActionSet_Container_39734">
+          <div class="button-group-right">
+            <gds-button id="btn-prefill-next" appearance="primary" class="mobile-button" size="large" type="button">Next</gds-button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. Current Insurance -->
+      <section class="step-panel" data-step="Current Insurance">
+        <div><gds-section-header>Current Insurance</gds-section-header></div>
+        <div class="form-field">
+          <gds-radio-button-group id="Id_GiveCurrentAutoInsuranceStatus_35743" active-index="-1">
+            <span slot="legend"><span>Do you currently have auto insurance?</span></span>
+            <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357430" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="Yes"><span slot="label">Yes</span></gds-radio-button>
+            <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357431" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="No, I haven't needed insurance"><span slot="label">No, I haven't needed insurance</span></gds-radio-button>
+            <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357432" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="No"><span slot="label">No</span></gds-radio-button>
+            <gds-radio-button id="Id_GiveCurrentAutoInsuranceStatus_357433" name="Id_GiveCurrentAutoInsuranceStatus_35743" value="No, I was deployed (Military/Government)"><span slot="label">No, I was deployed (Military/Government)</span></gds-radio-button>
+          </gds-radio-button-group>
+        </div>
+        <div id="ci-current-provider-wrap" class="form-field hidden">
+          <gds-label-legend for="Id_GiveCurrentAutoInsuranceProvider_38641"><span>Who is your current auto insurance provider?</span></gds-label-legend>
+          <div>
+            <select id="Id_GiveCurrentAutoInsuranceProvider_38641" class="select2-hidden-accessible" required="" aria-label="Who is your current auto insurance provider?" data-select2-id="Id_GiveCurrentAutoInsuranceProvider_38641" tabindex="-1" aria-hidden="true">
+              <option value=""></option>
+              <option value="99502">Allstate/Encompass</option>
+              <option value="99546">Progressive</option>
+              <option value="99550">State Farm Mutual</option>
+              <option value="99599">Not Listed</option>
+            </select>
+          </div>
+        </div>
+        <div id="ci-dynamic-slot"></div>
+        <div id="ci-prior-provider-wrap" class="form-field hidden">
+          <gds-label-legend for="Id_GivePreviousAutoInsuranceProvider_59820"><span>Who was your prior auto insurance provider?</span></gds-label-legend>
+          <div>
+            <select id="Id_GivePreviousAutoInsuranceProvider_59820" class="select2-hidden-accessible" required="" aria-label="Who was your prior auto insurance provider?" data-select2-id="Id_GivePreviousAutoInsuranceProvider_59820" tabindex="-1" aria-hidden="true">
+              <option value=""></option>
+              <option value="99546">Progressive</option>
+              <option value="99599">Not Listed</option>
+              <option value="999">Not Applicable</option>
+            </select>
+          </div>
+        </div>
+        <div id="ci-last30-wrap" class="hide">
+          <gds-radio-button-group id="Id_YesNoLastThirtyDays_96493" active-index="-1">
+            <span slot="legend"><span>Have you had insurance within the last 30 days?</span></span>
+            <gds-radio-button id="Id_YesNoLastThirtyDays_964930" name="Id_YesNoLastThirtyDays_96493" value="Yes"><span slot="label">Yes</span></gds-radio-button>
+            <gds-radio-button id="Id_YesNoLastThirtyDays_964931" name="Id_YesNoLastThirtyDays_96493" value="No"><span slot="label">No</span></gds-radio-button>
+          </gds-radio-button-group>
+        </div>
+        <div class="button-group-right">
+          <gds-button id="btn-ci-next" class="mobile-button" type="button">Next</gds-button>
+        </div>
+      </section>
+
+      <!-- 3. Vehicle Information -->
+      <section class="step-panel" data-step="Vehicle Information">
+        <div id="Id_GeicoAdaptiveGrid_43562" class="ssp-grid">
+          <div class="count-label" id="veh-count-label">1 vehicle</div>
+          <div class="data-table">
+            <table class="table" id="veh-table">
+              <thead><tr id="veh-head-row"><td><p><strong>Auto Information</strong></p></td></tr></thead>
+              <tbody id="veh-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <gds-sticky-bar class="sales-docked-message">
+          <div class="right-content"><div class="right">
+            <gds-button id="btn-add-vehicle" class="mobile-button" type="button">Add Vehicle</gds-button>
+            <gds-button id="btn-veh-next" class="mobile-button" type="button">Next</gds-button>
+          </div></div>
+        </gds-sticky-bar>
+      </section>
+
+      <!-- 4. Driver Information -->
+      <section class="step-panel" data-step="Driver Information">
+        <div><gds-section-header>Let's add all drivers</gds-section-header></div>
+        <div id="Id_GeicoAdaptiveGrid_45158" class="ssp-grid">
+          <div class="count-label" id="drv-count-label">1 driver</div>
+          <div class="data-table">
+            <table class="table" id="drv-table">
+              <thead><tr id="drv-head-row"><td><p><strong>Driver Information</strong></p></td></tr></thead>
+              <tbody id="drv-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="form-field">
+          <fieldset id="Id_GiveAllDriversAcknowledgement_40067" class="form-field checkbox-group" role="radiogroup">
+            <input id="checkbox-Id_GiveAllDriversAcknowledgement_40067-Yes" name="Id_GiveAllDriversAcknowledgement_40067" type="checkbox" value="Yes" data-testid="checkbox-Id_GiveAllDriversAcknowledgement_40067-Yes">
+            <label for="checkbox-Id_GiveAllDriversAcknowledgement_40067-Yes">I have read the statement to the customer.</label>
+          </fieldset>
+        </div>
+        <gds-sticky-bar class="sales-docked-message">
+          <div class="right-content"><div class="right">
+            <gds-button id="btn-add-driver" class="mobile-button" type="button">Add Driver</gds-button>
+            <gds-button id="btn-drv-next" class="mobile-button" type="button">Save and Continue</gds-button>
+            <gds-button id="btn-drv-discard" class="mobile-button" type="button">Discard Changes</gds-button>
+          </div></div>
+        </gds-sticky-bar>
+      </section>
+
+      <!-- 5. License History -->
+      <section class="step-panel" data-step="License History" id="license-section">
+        <!-- Populated as direct sibling divs under form#salesForm when active so row indexing mirrors live DOM -->
+      </section>
+
+      <!-- 6. Select Drivers with Incidents -->
+      <section class="step-panel" data-step="Select Drivers with Incidents">
+        <div><gds-section-header>Incidents</gds-section-header></div>
+        <div><gds-section-header><strong>Has any driver had any of the following?</strong></gds-section-header></div>
+        <gds-list-wrapper type="bullet-list" role="list">
+          <gds-simple-list-item type="bullet-list" role="listitem">Accidents (regardless of fault) in the last 5 years?</gds-simple-list-item>
+          <gds-simple-list-item type="bullet-list" role="listitem">Traffic Tickets in the last 5 years?</gds-simple-list-item>
+          <gds-simple-list-item type="bullet-list" role="listitem">DUIs in the last 10 years?</gds-simple-list-item>
+        </gds-list-wrapper>
+        <ul id="expandable-form-Id_7d93d952e11f4acd99b352e293b237e7" class="expandable-form">
+          <li class="add-state">
+            <div class="expandable-form-headline">
+              <div class="left-side"><p>Add Incident</p></div>
+              <div class="right-side"><span class="expandable-form-control expandable-form-add-icon geico-icon icon-expand" data-testid="addIcon" tabindex="0"></span></div>
+            </div>
+          </li>
+        </ul>
+        <div class="button-group-right">
+          <gds-button id="btn-inc-next" class="mobile-button" type="button">Next</gds-button>
+        </div>
+      </section>
+
+      <!-- 7. Groups or Organizations -->
+      <section class="step-panel" data-step="Groups or Organizations">
+        <div><gds-section-header>Feel free to make corrections below:</gds-section-header></div>
+        <div class="form-field">
+          <gds-label-legend for="Id_GiveSponsoredMarketing_84701"><span>Select your group or organization</span></gds-label-legend>
+          <div>
+            <select id="Id_GiveSponsoredMarketing_84701" class="select2-hidden-accessible" aria-label="Select your group or organization" data-select2-id="Id_GiveSponsoredMarketing_84701" tabindex="-1" aria-hidden="true">
+              <option value="NotAMember" selected="">Not a member of any of these organizations</option>
+              <option value="006597">Berkshire Hathaway Shareholder</option>
+            </select>
+          </div>
+        </div>
+        <div class="button-group-right">
+          <gds-button id="btn-grp-next" class="mobile-button" type="button">Save and Continue</gds-button>
+          <gds-button class="mobile-button" type="button">Discard Changes</gds-button>
+        </div>
+      </section>
+
+      <!-- 8. Quote Summary -->
+      <section class="step-panel" data-step="Quote Summary">
+        <div><gds-section-header>Quote Summary</gds-section-header></div>
+        <div class="pricing-cards-wrapper">
+          <div class="pricing-card">
+            <div class="pricing-card-content">
+              <div class="description-text"><span id="qs-monthly">$175.10</span></div>
+              <div class="details">
+                <div class="inline-formatted-text-block">
+                  <span>6 Month Total Premium:</span>
+                  <span id="qs-total">$1,051.00</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="button-group-center-stacked">
+          <gds-button id="btn-qs-edit" class="mobile-button" type="button">Edit</gds-button>
+          <gds-button id="btn-qs-recalc-main" class="mobile-button hide" type="button">Recalculate</gds-button>
+          <gds-button id="btn-qs-next" class="mobile-button" type="button">Next</gds-button>
+        </div>
+
+        <div id="qs-sticky-rated">
+          <gds-sticky-bar class="sales-docked-message">
+            <div class="left-content">
+              <div class="left"><h3>Quote</h3></div>
+              <div class="right"><p id="qs-due-today">$175.10</p><h5>Due Today</h5></div>
+            </div>
+            <div class="right-content">
+              <div class="left"><p id="qs-sticky-total">$1,051.00</p><h5>Total</h5></div>
+              <div class="right">
+                <gds-button id="btn-print-proposal" class="mobile-button" type="button" target="_blank" href="/PrintQuote?quote=mock">Print Quote Proposal</gds-button>
+              </div>
+            </div>
+          </gds-sticky-bar>
+        </div>
+
+        <div id="qs-sticky-stale" class="hide">
+          <gds-sticky-bar class="sales-docked-message">
+            <div class="left-content">
+              <div class="left"><h3>Quote</h3></div>
+              <div class="right"><p>$ --.--</p><h5>Due Today</h5></div>
+            </div>
+            <div class="right-content">
+              <div class="left"><p>$ --.--</p><h5>Total</h5></div>
+              <div class="right">
+                <gds-button id="btn-qs-recalc-bar" class="mobile-button" type="button">Recalculate</gds-button>
+              </div>
+            </div>
+          </gds-sticky-bar>
+        </div>
+
+        <div>
+          <h3>6 Month GEICO Auto Policy</h3>
+          <div class="cards-container content-card">
+            <div class="card">
+              <div class="card-header"><div class="card-header-title"><h3>Auto Coverages</h3></div></div>
+              <div class="card-content" id="qs-coverages-content"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="qs-primary-header-wrap" class="form-field">
+          <fieldset id="Id_PrimaryHeader_12345" class="form-field checkbox-group" role="radiogroup">
+            <input id="checkbox-Id_PrimaryHeader_12345-" name="Id_PrimaryHeader_12345" type="checkbox" value="Yes">
+            <label for="checkbox-Id_PrimaryHeader_12345-">Please confirm that you advised the customer.</label>
+          </fieldset>
+        </div>
+      </section>
+
+      <!-- 9. Driver Details (post-quote Finalize stopStep) -->
+      <section class="step-panel" data-step="Driver Details">
+        <div><gds-section-header>Driver Details</gds-section-header></div>
+        <div class="form-field">
+          <gds-label-legend for="Id_GiveDriverLicenseNumber_88888"><span>Driver License Number</span></gds-label-legend>
+          <input id="Id_GiveDriverLicenseNumber_88888" name="Id_GiveDriverLicenseNumber_88888" type="text" aria-label="Driver License Number">
+        </div>
+        <div class="button-group-right">
+          <gds-button id="btn-finalize-next" class="mobile-button" type="button">Next</gds-button>
+        </div>
+      </section>
+
+      <!-- 10. Payment Plan (stopStep) -->
+      <section class="step-panel" data-step="Payment Plan">
+        <div><gds-section-header>Payment Plan</gds-section-header></div>
+        <div class="form-field">
+          <gds-label-legend for="Id_GivePaymentAccount_99999"><span>Account Holder Name</span></gds-label-legend>
+          <input id="Id_GivePaymentAccount_99999" name="Id_GivePaymentAccount_99999" type="text" aria-label="Account Holder Name">
+        </div>
+        <div class="button-group-right">
+          <gds-button id="btn-pay-submit" class="mobile-button" type="button">Submit Payment</gds-button>
+        </div>
+      </section>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+      <input id="ssotoken" name="ssotoken" type="hidden" value="synthetic-token">
+    </form>
+  </main>
+
+  <script>
+    (() => {
+      window.__printProposalClicks = 0;
+      window.__quoteSummaryNextClicks = 0;
+      window.__addVehicleClicks = 0;
+      window.__addDriverClicks = 0;
+      window.__marriedAutoSpawned = false;
+      window.__recalculateClicks = 0;
+      window.__recalcClicksBySource = { top: 0, sticky: 0 };
+      window.__lastRecalcSource = null;
+      window.__recalcReverted = null;
+      window.__forceSilentRevert = false;
+      window.__forceFormError = '';
+      window.__editCoveragesClicks = 0;
+      window.__paymentSubmitClicks = 0;
+      window.__advanceClicks = [];
+      window.__lastVehiclePrefillVals = null;
+      window.__lastLicenseHistoryVals = null;
+      window.__savedCoverages = {};
+      window.__xhrLog = [];
+
+      let idSeq = 50000;
+      const nextNum = () => String(++idSeq);
+      const makeUuid = () => {
+        const n = (++idSeq).toString(16).padStart(12, '0');
+        return `00000000-1111-4222-8333-${n}`;
+      };
+
+      const apiPost = (path) => new Promise((resolve) => {
+        window.__xhrLog.push(path);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', path);
+        xhr.addEventListener('loadend', () => resolve());
+        xhr.send('{}');
+      });
+
+      // --- Register GDS Custom Elements (open Shadow DOM) ---
+      const definePlain = (tag) => {
+        if (!customElements.get(tag)) customElements.define(tag, class extends HTMLElement {});
+      };
+      for (const tag of [
+        'gds-drawer', 'gds-vertical-stepper', 'gds-vertical-stepper-item', 'gds-section-header',
+        'gds-input-wrapper', 'gds-date-input-wrapper', 'gds-dropdown-list-item',
+        'gds-input-value-visibility-toggle', 'gds-radio-button-group', 'gds-label-legend',
+        'gds-tooltip', 'gds-sticky-bar', 'gds-list-wrapper', 'gds-simple-list-item',
+        'gds-highlight-message', 'gds-countdown', 'gds-card',
+      ]) definePlain(tag);
+
+      if (!customElements.get('gds-card-selections')) {
+        customElements.define('gds-card-selections', class extends HTMLElement {
+          constructor() {
+            super();
+            this.attachShadow({ mode: 'open' });
+            this.shadowRoot.innerHTML = `<gds-label-legend element="legend" size="large"><slot name="legend"></slot></gds-label-legend><div class="card-selections-wrapper"><fieldset role="radiogroup"><slot></slot></fieldset></div><slot name="error-message"></slot>`;
+          }
+          connectedCallback() {
+            if (this._wired) return;
+            this._wired = true;
+            this.addEventListener('card-selections-card-value-change', (e) => {
+              const target = e.target;
+              const val = e.detail?.value ?? '';
+              if (!target?.hasAttribute?.('selected')) return;
+              for (const card of this.querySelectorAll('gds-card-selections-card')) {
+                if (card === target) continue;
+                const otherVal = card.getAttribute('input-value') || '';
+                if (val === 'AddVehicle' || otherVal === 'AddVehicle') {
+                  card.removeAttribute('selected');
+                }
+              }
+            });
+          }
+        });
+      }
+
+      if (!customElements.get('gds-card-selections-card')) {
+        customElements.define('gds-card-selections-card', class extends HTMLElement {
+          static get observedAttributes() { return ['selected']; }
+          constructor() {
+            super();
+            this.attachShadow({ mode: 'open' });
+          }
+          connectedCallback() {
+            if (!this._built) {
+              this._built = true;
+              const val = this.getAttribute('input-value') || '';
+              this.shadowRoot.innerHTML = `<input tabindex="-1" type="checkbox" class="gds-checkbox-input" value="${val}"><span></span><gds-card card-type="interactive" footer-type="static" tabindex="0" card-style="default"><slot></slot></gds-card>`;
+              this._sync();
+              // Mirrors live GDS cardSelectedHandler: toggles host `selected` from `hasAttribute('selected')`
+              // (never input.checked, so clicking the shadow checkbox never double-toggles) and syncs input.checked.
+              this.addEventListener('click', () => {
+                if (this.hasAttribute('selected')) this.removeAttribute('selected');
+                else this.setAttribute('selected', '');
+                this._sync();
+                this.dispatchEvent(new CustomEvent('card-selections-card-value-change', {
+                  detail: { value: this.getAttribute('input-value') || '' },
+                  bubbles: true,
+                  composed: true,
+                }));
+              });
+            }
+          }
+          attributeChangedCallback() { this._sync(); }
+          _sync() {
+            const on = this.hasAttribute('selected');
+            const inp = this.shadowRoot?.querySelector('input');
+            if (inp) inp.checked = on;
+            const card = this.shadowRoot?.querySelector('gds-card');
+            if (card) {
+              if (on) card.setAttribute('selected', '');
+              else card.removeAttribute('selected');
+            }
+          }
+        });
+      }
+
+      if (!customElements.get('gds-button')) {
+        customElements.define('gds-button', class extends HTMLElement {
+          static get observedAttributes() { return ['disabled', 'href', 'target']; }
+          constructor() {
+            super();
+            this.attachShadow({ mode: 'open' });
+          }
+          connectedCallback() { this._render(); }
+          attributeChangedCallback() { this._render(); }
+          _render() {
+            const href = this.getAttribute('href');
+            const target = this.getAttribute('target');
+            const disabled = this.hasAttribute('disabled');
+            if (href) {
+              const targetAttrs = target ? ` target="${target}" rel="noopener noreferrer"` : '';
+              this.shadowRoot.innerHTML = `<a href="${href}"${targetAttrs} aria-disabled="${disabled ? 'true' : 'false'}"><span><slot></slot></span></a>`;
+              const a = this.shadowRoot.querySelector('a');
+              a.addEventListener('click', () => {
+                if (href.includes('/PrintQuote')) {
+                  window.__printProposalClicks++;
+                }
+              });
+            } else {
+              this.shadowRoot.innerHTML = `<button type="button"${disabled ? ' disabled' : ''}><span><slot></slot></span></button>`;
+            }
+          }
+        });
+      }
+
+      if (!customElements.get('gds-radio-button')) {
+        customElements.define('gds-radio-button', class extends HTMLElement {
+          static get observedAttributes() { return ['checked']; }
+          constructor() {
+            super();
+            this.attachShadow({ mode: 'open' });
+          }
+          connectedCallback() {
+            if (!this._built) {
+              this._built = true;
+              const id = this.getAttribute('id') || `radio_${nextNum()}`;
+              const name = this.getAttribute('name') || '';
+              const value = this.getAttribute('value') || '';
+              this.shadowRoot.innerHTML = `<label style="cursor:pointer;display:inline-flex;gap:6px;align-items:center;"><input id="${id}-shadow" name="${name}" type="radio" value="${value}"><slot name="label"></slot></label>`;
+              const inp = this.shadowRoot.querySelector('input');
+              inp.checked = this.hasAttribute('checked');
+              const pick = () => {
+                const group = this.closest('gds-radio-button-group');
+                if (group) {
+                  const siblings = [...group.querySelectorAll('gds-radio-button')];
+                  siblings.forEach((sib, idx) => {
+                    const isSelf = sib === this;
+                    if (isSelf) {
+                      sib.setAttribute('checked', '');
+                      group.setAttribute('active-index', String(idx));
+                    } else {
+                      sib.removeAttribute('checked');
+                    }
+                    const sInp = sib.shadowRoot?.querySelector('input');
+                    if (sInp) sInp.checked = isSelf;
+                  });
+                  group.dispatchEvent(new CustomEvent('gds-radio-change', { bubbles: true, detail: { value } }));
+                }
+              };
+              inp.addEventListener('change', pick);
+              inp.addEventListener('click', pick);
+            }
+          }
+          attributeChangedCallback() {
+            const inp = this.shadowRoot?.querySelector('input');
+            if (inp) inp.checked = this.hasAttribute('checked');
+          }
+        });
+      }
+
+      if (!customElements.get('gds-address-auto-complete-wrapper')) {
+        customElements.define('gds-address-auto-complete-wrapper', class extends HTMLElement {
+          constructor() {
+            super();
+            this.attachShadow({ mode: 'open' });
+            this.shadowRoot.innerHTML = `<div class="address-wrapper"><slot name="input-wrapper"></slot><div class="dropdown-container"></div></div>`;
+          }
+          connectedCallback() {
+            const listBox = this.shadowRoot.querySelector('.dropdown-container');
+            const input = this.querySelector('input[type="search"]');
+            if (!input) return;
+            input.addEventListener('input', () => {
+              const raw = input.value.trim();
+              listBox.innerHTML = '';
+              if (raw.length < 3) return;
+              const suggestion = raw.toUpperCase();
+              const item = document.createElement('gds-dropdown-list-item');
+              item.setAttribute('type', 'address');
+              item.style.display = 'block';
+              item.style.cursor = 'pointer';
+              item.style.padding = '6px';
+              item.style.background = '#1f2937';
+              item.textContent = suggestion;
+              item.addEventListener('click', () => {
+                const street = suggestion.split(',')[0].trim();
+                const zipMatch = suggestion.match(/\b(\d{5})\b/);
+                input.value = street;
+                if (zipMatch) {
+                  const zipEl = document.getElementById('Id_GiveZip_14049');
+                  if (zipEl) zipEl.value = zipMatch[1];
+                }
+                listBox.innerHTML = '';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.dispatchEvent(new Event('change', { bubbles: true }));
+              });
+              listBox.appendChild(item);
+            });
+          }
+        });
+      }
+
+      // --- Minimal zero-dependency Select2 simulator ---
+      let openDropdown = null;
+      function closeOpenSelect2() {
+        if (openDropdown) {
+          openDropdown.container.classList.remove('select2-container--open');
+          openDropdown.dd?.remove();
+          openDropdown = null;
+        }
+      }
+      document.addEventListener('mousedown', (e) => {
+        if (!openDropdown) return;
+        const target = e.target;
+        if (openDropdown.container.contains(target) || openDropdown.dd?.contains(target)) return;
+        closeOpenSelect2();
+      });
+
+      function enhanceSelect2(select) {
+        if (select._s2Enhanced) return;
+        select._s2Enhanced = true;
+        const container = document.createElement('span');
+        container.className = 'select2 select2-container select2-container--default';
+        const selection = document.createElement('span');
+        selection.className = `select2-selection ${select.multiple ? 'select2-selection--multiple' : 'select2-selection--single'}`;
+        selection.setAttribute('role', 'combobox');
+        const rendered = document.createElement(select.multiple ? 'ul' : 'span');
+        rendered.className = 'select2-selection__rendered';
+        rendered.id = `select2-${select.id}-container`;
+
+        let inlineSearch = null;
+        const syncDisplay = () => {
+          if (select.multiple) {
+            rendered.innerHTML = '';
+            for (const opt of select.selectedOptions) {
+              const li = document.createElement('li');
+              li.className = 'select2-selection__choice';
+              li.title = opt.textContent;
+              const rem = document.createElement('span');
+              rem.className = 'select2-selection__choice__remove';
+              rem.textContent = '×';
+              rem.addEventListener('mousedown', (e) => {
+                e.stopPropagation();
+                opt.selected = false;
+                syncDisplay();
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+              });
+              li.append(rem, document.createTextNode(opt.textContent));
+              rendered.appendChild(li);
+            }
+            const searchLi = document.createElement('li');
+            searchLi.className = 'select2-search select2-search--inline';
+            inlineSearch = document.createElement('input');
+            inlineSearch.className = 'select2-search__field';
+            inlineSearch.type = 'search';
+            inlineSearch.setAttribute('role', 'searchbox');
+            inlineSearch.setAttribute('aria-autocomplete', 'list');
+            searchLi.appendChild(inlineSearch);
+            rendered.appendChild(searchLi);
+            inlineSearch.addEventListener('input', () => renderOptions(inlineSearch.value));
+            inlineSearch.addEventListener('keyup', () => renderOptions(inlineSearch.value));
+          } else {
+            const sel = select.selectedOptions[0];
+            rendered.textContent = sel && sel.value !== '' ? sel.textContent : 'Please Select';
+          }
+        };
+
+        let resultsUl = null;
+        const renderOptions = (filterText) => {
+          if (!resultsUl) return;
+          const q = String(filterText || '').trim().toLowerCase();
+          resultsUl.innerHTML = '';
+          for (const opt of select.options) {
+            if (!opt.textContent.trim()) continue;
+            if (q && !opt.textContent.toLowerCase().includes(q)) continue;
+            const li = document.createElement('li');
+            li.className = 'select2-results__option';
+            li.setAttribute('role', 'option');
+            li.setAttribute('aria-selected', opt.selected ? 'true' : 'false');
+            li.textContent = opt.textContent;
+            li.addEventListener('mouseup', () => {
+              if (select.multiple) {
+                opt.selected = !opt.selected;
+              } else {
+                select.value = opt.value;
+              }
+              syncDisplay();
+              closeOpenSelect2();
+              select.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+            resultsUl.appendChild(li);
+          }
+        };
+
+        const open = () => {
+          if (openDropdown?.select === select) return;
+          closeOpenSelect2();
+          container.classList.add('select2-container--open');
+          const dd = document.createElement('span');
+          dd.className = 'select2-dropdown';
+          let searchInput = inlineSearch;
+          if (!select.multiple) {
+            searchInput = document.createElement('input');
+            searchInput.className = 'select2-search__field';
+            searchInput.type = 'search';
+            searchInput.addEventListener('input', () => renderOptions(searchInput.value));
+            searchInput.addEventListener('keyup', () => renderOptions(searchInput.value));
+            dd.appendChild(searchInput);
+          }
+          resultsUl = document.createElement('ul');
+          resultsUl.id = `select2-${select.id}-results`;
+          resultsUl.className = 'select2-results__options';
+          dd.appendChild(resultsUl);
+          document.body.appendChild(dd);
+          openDropdown = { select, container, dd };
+          renderOptions('');
+        };
+
+        selection.addEventListener('mousedown', (e) => {
+          if (e.button === 0) open();
+        });
+        selection.appendChild(rendered);
+        container.appendChild(selection);
+        select.insertAdjacentElement('afterend', container);
+        syncDisplay();
+      }
+
+      enhanceSelect2(document.getElementById('Id_GiveCurrentAutoInsuranceProvider_38641'));
+      enhanceSelect2(document.getElementById('Id_GivePreviousAutoInsuranceProvider_59820'));
+      enhanceSelect2(document.getElementById('Id_GiveSponsoredMarketing_84701'));
+
+      // --- Step 2: Current Insurance dynamics ---
+      const ciStatus = document.getElementById('Id_GiveCurrentAutoInsuranceStatus_35743');
+      const ciCurWrap = document.getElementById('ci-current-provider-wrap');
+      const ciPriorWrap = document.getElementById('ci-prior-provider-wrap');
+      const ciLast30Wrap = document.getElementById('ci-last30-wrap');
+      const ciDynSlot = document.getElementById('ci-dynamic-slot');
+      const ciCurSelect = document.getElementById('Id_GiveCurrentAutoInsuranceProvider_38641');
+
+      ciStatus.addEventListener('gds-radio-change', async (e) => {
+        const val = e.detail.value;
+        ciDynSlot.innerHTML = '';
+        if (val === 'Yes') {
+          ciCurWrap.classList.remove('hidden');
+          ciPriorWrap.classList.add('hidden');
+          ciLast30Wrap.classList.add('hide');
+        } else {
+          ciCurWrap.classList.add('hidden');
+          await apiPost('/api/lookup/PopulateCurrentAutoInsuranceProviders');
+          ciPriorWrap.classList.remove('hidden');
+          ciLast30Wrap.classList.remove('hide');
+        }
+      });
+
+      ciCurSelect.addEventListener('change', async () => {
+        if (!ciCurSelect.value) return;
+        await apiPost('/api/lookup/AskInsuranceHistoryDynamicQuestions');
+        if (document.querySelector('[id^="Id_GiveYearsWithCurrentAutoInsurer_"]')) return;
+        const yId = `Id_GiveYearsWithCurrentAutoInsurer_${nextNum()}`;
+        const biId = `Id_GiveCurrentBodilyInjuryLimits_${nextNum()}`;
+        const yearsOpts = ['Please Select', 'Less than 1', '1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11 or more'];
+        const biOpts = ['Please Select', '$25,000/$50,000', '$50,000/$100,000', '$100,000/$200,000', '$100,000/$300,000', '$300,000/$300,000', '$250,000/$500,000 or higher', 'Not Sure'];
+        ciDynSlot.innerHTML = `
+          <div class="form-field">
+            <gds-label-legend for="${yId}"><span>How many years have you been with your current auto provider?</span></gds-label-legend>
+            <div class="select-box"><select id="${yId}" aria-label="How many years have you been with your current auto provider?">
+              ${yearsOpts.map((o, i) => `<option value="${i === 0 ? '' : o}">${o}</option>`).join('')}
+            </select></div>
+          </div>
+          <div class="form-field">
+            <gds-label-legend for="${biId}"><span>What bodily injury limits do you currently have on your vehicle insurance?</span></gds-label-legend>
+            <div class="select-box"><select id="${biId}" aria-label="What bodily injury limits do you currently have on your vehicle insurance?">
+              ${biOpts.map((o, i) => `<option value="${i === 0 ? '' : o}">${o}</option>`).join('')}
+            </select></div>
+          </div>`;
+      });
+
+      // --- Step 3: Vehicle Information (.ssp-grid) ---
+      const MILEAGE_OPTS = ['Please Select'];
+      for (let m = 1000; m <= 29000; m += 1000) MILEAGE_OPTS.push(`${m.toLocaleString()} - ${(m + 999).toLocaleString()}`);
+      MILEAGE_OPTS.push('30,000+');
+      const OWNERSHIP_LENGTH_OPTS = ['Please Select', 'Not yet purchased', 'Less than 2 months', '2 months to 2 years', '2 to 10 years', '10 or more years'];
+
+      const VEH_ROWS = [
+        { key: 'hasVin', label: 'Do you have your VIN?' },
+        { key: 'vin', label: 'VIN' },
+        { key: 'year', label: 'Year' },
+        { key: 'make', label: 'Make' },
+        { key: 'model', label: 'Model' },
+        { key: 'abs', label: 'Anti-Lock Brakes' },
+        { key: 'body', label: 'Body Style' },
+        { key: 'restraint', label: 'Safety Restraint Device' },
+        { key: 'ownership', label: 'Vehicle Ownership' },
+        { key: 'length', label: 'Length of Ownership' },
+        { key: 'mileage', label: 'Estimated Annual Mileage' },
+        { key: 'use', label: 'Primary Use' },
+        { key: 'days', label: 'Days Per Week' },
+        { key: 'commuteMiles', label: 'One-way Commute Mileage' },
+        { key: 'bizType', label: 'Type Of Business Use' },
+      ];
+      const vehHeadRow = document.getElementById('veh-head-row');
+      const vehTbody = document.getElementById('veh-tbody');
+      const vehRowEls = {};
+      for (const r of VEH_ROWS) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="row-header"><div class="grid-header"><gds-label-legend><span>${r.label}</span></gds-label-legend></div></td>`;
+        vehTbody.appendChild(tr);
+        vehRowEls[r.key] = tr;
+      }
+
+      let vehicleCols = 0;
+      function makeSelectHtml(id, ariaLabel, opts, { disabled = false, selected = '' } = {}) {
+        return `<div class="form-field"><div id="${id}Div" class="select-box${disabled ? ' disabled' : ''}"><select id="${id}" aria-label="${ariaLabel}"${disabled ? ' disabled' : ''}>${
+          opts.map((o, i) => {
+            const val = i === 0 && o === 'Please Select' ? '' : o;
+            return `<option value="${val}"${val === selected ? ' selected' : ''}>${o}</option>`;
+          }).join('')
+        }</select></div></div>`;
+      }
+
+      function appendVehicleColumn() {
+        vehicleCols++;
+        document.getElementById('veh-count-label').textContent = `${vehicleCols} ${vehicleCols === 1 ? 'vehicle' : 'vehicles'}`;
+        const headTd = document.createElement('td');
+        headTd.innerHTML = `<div class="grid-header"><gds-label-legend><span class="veh-title">(Year, Make, Model)</span></gds-label-legend><div class="grid-actions"><span class="icon-trash geico-icon" data-testid="deleteIcon"></span></div></div>`;
+        vehHeadRow.appendChild(headTd);
+
+        const ids = {
+          hasVin: `Id_YesNoPreQuoteHaveFullVinActivity_${nextNum()}`,
+          vin: `Id_GiveVinPreQuote_${nextNum()}`,
+          year: `Id_GiveYear_${nextNum()}`,
+          make: `Id_GiveMake_${nextNum()}`,
+          model: `Id_GiveModel_${nextNum()}`,
+          abs: `Id_YesNoAntiLockBrakes_${nextNum()}`,
+          body: `Id_GiveBodyStyle_${nextNum()}`,
+          restraint: `Id_GivePassiveRestraintDevice_${nextNum()}`,
+          ownership: `Id_GiveVehicleOwnerShip_${nextNum()}`,
+          length: `Id_GiveLengthOfOwnership_${nextNum()}`,
+          mileage: `Id_GiveAnnualMileage_${nextNum()}`,
+          use: `Id_GiveVehiclePrimaryUse_${nextNum()}`,
+          days: `Id_GiveDaysPerWeekCommute_${nextNum()}`,
+          commuteMiles: `Id_GiveMilesOneWay_${nextNum()}`,
+          bizType: `Id_GiveTypeOfBusinessUse_${nextNum()}`,
+        };
+
+        const addCell = (key, html) => {
+          const td = document.createElement('td');
+          td.innerHTML = html;
+          vehRowEls[key].appendChild(td);
+          return td;
+        };
+
+        addCell('hasVin', makeSelectHtml(ids.hasVin, 'Do you have your automobile VIN?', ['Please Select', 'No', 'Yes']));
+        const vinTd = addCell('vin', `<gds-input-wrapper data-testid="vin-input-wrapper" mask-type="vin" class="hide"><input id="${ids.vin}" name="${ids.vin}maskedField" type="text" slot="input" aria-label="vin"></gds-input-wrapper>`);
+        addCell('year', makeSelectHtml(ids.year, 'Year', ['Please Select', '2026', '2025', '2024', '2020', '2019', '2015'], { disabled: true }));
+        addCell('make', makeSelectHtml(ids.make, 'Make', ['Please Select', 'Honda', 'Toyota', 'Ford'], { disabled: true }));
+        addCell('model', makeSelectHtml(ids.model, 'Model', ['Please Select', 'Accord', 'Corolla', 'Camry'], { disabled: true }));
+        addCell('abs', makeSelectHtml(ids.abs, 'Does your vehicle have anti-lock brakes?', ['Please Select', 'No', 'Yes'], { disabled: true }));
+        addCell('body', makeSelectHtml(ids.body, 'Body Style', ['Please Select', 'Sedan 4D'], { disabled: true }));
+        addCell('restraint', makeSelectHtml(ids.restraint, 'What safety restraint device is your vehicle equipped with?', ['Please Select', 'Dual Airbags'], { disabled: true }));
+        addCell('ownership', makeSelectHtml(ids.ownership, 'Vehicle Ownership', ['Please Select', 'Owned', 'Financed', 'Leased']));
+        addCell('length', makeSelectHtml(ids.length, 'When did you or the registered owner purchase the Private Passenger?', ['Please Select'], { disabled: true }));
+        // Annual mileage is pre-estimated to 1,000 - 1,999 and overwritten on Primary Use XHR!
+        addCell('mileage', makeSelectHtml(ids.mileage, 'We estimate your annual mileage based on your other responses.', MILEAGE_OPTS, { selected: '1,000 - 1,999' }));
+        addCell('use', makeSelectHtml(ids.use, 'Primary Use', ['Please Select', 'Commute', 'Pleasure', 'Business']));
+        addCell('days', makeSelectHtml(ids.days, 'Days per Week', ['Please Select', '1', '2', '3', '4', '5', '6', '7'], { disabled: true }));
+        addCell('commuteMiles', `<div class="form-field"><input id="${ids.commuteMiles}" name="${ids.commuteMiles}" type="tel" inputmode="numeric" maxlength="3" aria-labelledby="${ids.commuteMiles}-label" disabled></div>`);
+        addCell('bizType', makeSelectHtml(ids.bizType, 'What type of business do you use your vehicle for?', ['Please Select', 'Sales Calls', 'Ridesharing (ex: Uber or Lyft)'], { disabled: true }));
+
+        const el = (k) => document.getElementById(ids[k]);
+        const setEnabled = (k, on) => {
+          const node = el(k);
+          node.disabled = !on;
+          node.closest('.select-box')?.classList.toggle('disabled', !on);
+        };
+
+        el('hasVin').addEventListener('change', () => {
+          const v = el('hasVin').value;
+          const vinWrap = vinTd.querySelector('gds-input-wrapper');
+          if (v === 'Yes') {
+            vinWrap.classList.remove('hide');
+            for (const k of ['year', 'make', 'model', 'abs', 'body', 'restraint']) setEnabled(k, false);
+          } else if (v === 'No') {
+            vinWrap.classList.add('hide');
+            for (const k of ['year', 'make', 'model', 'abs', 'body', 'restraint']) setEnabled(k, true);
+          }
+        });
+
+        el('vin').addEventListener('change', async () => {
+          if (el('vin').value.trim().length < 17) return;
+          await apiPost('/api/lookup/SearchVin');
+          headTd.querySelector('.veh-title').textContent = vehicleCols === 1 ? '2019 Honda Accord' : '2015 Toyota Corolla';
+        });
+
+        el('ownership').addEventListener('change', async () => {
+          if (!el('ownership').value) return;
+          await apiPost('/api/lookup/LengthOfOwnership');
+          const lenSel = el('length');
+          lenSel.innerHTML = OWNERSHIP_LENGTH_OPTS.map((o, i) => `<option value="${i === 0 ? '' : o}">${o}</option>`).join('');
+          setEnabled('length', true);
+        });
+
+        el('use').addEventListener('change', async () => {
+          const v = el('use').value;
+          setEnabled('days', v === 'Commute');
+          setEnabled('commuteMiles', v === 'Commute');
+          setEnabled('bizType', v === 'Business');
+          await apiPost('/api/lookup/AnnualMileage');
+          // Real GEICO PA overwrites GiveAnnualMileage via /api/lookup/AnnualMileage!
+          el('mileage').value = v === 'Pleasure' ? '12,000 - 12,999' : v === 'Business' ? '17,000 - 17,999' : '1,000 - 1,999';
+        });
+      }
+      appendVehicleColumn();
+
+      document.getElementById('btn-add-vehicle').addEventListener('click', async () => {
+        window.__addVehicleClicks++;
+        await apiPost('/api/lookup/GetUpdatePageTemplate');
+        appendVehicleColumn();
+      });
+
+      // --- Step 4: Driver Information (.ssp-grid) ---
+      const DRV_ROWS = [
+        { key: 'first', label: 'First Name' },
+        { key: 'last', label: 'Last Name' },
+        { key: 'dob', label: 'Date of Birth' },
+        { key: 'gender', label: 'Gender' },
+        { key: 'marital', label: 'Marital Status' },
+        { key: 'rel', label: 'Relationship to Insured' },
+        { key: 'edu', label: 'Education Level' },
+        { key: 'milGov', label: 'Government/Military Affiliations' },
+        { key: 'emp', label: 'Employment Status' },
+        { key: 'ind', label: 'Industry' },
+        { key: 'occ', label: 'Occupation' },
+        { key: 'licStatus', label: 'License Status' },
+        { key: 'insure', label: 'Insure this person?' },
+        { key: 'drvStatus', label: 'Driver Status' },
+        { key: 'goodStudent', label: 'Full-Time Student?' },
+        { key: 'studentAway', label: 'Residing away from home without regular access to vehicle?' },
+        { key: 'defensive', label: 'Completed voluntary defensive driver course in last 3 years?' },
+      ];
+      const drvHeadRow = document.getElementById('drv-head-row');
+      const drvTbody = document.getElementById('drv-tbody');
+      const drvRowEls = {};
+      for (const r of DRV_ROWS) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td class="row-header"><div class="grid-header"><gds-label-legend><span>${r.label}</span></gds-label-legend></div></td>`;
+        drvTbody.appendChild(tr);
+        drvRowEls[r.key] = tr;
+      }
+
+      let driverCols = 0;
+      function appendDriverColumn() {
+        driverCols++;
+        const colNum = driverCols;
+        document.getElementById('drv-count-label').textContent = `${driverCols} ${driverCols === 1 ? 'driver' : 'drivers'}`;
+        const headTd = document.createElement('td');
+        headTd.innerHTML = `<div class="grid-header"><gds-label-legend><span>Driver ${colNum}</span></gds-label-legend>${colNum > 2 ? '<div class="grid-actions"><span class="icon-trash geico-icon" data-testid="deleteIcon"></span></div>' : ''}</div>`;
+        drvHeadRow.appendChild(headTd);
+
+        const ids = {
+          first: `Id_GiveFirstName_${nextNum()}`,
+          last: `Id_GiveLastName_${nextNum()}`,
+          dob: `Id_GiveDateOfBirth_${nextNum()}`,
+          gender: `Id_GiveGender_${nextNum()}`,
+          marital: `Id_GiveMaritalStatus_${nextNum()}`,
+          rel: `Id_GiveRelationshipToInsured_${nextNum()}`,
+          edu: `Id_GiveEducationLevel_${nextNum()}`,
+          milGov: `Id_GiveGovernmentMilitaryAffiliation_${nextNum()}`,
+          emp: `Id_GiveEmploymentStatus_${nextNum()}`,
+          ind: `Id_GiveIndustry_${nextNum()}`,
+          occ: `Id_GiveOccupationByIndustry_${nextNum()}`,
+          licStatus: `Id_GiveDriversLicenseStatus_${nextNum()}`,
+          insure: `Id_GiveDriverExclusionInsuredYesNo_${nextNum()}`,
+          drvStatus: `Id_GiveDriverStatus_${nextNum()}`,
+          goodStudent: `Id_YesNoGoodStudentDiscount_${nextNum()}`,
+          studentAway: `Id_GiveStudentAway_${nextNum()}`,
+          defensive: `Id_YesNoDefensiveDriverCourse_${nextNum()}`,
+        };
+        const addCell = (key, html) => {
+          const td = document.createElement('td');
+          td.innerHTML = html;
+          drvRowEls[key].appendChild(td);
+          return td;
+        };
+
+        addCell('first', `<gds-input-wrapper mask-type="none"><input id="${ids.first}" name="${ids.first}" type="text" slot="input" aria-label="First Name"></gds-input-wrapper>`);
+        addCell('last', `<gds-input-wrapper mask-type="none"><input id="${ids.last}" name="${ids.last}" type="text" slot="input" aria-label="Last Name"></gds-input-wrapper>`);
+        addCell('dob', `<gds-date-input-wrapper date-format="MM dd yyyy" remove-calendar-icon=""><gds-input-wrapper mask-type="date-full-prefix"><input id="${ids.dob}" name="${ids.dob}" type="text" slot="input" inputmode="numeric"></gds-input-wrapper></gds-date-input-wrapper>`);
+        addCell('gender', makeSelectHtml(ids.gender, 'Gender', ['Please Select', 'Female', 'Male']));
+        addCell('marital', makeSelectHtml(ids.marital, 'Marital Status', ['Please Select', 'Single', 'Divorced', 'Married', 'Domestic Partner', 'Separated', 'Widowed']));
+        addCell('rel', colNum === 1 ? '' : makeSelectHtml(ids.rel, 'Relationship to You', ['Please Select', 'Child', 'Domestic Partner', 'Other', 'Parent', 'Spouse']));
+        addCell('edu', colNum <= 2 ? makeSelectHtml(ids.edu, 'Education Level', ['Please Select', 'Less than High School', 'Vocational', 'High School', 'Associate', 'Bachelors', 'Masters', 'PhD']) : '');
+        if (colNum <= 2) {
+          addCell('milGov', `<div class="form-field"><select id="${ids.milGov}" class="select2-hidden-accessible" multiple required aria-label="Select all government or military affiliations" data-select2-id="${ids.milGov}" tabindex="-1" aria-hidden="true"><option value="IsMilitary">Military</option><option value="IsStGovt">State/Local Government</option><option value="IsFed">Federal Government/Postal Service</option><option value="DNA" selected>Does Not Apply</option></select></div>`);
+          enhanceSelect2(document.getElementById(ids.milGov));
+        } else {
+          addCell('milGov', '');
+        }
+        addCell('emp', colNum <= 2 ? makeSelectHtml(ids.emp, "What's your employment status?", [
+          'Please Select',
+          'A Private Company/Organization or Self Employed',
+          'I am a Full Time Student',
+          'I am Currently a Homemaker',
+          'Not Currently Employed',
+          'Retired Private Company/Organization or Self Employed',
+        ]) : '');
+        addCell('ind', colNum <= 2 ? makeSelectHtml(ids.ind, 'Industry', ['Please Select', 'Education - Training', 'Construction - Manufacturing - Trades'], { disabled: true }) : '');
+        addCell('occ', colNum <= 2 ? makeSelectHtml(ids.occ, 'Occupation', ['Please Select'], { disabled: true }) : '');
+        addCell('licStatus', makeSelectHtml(ids.licStatus, 'License Status', ['Please Select', 'Active', 'Expired', 'Suspended', 'Not licensed', 'Revoked', 'Learners Permit', 'Foreign Driver License']));
+        addCell('insure', colNum === 1 ? '' : makeSelectHtml(ids.insure, 'Do you want to insure this driver?', ['Please Select', 'No', 'Yes']));
+        addCell('drvStatus', colNum === 1 ? '' : makeSelectHtml(ids.drvStatus, "What's the reason for not wanting to insure your additional driver?", ['Please Select', 'Does not and will not drive auto(s)', 'Military Deployed-Overseas', 'Other-Exclude this driver from my policy'], { disabled: true }));
+        addCell('goodStudent', colNum === 1 ? '' : makeSelectHtml(ids.goodStudent, 'Is this driver currently a full-time student with a B average or better?', ['Please Select', 'No', 'Yes']));
+        addCell('studentAway', colNum === 1 ? '' : makeSelectHtml(ids.studentAway, 'Is this student residing away from home without regular access to a vehicle?', ['Please Select', 'No', 'Yes'], { disabled: true }));
+        addCell('defensive', makeSelectHtml(ids.defensive, 'Has this driver completed a voluntary defensive driver course in the last 3 years?', ['Please Select', 'No', 'Yes']));
+
+        const el = (k) => document.getElementById(ids[k]);
+        const setEnabled = (k, on) => {
+          const node = el(k);
+          if (!node) return;
+          node.disabled = !on;
+          node.closest('.select-box')?.classList.toggle('disabled', !on);
+        };
+
+        if (colNum === 1) {
+          el('marital').addEventListener('change', async () => {
+            if (el('marital').value === 'Married' && driverCols === 1) {
+              window.__marriedAutoSpawned = true;
+              await apiPost('/api/lookup/GetUpdatePageTemplate');
+              if (driverCols === 1) appendDriverColumn();
+            }
+          });
+        }
+        if (colNum <= 2) {
+          el('emp').addEventListener('change', () => {
+            setEnabled('ind', el('emp').value === 'A Private Company/Organization or Self Employed');
+          });
+          el('ind').addEventListener('change', async () => {
+            if (!el('ind').value) return;
+            await apiPost('/api/lookup/OccupationByIndustry');
+            const occ = el('occ');
+            occ.innerHTML = ['Please Select', 'Teacher', 'Professor', 'Construction Worker'].map((o, i) => `<option value="${i === 0 ? '' : o}">${o}</option>`).join('');
+            setEnabled('occ', true);
+          });
+        }
+        if (colNum > 1) {
+          el('insure').addEventListener('change', () => {
+            setEnabled('drvStatus', el('insure').value === 'No');
+          });
+          el('goodStudent').addEventListener('change', () => {
+            setEnabled('studentAway', el('goodStudent').value === 'Yes');
+          });
+        }
+      }
+      appendDriverColumn();
+
+      document.getElementById('btn-add-driver').addEventListener('click', async () => {
+        window.__addDriverClicks++;
+        await apiPost('/api/lookup/GetUpdatePageTemplate');
+        appendDriverColumn();
+      });
+
+      // --- Step 5: License History (direct sibling divs under form#salesForm) ---
+      const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      const TODAY_YEAR = 2026;
+      const TODAY_MONTH = 11; // November 2026 (matches synthetic intake date)
+      const form = document.getElementById('salesForm');
+      let licenseNodes = [];
+      function buildLicenseMonths(dobMonth, dobYear, age) {
+        const out = [];
+        const startYear = dobYear + age;
+        for (let k = 0; k < 12; k++) {
+          const total = (dobMonth - 1) + k;
+          const yr = startYear + Math.floor(total / 12);
+          const mo = (total % 12) + 1;
+          if (yr > TODAY_YEAR || (yr === TODAY_YEAR && mo > TODAY_MONTH)) break;
+          out.push(`${MONTHS[mo - 1]} ${yr}`);
+        }
+        return out;
+      }
+      function mountLicenseHistory(show) {
+        for (const n of licenseNodes) n.remove();
+        licenseNodes = [];
+        if (!show) return;
+        const frag = document.createElement('div');
+        frag.innerHTML = `
+          <div class="lic-block"><gds-section-header>License History</gds-section-header></div>
+          <div class="lic-block" id="Id_a96f53a425e94265906b1d43615e2466"><gds-section-header><span>Driver</span> <span>1</span></gds-section-header></div>
+          <div class="lic-block" id="Id_b548ea30c4fb4a6bb0ffa3d6c61df2d2">
+            <gds-radio-button-group id="Id_SubstantialLicenseHistoryYesNo_91666" active-index="-1">
+              <span slot="legend"><span>Were you licensed to drive in the U.S. before turning 35?</span></span>
+              <gds-radio-button id="Id_SubstantialLicenseHistoryYesNo_916660" name="Id_SubstantialLicenseHistoryYesNo_91666" value="Yes"><span slot="label">Yes</span></gds-radio-button>
+              <gds-radio-button id="Id_SubstantialLicenseHistoryYesNo_916661" name="Id_SubstantialLicenseHistoryYesNo_91666" value="No"><span slot="label">No</span></gds-radio-button>
+            </gds-radio-button-group>
+          </div>
+          <div class="lic-block" id="Id_4d3b3a518f164d1b8e444c7fdb2647d0"><gds-section-header><span>Driver</span> <span>2</span></gds-section-header></div>
+          <div class="lic-block" id="Id_d1c30bd7d48c4639b262bd4983734b15">
+            <div class="form-field">
+              <gds-label-legend><span>How old was this driver when they got their driver's license in the U.S.?</span></gds-label-legend>
+              <input id="Id_GiveAgeFirstLicensed_70440" name="Id_GiveAgeFirstLicensed_70440" type="tel" inputmode="numeric" maxlength="2" aria-labelledby="Id_GiveAgeFirstLicensed_70440-label">
+            </div>
+          </div>
+          <div class="lic-block" id="Id_f8e6d91caa2e495d8ae780dab9dd5931"></div>
+          <div class="lic-block button-group-right">
+            <gds-button id="btn-lic-next" class="mobile-button" type="button">Save and Continue</gds-button>
+            <gds-button class="mobile-button" type="button">Discard Changes</gds-button>
+          </div>`;
+        while (frag.firstElementChild) {
+          const el = frag.firstElementChild;
+          form.insertBefore(el, document.getElementById('tkey'));
+          licenseNodes.push(el);
+        }
+        let lookupSeq = 0;
+        let lastAgeRendered = '';
+        const ageInp = document.getElementById('Id_GiveAgeFirstLicensed_70440');
+        const handleAge = async () => {
+          const raw = ageInp.value.trim();
+          if (!/^\d{2}$/.test(raw) || raw === lastAgeRendered) return;
+          const age = Number(raw);
+          if (age < 14 || age > 99) return;
+          lastAgeRendered = raw;
+          const mySeq = ++lookupSeq;
+          await apiPost('/api/lookup/DateFirstLicensed');
+          if (mySeq !== lookupSeq) return;
+          const slot = document.getElementById('Id_f8e6d91caa2e495d8ae780dab9dd5931');
+          if (!slot) return;
+          // Driver 2 DOB is 07/09/2007 (July 2007); GEICO lists 12 months from (dobMonth, dobYear + age).
+          const months = buildLicenseMonths(7, 2007, age);
+          const selId = `Id_MonthYearAgeFirstLicensed_${nextNum()}`;
+          slot.innerHTML = `<div class="form-field"><gds-label-legend for="${selId}"><span>When did Driver 2 first obtain their license in the U.S.?</span></gds-label-legend><div class="select-box"><select id="${selId}" aria-label="When did Driver 2 first obtain their license in the U.S.?"><option value="">Please Select</option>${
+            months.map((m) => `<option value="${m}">${m}</option>`).join('')
+          }</select></div></div>`;
+        };
+        ageInp.addEventListener('input', handleAge);
+        ageInp.addEventListener('change', handleAge);
+        document.getElementById('btn-lic-next')?.addEventListener('click', () => {
+          const mySel = document.querySelector('[id^="Id_MonthYearAgeFirstLicensed_"]');
+          window.__lastLicenseHistoryVals = {
+            d1Yes: document.getElementById('Id_SubstantialLicenseHistoryYesNo_916660')?.hasAttribute('checked') ?? false,
+            d2Age: ageInp.value,
+            d2MonthYear: mySel ? mySel.selectedOptions[0]?.text ?? '' : null,
+            d2MonthOptions: mySel ? [...mySel.options].map((o) => o.text) : [],
+          };
+          advanceTo('License History', 'Select Drivers with Incidents');
+        });
+      }
+
+      // --- Step 8: Quote Summary ---
+      const qsCovContainer = document.getElementById('qs-coverages-content');
+      const qsEditBtn = document.getElementById('btn-qs-edit');
+      const qsRecalcMain = document.getElementById('btn-qs-recalc-main');
+      const qsNextBtn = document.getElementById('btn-qs-next');
+      const qsPrimaryWrap = document.getElementById('qs-primary-header-wrap');
+      const qsPrimaryBox = document.getElementById('checkbox-Id_PrimaryHeader_12345-');
+      const qsStickyRated = document.getElementById('qs-sticky-rated');
+      const qsStickyStale = document.getElementById('qs-sticky-stale');
+      const qsMonthly = document.getElementById('qs-monthly');
+      const qsTotal = document.getElementById('qs-total');
+      const qsDueToday = document.getElementById('qs-due-today');
+      const qsStickyTotal = document.getElementById('qs-sticky-total');
+
+      const POLICY_COVS = [
+        { key: 'bi', label: 'Bodily Injury Liability (BI)', opts: ['Please Select', '$25,000/$50,000', '$50,000/$100,000', '$100,000/$300,000', '$300,000/$300,000', '$250,000/$500,000', '$500,000/$500,000'], def: '$50,000/$100,000' },
+        { key: 'pd', label: 'Property Damage Liability (PD)', opts: ['Please Select', '$25,000', '$50,000', '$100,000', '$250,000'], def: '$50,000' },
+        { key: 'med', label: 'Medical Payments (MED)', opts: ['Please Select', 'I decline', '$1,000', '$5,000', '$10,000'], def: '$5,000' },
+        { key: 'umbi', label: 'Uninsured Motorist Bodily Injury', opts: ['Please Select', 'I decline', '$25,000/$50,000', '$50,000/$100,000', '$100,000/$300,000', '$300,000/$300,000', '$250,000/$500,000', '$500,000/$500,000'], def: '$50,000/$100,000' },
+        { key: 'umpd', label: 'Uninsured Motorist Property Damage', opts: ['Please Select', 'I decline', '$25,000', '$50,000', '$100,000'], def: '$50,000' },
+        { key: 'pcf', label: 'Purchased Claim Forgiveness', opts: ['Please Select', 'I decline', 'I accept'], def: 'I accept' },
+      ];
+      const VEH_COVS = [
+        { key: 'comp', label: 'Comprehensive (Excluding Collision)', opts: ['Please Select', '$50 deductible', '$100 deductible', '$250 deductible', '$500 deductible', '$1,000 deductible', '$2,500 deductible', 'I decline'] },
+        { key: 'coll', label: 'Collision (COLL)', opts: ['Please Select', 'I decline', '$50 deductible', '$100 deductible', '$250 deductible', '$500 deductible', '$1,000 deductible', '$2,500 deductible'] },
+        { key: 'ers', label: 'Emergency Road Service (ERS)', opts: ['Please Select', 'I accept this coverage', 'I decline'] },
+        { key: 'rr', label: 'Rental Reimbursement (RR)', opts: ['Please Select', 'I decline', '$35/day, $1,050 max per claim', '$50/day, $1,500 max per claim', '$75/day, $2,250 max per claim'] },
+      ];
+      const VEH_DEFS = [
+        { title: '2019 Honda Accord', vinMask: 'xxxxxxxxxxxxx4352', comp: '$1,000 deductible', coll: '$500 deductible', ers: 'I decline', rr: 'I decline' },
+        { title: '2015 Toyota Corolla', vinMask: 'xxxxxxxxxxxxx4353', comp: '$500 deductible', coll: '$500 deductible', ers: 'I decline', rr: 'I decline' },
+      ];
+
+      function defaultCoverageMap(overrides = {}) {
+        const m = {};
+        for (const c of POLICY_COVS) m[c.key] = c.def;
+        VEH_DEFS.forEach((v, idx) => {
+          for (const c of VEH_COVS) m[`v${idx + 1}_${c.key}`] = v[c.key];
+        });
+        return { ...m, ...overrides };
+      }
+
+      let committedCoverages = defaultCoverageMap();
+      let draftCoverages = { ...committedCoverages };
+      window.__savedCoverages = { ...committedCoverages };
+
+      function parseLimitNum(val) {
+        if (!val || /decline/i.test(val)) return 0;
+        const m = String(val).match(/\$([\d,]+)/);
+        return m ? Number(m[1].replace(/,/g, '')) : 0;
+      }
+
+      function computePremium(covs) {
+        const bi = parseLimitNum(covs.bi);
+        if (bi >= 100000) return { monthly: '$190.34', total: '$1,142.00' };
+        if (bi > 0 && bi <= 25000) return { monthly: '$153.00', total: '$918.00' };
+        return { monthly: '$175.10', total: '$1,051.00' };
+      }
+
+      function setPremiumDisplay(monthly, total) {
+        qsMonthly.textContent = monthly;
+        qsTotal.textContent = total;
+        qsDueToday.textContent = monthly;
+        qsStickyTotal.textContent = total;
+      }
+
+      function renderCoverageSummary() {
+        qsCovContainer.innerHTML = '';
+        if (window.__forceFormError) {
+          const err = document.createElement('span');
+          err.className = 'form-message';
+          err.textContent = window.__forceFormError;
+          qsCovContainer.appendChild(err);
+        }
+        const addRow = (storeKey, label, val) => {
+          const row = document.createElement('div');
+          row.className = 'coverage-summary-row';
+          row.setAttribute('data-cov-key', storeKey);
+          row.innerHTML = `<span class="cov-name">${label}</span>: <strong class="cov-value">${val}</strong>`;
+          qsCovContainer.appendChild(row);
+        };
+        for (const c of POLICY_COVS) addRow(c.key, c.label, committedCoverages[c.key]);
+        VEH_DEFS.forEach((v, idx) => {
+          const hdr = document.createElement('div');
+          hdr.innerHTML = `<gds-section-header><strong>${v.title}<br><span>${v.vinMask}</span></strong></gds-section-header>`;
+          qsCovContainer.appendChild(hdr);
+          for (const c of VEH_COVS) {
+            const k = `v${idx + 1}_${c.key}`;
+            addRow(k, c.label, committedCoverages[k]);
+          }
+        });
+      }
+
+      function markStale() {
+        qsMonthly.textContent = '--.--';
+        qsTotal.textContent = '--.--';
+        qsPrimaryWrap.classList.add('hide');
+        qsStickyRated.classList.add('hide');
+        qsStickyStale.classList.remove('hide');
+        qsRecalcMain.classList.remove('hide');
+        qsNextBtn.classList.add('hide');
+      }
+
+      function renderCoverageEditor() {
+        qsCovContainer.innerHTML = '';
+        if (window.__forceFormError) {
+          const err = document.createElement('span');
+          err.className = 'form-message';
+          err.textContent = window.__forceFormError;
+          qsCovContainer.appendChild(err);
+        }
+        draftCoverages = { ...committedCoverages };
+        const addCov = (storeKey, label, opts, selectedVal) => {
+          const id = `Id_${makeUuid()}_${nextNum()}`;
+          const wrap = document.createElement('div');
+          wrap.className = 'coverage-form-field-wrapper';
+          wrap.innerHTML = `<div class="form-field"><gds-label-legend for="${id}"><span>${label}</span></gds-label-legend><div id="${id}Div" class="select-box"><select id="${id}" data-cov-key="${storeKey}">${
+            opts.map((o, i) => `<option value="${i === 0 ? '' : o}"${o === selectedVal ? ' selected' : ''}>${o}</option>`).join('')
+          }</select></div></div>`;
+          const sel = wrap.querySelector('select');
+          sel.addEventListener('change', () => {
+            draftCoverages[storeKey] = sel.value;
+            markStale();
+          });
+          qsCovContainer.appendChild(wrap);
+        };
+        for (const c of POLICY_COVS) addCov(c.key, c.label, c.opts, committedCoverages[c.key] ?? c.def);
+        VEH_DEFS.forEach((v, idx) => {
+          const hdr = document.createElement('div');
+          hdr.innerHTML = `<gds-section-header><strong>${v.title}<br><span>${v.vinMask}</span></strong></gds-section-header>`;
+          qsCovContainer.appendChild(hdr);
+          for (const c of VEH_COVS) {
+            const k = `v${idx + 1}_${c.key}`;
+            addCov(k, c.label, c.opts, committedCoverages[k] ?? v[c.key]);
+          }
+        });
+      }
+
+      // Live GEICO PA Edit click (098e layouts/0018 & 0023): mounts all coverage <select>s
+      // client-side while keeping PrimaryHeader and Print Quote Proposal visible until edited!
+      qsEditBtn.addEventListener('click', () => {
+        window.__editCoveragesClicks++;
+        qsEditBtn.classList.add('hide');
+        renderCoverageEditor();
+      });
+
+      const doRecalculate = async (source) => {
+        window.__recalculateClicks++;
+        window.__recalcClicksBySource[source] = (window.__recalcClicksBySource[source] || 0) + 1;
+        window.__lastRecalcSource = source;
+        const spinner = document.getElementById('page-load');
+        spinner.style.display = 'block';
+        await apiPost('/api/conversation/controlinput');
+        spinner.style.display = 'none';
+
+        // Simulate live GEICO PA silent revert if UMBI > BI, UMPD > PD, wrong top button, or forced test flag.
+        const invalidUm = parseLimitNum(draftCoverages.umbi) > parseLimitNum(draftCoverages.bi)
+          || parseLimitNum(draftCoverages.umpd) > parseLimitNum(draftCoverages.pd);
+        const wrongButton = source === 'top';
+        const forced = !!window.__forceSilentRevert;
+        if (invalidUm || wrongButton || forced) {
+          window.__recalcReverted = {
+            reason: forced ? 'forced' : invalidUm ? 'um-exceeds-liability' : 'top-button',
+            source,
+          };
+          draftCoverages = { ...committedCoverages };
+        } else {
+          window.__recalcReverted = null;
+          committedCoverages = { ...draftCoverages };
+          window.__savedCoverages = { ...committedCoverages };
+        }
+
+        const rate = computePremium(committedCoverages);
+        setPremiumDisplay(rate.monthly, rate.total);
+        qsPrimaryBox.checked = false;
+        renderCoverageSummary();
+        qsStickyStale.classList.add('hide');
+        qsRecalcMain.classList.add('hide');
+        qsStickyRated.classList.remove('hide');
+        qsPrimaryWrap.classList.remove('hide');
+        qsEditBtn.classList.remove('hide');
+        qsNextBtn.classList.remove('hide');
+      };
+      qsRecalcMain.addEventListener('click', () => doRecalculate('top'));
+      document.getElementById('btn-qs-recalc-bar').addEventListener('click', () => doRecalculate('sticky'));
+      qsNextBtn.addEventListener('click', () => {
+        window.__quoteSummaryNextClicks++;
+        window.__setStep('Driver Details');
+      });
+      document.getElementById('btn-pay-submit').addEventListener('click', () => { window.__paymentSubmitClicks++; });
+      renderCoverageSummary();
+
+      window.__resetQuoteSummary = (overrides = {}, opts = {}) => {
+        window.__editCoveragesClicks = 0;
+        window.__recalculateClicks = 0;
+        window.__recalcClicksBySource = { top: 0, sticky: 0 };
+        window.__lastRecalcSource = null;
+        window.__recalcReverted = null;
+        window.__printProposalClicks = 0;
+        window.__quoteSummaryNextClicks = 0;
+        window.__forceSilentRevert = !!opts.forceSilentRevert;
+        window.__forceFormError = opts.forceFormError || '';
+        committedCoverages = defaultCoverageMap(overrides);
+        draftCoverages = { ...committedCoverages };
+        window.__savedCoverages = { ...committedCoverages };
+        const rate = computePremium(committedCoverages);
+        setPremiumDisplay(rate.monthly, rate.total);
+        qsPrimaryBox.checked = false;
+        qsStickyStale.classList.add('hide');
+        qsRecalcMain.classList.add('hide');
+        qsStickyRated.classList.remove('hide');
+        qsPrimaryWrap.classList.remove('hide');
+        qsEditBtn.classList.remove('hide');
+        qsNextBtn.classList.remove('hide');
+        renderCoverageSummary();
+      };
+
+      // --- Step switcher & realistic async Next/Save-and-Continue navigation ---
+      async function advanceTo(fromStep, toStep) {
+        window.__advanceClicks.push({ from: fromStep, to: toStep });
+        const spinner = document.getElementById('page-load');
+        spinner.style.display = 'block';
+        await apiPost('/api/conversation/controlinput');
+        spinner.style.display = 'none';
+        window.__setStep(toStep);
+      }
+
+      document.getElementById('btn-ph-next').addEventListener('click', () => advanceTo('Policyholder Information', 'Vehicle Prefill'));
+      document.getElementById('btn-prefill-next').addEventListener('click', () => {
+        const prefillSec = panelMap.get('Vehicle Prefill');
+        const cards = [...(prefillSec?.querySelectorAll('gds-card-selections-card') ?? [])];
+        const addCard = cards.find((c) => c.getAttribute('input-value') === 'AddVehicle');
+        window.__lastVehiclePrefillVals = {
+          selectedValues: cards.filter((c) => c.hasAttribute('selected')).map((c) => c.getAttribute('input-value')),
+          checkedValues: cards.filter((c) => c.shadowRoot?.querySelector('input')?.checked).map((c) => c.getAttribute('input-value')),
+          addVehicleSelected: !!addCard?.hasAttribute('selected'),
+          addVehicleChecked: !!addCard?.shadowRoot?.querySelector('input')?.checked,
+        };
+        advanceTo('Vehicle Prefill', 'Current Insurance');
+      });
+      document.getElementById('btn-ci-next').addEventListener('click', () => advanceTo('Current Insurance', 'Vehicle Information'));
+      document.getElementById('btn-veh-next').addEventListener('click', () => advanceTo('Vehicle Information', 'Driver Information'));
+      document.getElementById('btn-drv-next').addEventListener('click', () => advanceTo('Driver Information', 'License History'));
+      document.getElementById('btn-inc-next').addEventListener('click', () => advanceTo('Select Drivers with Incidents', 'Groups or Organizations'));
+      document.getElementById('btn-grp-next').addEventListener('click', () => advanceTo('Groups or Organizations', 'Quote Summary'));
+
+      const panelMap = new Map();
+      const tkeyNode = document.getElementById('tkey');
+      for (const sec of [...document.querySelectorAll('.step-panel')]) {
+        const name = sec.getAttribute('data-step');
+        panelMap.set(name, sec);
+        if (!sec.classList.contains('active')) sec.remove();
+      }
+      window.__getPanel = (name) => panelMap.get(name) ?? null;
+      window.__resetVehiclePrefill = ({ preselect = [] } = {}) => {
+        const sec = panelMap.get('Vehicle Prefill');
+        for (const card of sec?.querySelectorAll('gds-card-selections-card') ?? []) {
+          const val = card.getAttribute('input-value') || '';
+          if (preselect.includes(val)) card.setAttribute('selected', '');
+          else card.removeAttribute('selected');
+        }
+        window.__lastVehiclePrefillVals = null;
+      };
+      window.__setStep = (stepName) => {
+        closeOpenSelect2();
+        for (const item of document.querySelectorAll('gds-vertical-stepper-item')) {
+          const text = item.textContent.trim();
+          if (stepName === 'Vehicle Prefill') {
+            item.setAttribute('state', text === 'Policyholder Information' ? 'completed' : 'future');
+          } else {
+            item.setAttribute('state', text === stepName ? 'current' : 'future');
+          }
+        }
+        for (const [name, sec] of panelMap) {
+          const active = name === stepName;
+          sec.classList.toggle('active', active);
+          if (active && !sec.isConnected) form.insertBefore(sec, tkeyNode);
+          else if (!active && sec.isConnected) sec.remove();
+        }
+        mountLicenseHistory(stepName === 'License History');
+      };
+    })();
+  </script>
+</body>
+</html>

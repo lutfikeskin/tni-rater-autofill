@@ -7,8 +7,8 @@ import { ClientHead } from '../../sidepanel/panel/client-view.jsx';
 import { Checks } from '../../sidepanel/panel/checks-view.jsx';
 import { Steps } from '../../sidepanel/panel/steps-view.jsx';
 import { Feed } from '../../sidepanel/panel/feed-view.jsx';
-import { Review } from '../../sidepanel/panel/review-view.jsx';
 import { ReportRows } from '../../sidepanel/panel/report-view.jsx';
+import { needRecord } from '../../sidepanel/panel/report-rows.js';
 import { DefaultsChip } from '../../sidepanel/panel/agent-defaults/view.jsx';
 
 // The panel's hand-built controls held to their WAI-ARIA pattern by @ui-sdk/core's checkPattern
@@ -154,30 +154,23 @@ test('Settings checkboxes, #steps tabs, client & filter toolbars, #file-confirm 
   })} />);
   await checkPattern(confirmView.container.querySelector('#file-confirm'), 'alertdialog');
   cleanup();
+});
 
-  // Inline Worth a look and Other answers rows in Review and AnswerRow in ReportRows as APG disclosures with aria-controls.
-  const rec = { id: 10, type: 'answer', kind: 'standard', label: 'Is non profit', value: 'No', open: false, v: 0, source: { title: 'TNI standard answer', tag: { kind: 'standard', text: 'TNI standard' } } };
-  const intakeRec = { id: 11, type: 'answer', kind: 'intake', label: 'DOT number', value: '1234567', open: false, v: 0, source: { title: 'From the intake', tag: { kind: 'intake', text: 'Intake (p. 1)' } } };
-  const entry = { key: '1|/Info||Info', step: 'Insured Info', filled: 2, list: [rec, intakeRec], drawn: 0 };
-  act(() => { state.reportFor = entry; state.allAnswers = false; state.filling = false; });
+test('ReportRows AnswerRow and NeedRow disclosures pass APG disclosure pattern', async () => {
+  const ansRec = { id: 10, type: 'answer', kind: 'standard', label: 'Is non profit', value: 'No', open: false, v: 0, source: { title: 'TNI standard answer', tag: { kind: 'standard', text: 'TNI standard' } } };
+  const needRec = needRecord({ key: 'emp', label: 'Employment', why: 'Not on the intake', options: ['Employed', 'Self-Employed'] }, null, '/Info', false);
+  const entry = { key: '1|/Info||Info', step: 'Insured Info', filled: 1, list: [ansRec, needRec], drawn: 0 };
   const toggle = (r) => act(() => {
     r.open = !r.open;
-    r.v += 1;
+    r.v = (r.v ?? 0) + 1;
     entry.drawn += 1;
     state.rowsDrawn = (state.rowsDrawn ?? 0) + 1;
   });
-  const reviewView = render(<Review act={quiet({ toggleWorth: toggle, rowActs: quiet() })} />);
-  const worthRow = reviewView.container.querySelector('#review-worth .review-row');
-  expect(worthRow.getAttribute('aria-controls')).toBeTruthy();
-  await checkPattern(worthRow, 'disclosure');
-  const restRow = reviewView.container.querySelector('#review-answers .review-row');
-  expect(restRow.getAttribute('aria-controls')).toBeTruthy();
-  await checkPattern(restRow, 'disclosure');
-  cleanup();
-
-  rec.open = false;
   const rowsView = render(<ReportRows entry={entry} ctx={{}} act={quiet({ toggleRow: toggle })} />);
-  const rowHead = rowsView.container.querySelector('.row-head');
-  expect(rowHead.getAttribute('aria-controls')).toBeTruthy();
-  await checkPattern(rowHead, 'disclosure');
+  const heads = [...rowsView.container.querySelectorAll('.row-head')];
+  expect(heads).toHaveLength(2);
+  for (const rowHead of heads) {
+    expect(rowHead.getAttribute('aria-controls')).toBeTruthy();
+    await checkPattern(rowHead, 'disclosure');
+  }
 });

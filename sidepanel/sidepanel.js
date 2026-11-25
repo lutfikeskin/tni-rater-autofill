@@ -176,7 +176,7 @@ function wire() {
     clearMarks: () => clearMarks(),
   });
   // The intake PDF's sheet: Back, Close and the scrim; the full PDF in a tab; Zoom to it; the pages
-  // and the zoom. Its page area (drawn by now) drags and zooms with Ctrl + wheel.
+  // and the zoom. Its page area (drawn by now) pans with left-click drag and zooms with scroll wheel.
   mountPdf($('pdf-view'), {
     close: () => closePdf(),
     tab: () => openPdfInTab(),

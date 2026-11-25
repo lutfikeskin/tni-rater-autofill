@@ -82,6 +82,7 @@ async function loadFile(file, { reset = false } = {}) {
     state.cards = { ...state.cards, stale: null };
     state.autoPages = new Set();
     state.agentKeys = new Map();
+    state.agentPageEdits = new Set();
     state.labels = new Map();
     state.choices = new Map();
     state.visitedPages = new Set();

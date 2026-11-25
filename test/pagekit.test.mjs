@@ -446,6 +446,7 @@ function harness({ ext = false, progressive = ext, adapter = progressive ? 'prog
   const context = {
     document,
     location,
+    URL,
     URLSearchParams,
     crypto,
     window: null,
@@ -4874,6 +4875,34 @@ test('typed text is taken out of messages from boxes question discovery skips: s
   assert.deepEqual([...h.kit.capture(null, []).messages], ['No customer named [typed]; check [typed]']);
 });
 
+// W49-03: page captures scrub non-intake VINs/addresses and suppress dynamic client labels/options
+// on GEICO USDOT verify, driver license number, registered owner, and AmWINS product-copy.
+test('a capture scrubs non-intake VINs/addresses and dynamic client controls without over-redacting (W49-03)', () => {
+  const h = harness({ adapter: 'geico', pathname: '/quote' });
+  const vinField = new SelectNode([{ text: '$1,000,000', value: '1M' }], { id: 'Id_GiveLiability_1', ariaLabel: '2022 FORD TRANSIT (1HGCM82633A004352) Liability', value: '1M' });
+  const owner = new SelectNode([{ text: 'Robert Taylor', value: '1' }, { text: 'Apex Freight LLC', value: '2' }], { id: 'Id_GiveRegisteredOwner_2', ariaLabel: 'Registered Owner', value: '1' });
+  const dl = makeInput({ id: 'Id_GiveDriverLicenseNumber_3', ariaLabel: "Robert Taylor's Driver's License Number" });
+  const verify = gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, "USDOT Information APEX FREIGHT LLC 4521 OCEAN BLVD, STE 2 MIAMI BEACH, FL, 33139 Is this the customer's business?", [['Yes', 'Yes'], ['No', 'No']]);
+  const copy = new SelectNode([{ text: 'BOP - Apex Freight LLC 742 Evergreen Terrace', value: 'BOP' }], { id: 'product-copy', name: 'product-copy', ariaLabel: 'APEX FREIGHT LLC 742 Evergreen Terrace Product', value: 'BOP' });
+  h.document.body.append(vinField, owner, dl, verify.group, copy);
+  const page = h.kit.capture(null, []);
+  const byKey = Object.fromEntries(page.controls.map((c) => [c.ref || c.id, c]));
+  assert.equal(byKey.GiveLiability.label, '2022 FORD TRANSIT ([client]) Liability');
+  assert.deepEqual([...byKey.GiveLiability.options], ['$1,000,000']);
+  assert.deepEqual([...byKey.GiveRegisteredOwner.options], []);
+  assert.equal(byKey.GiveRegisteredOwner.selected, undefined);
+  assert.equal(byKey.GiveDriverLicenseNumber.label, "[client]'s Driver's License Number");
+  assert.equal(byKey.GiveExtendUsDotVerifyBusinessAddress.label, "USDOT Information [client] Is this the customer's business?");
+  assert.deepEqual([...byKey.GiveExtendUsDotVerifyBusinessAddress.options], ['Yes', 'No']);
+  assert.equal(byKey['product-copy'].label, 'Product');
+  assert.deepEqual([...byKey['product-copy'].options], []);
+  assert.equal(byKey['product-copy'].selected, undefined);
+  const serialized = JSON.stringify(page.controls);
+  for (const leak of ['1HGCM82633A004352', 'Robert', 'Taylor', 'APEX', 'Apex', '4521', 'OCEAN', 'MIAMI', '33139', 'Evergreen']) {
+    assert.ok(!serialized.includes(leak), `capture leaked "${leak}": ${serialized}`);
+  }
+});
+
 // Progressive renumbered every question on 2026-10-07 (Agent Code 18F became 1C6, Type of Trucker
 // 267 became 29E, and 267 became Business Name). Questions are found by their data-model name or
 // their text, so the same page with other numbers fills the same way, and no answer goes to the
@@ -6471,10 +6500,12 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       tellRecorder: async () => {}, persistAiPending: async () => {}, resumeHeldFill: () => {}, traced: () => false,
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+    const journalCalls = [];
+    sandbox.keepJournal = (tabId) => { journalCalls.push(tabId); };
     const source = PANEL_SOURCE;
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
-      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'pageEditScope', 'formScoped', 'stepScope', 'tabStep', 'tabMaps', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
     vm.runInNewContext(functions.map(name => {
       const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
       assert.ok(match, name);
@@ -6487,7 +6518,11 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       assert.ok(xs.every(x => x.done === 'auto'), 'later answers use per-field validation after the first changes the snapshot');
     } else if (scenario.startsWith('transport failure')) {
       assert.deepEqual(controls.map(el => el.value), ['no', scenario.endsWith('after edit') ? 'yes' : '', '']);
-      if (scenario.endsWith('after edit')) assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+      if (scenario.endsWith('after edit')) {
+        assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+        assert.ok(state.agentPageEdits.has('/rater'), 'transport-failure cleanup also records agentPageEdits');
+        assert.ok(journalCalls.includes(ctx.tabId), 'transport-failure cleanup persists journal');
+      }
       assert.ok(xs.every(x => x.done === 'auto'), 'transport failure retains conservative approval holds');
     } else if (scenario === 'document replacement') {
       assert.deepEqual(replacementControls.map(el => el.value), ['', '', ''], 'no remaining answer is written into the replacement document');
@@ -6504,6 +6539,8 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       assert.deepEqual(controls.map(el => el.value), scenario === 'future frame' ? ['no', 'yes', ''] : ['yes', 'no', ''],
         'the correction stays and future frame C is not answered');
       assert.deepEqual([...state.agentKeys.get('/rater')].sort(), ['choice0', 'choice1']);
+      assert.ok(state.agentPageEdits.has('/rater'), 'guarded edits during applyAi record agentPageEdits');
+      assert.ok(journalCalls.includes(ctx.tabId), 'guarded edits during applyAi persist journal');
       assert.match(xs[2].error, /agent edit interrupted/);
       assert.equal(xs[2].done, null);
       if (scenario === 'finished frame') assert.equal(xs[0].done, null, 'a correction to an earlier applied answer replaces its AI hold');
@@ -11721,4 +11758,468 @@ test('Progressive CoveragesRates: duplicate identical vehicles disambiguate by V
   assert.equal(repMissing.pageChanged, false);
   assert.deepEqual(Array.from(repMissing.noData, (x) => x.label), ['Vehicle 3'], 'missing 2020 Ford Transit still gets its missing-row note');
   assert.match(repMissing.noData[0].note, /^No row on this page reads as Vehicle 3 \(2020 FORD Transit\)/);
+});
+
+// W49-05: Progressive AddDriver swaps DriverInputNonShredded.YearCDLIssuedUI into
+// DriverInput.YearCDLIssued upon fill; verification follows the swap cleanly without field.vanished
+// or unfamiliar, while non-CDL drivers stay untouched.
+test('Progressive AddDriver: CDL year field swap (YearCDLIssuedUI -> DriverInput.YearCDLIssued) verifies cleanly (W49-05)', async () => {
+  const cdlRecord = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [{ first: 'Amina', last: 'Kone', dob: '01/02/1980', licenseState: 'FL', licenseNumber: 'F1234567', cdl: true, cdlYear: 2016 }],
+    vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(cdlRecord, progressive, { drivers: 0 });
+  const h = harness({ ext: true, search: '?pageName=AddDriver' });
+  let swappedInput = null;
+  const ui = addExtText(h, 'c', '295E', {
+    caption: 'Year CDL Issued',
+    ref: 'DriverInputNonShredded.YearCDLIssuedUI',
+    onSet(cmp, val) {
+      // Simulate Progressive's server swap removing YearCDLIssuedUI and drawing DriverInput.YearCDLIssued.
+      setTimeout(() => {
+        ui.input.remove();
+        h.context.Ext._components.delete(ui.cmp.id);
+        swappedInput = addExtText(h, 'c', '295F', {
+          caption: "What year was the Commercial Driver's License (CDL) originally issued?",
+          ref: 'DriverInput.YearCDLIssued',
+          value: val,
+          required: true,
+        });
+      }, 20);
+    },
+  });
+  const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+  assert.equal(report.failed.length, 0, `no field.vanished failure: ${JSON.stringify(report.failed)}`);
+  assert.equal(report.unknown.length, 0, `no unfamiliar stop: ${JSON.stringify(report.unknown)}`);
+  assert.equal(report.reworded.length, 0, `no false reworded check: ${JSON.stringify(report.reworded)}`);
+  assert.equal(swappedInput?.input.value, '2016');
+  assert.ok(report.filled.some((x) => x.path === 'drivers[0].cdlYear' && x.shown === '2016'), JSON.stringify(report.filled));
+
+  // If Progressive clears the swapped box on arrival, the fill retries into DriverInput.YearCDLIssued cleanly.
+  const h2 = harness({ ext: true, search: '?pageName=AddDriver' });
+  let swappedEmpty = null;
+  const ui2 = addExtText(h2, 'c', '295E', {
+    caption: 'Year CDL Issued',
+    ref: 'DriverInputNonShredded.YearCDLIssuedUI',
+    onSet() {
+      setTimeout(() => {
+        ui2.input.remove();
+        h2.context.Ext._components.delete(ui2.cmp.id);
+        swappedEmpty = addExtText(h2, 'c', '295F', {
+          caption: "What year was the Commercial Driver's License (CDL) originally issued?",
+          ref: 'DriverInput.YearCDLIssued',
+          value: '',
+          required: true,
+        });
+      }, 20);
+    },
+  });
+  const report2 = await h2.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+  assert.equal(report2.failed.length, 0, `re-filled into swapped field cleanly: ${JSON.stringify(report2.failed)}`);
+  assert.equal(report2.unknown.length, 0, JSON.stringify(report2.unknown));
+  assert.equal(swappedEmpty?.input.value, '2016');
+
+  // Counterexample: non-CDL driver with no CDL year leaves HasCDL=No and never touches CDL year.
+  const nonCdlRecord = structuredClone(cdlRecord);
+  nonCdlRecord.drivers[0] = { ...nonCdlRecord.drivers[0], cdl: false, cdlYear: null };
+  const h3 = harness({ ext: true, search: '?pageName=AddDriver' });
+  const hasCdlGroup = radioGroup("Does this driver have a Commercial Driver's License (CDL)?",
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'hasCdl', type: 'radio', value: v, attrs: { fieldref: 'DriverInput.HasCDL' } })));
+  h3.document.body.append(hasCdlGroup);
+  const report3 = await h3.kit.fill(buildPlan(nonCdlRecord, progressive, { drivers: 0 }), { maxRounds: 6, replaceChoices: true });
+  assert.equal(report3.failed.length, 0);
+  assert.equal(report3.unknown.length, 0);
+  assert.ok(report3.filled.some((x) => x.key === 'ref:DriverInput.HasCDL' && x.shown === 'No'));
+  assert.ok(!report3.filled.some((x) => x.path === 'drivers[0].cdlYear'));
+});
+
+// W49-14: On Progressive BusinessOwnerInfo, B53AnyVehicleRequiresHazardousPlacard can be
+// transiently invalid (or reset) during a post-DOB postback; keepWait must wait for quiet without
+// double-burning retryOnce, while still failing genuinely invalid hazmat answers.
+test('Progressive BusinessOwnerInfo: hazmat placard survives post-DOB transient invalidation and reset, but flags genuine invalid answers (W49-14)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC', owner1: 'Amina Kone', ownerDrives: true },
+    garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', hazPlacard: false },
+    drivers: [{ first: 'Amina', last: 'Kone', dob: '01/02/1980' }],
+    vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(record, progressive, {});
+
+  // Helper to build an ExtJS radio group for B53AnyVehicleRequiresHazardousPlacard.
+  function makeHazmatPage({ transientInvalidMs = 0, resetAfterMs = 0, permanentInvalid = false } = {}) {
+    const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+    let dobAt = 0;
+    addExtText(h, 'c', '2BB', {
+      caption: 'Date of Birth',
+      ref: 'AccountInput.BusinessOwnerDOB',
+      onSet() { dobAt = clock.Date.now(); },
+    });
+    const groupId = 'rg_hazmat';
+    let groupValid = !permanentInvalid;
+    const rg = {
+      id: groupId,
+      dctCaption: 'Do any listed vehicles or the load require a hazardous material placard?',
+      dctRequired: true,
+      isValid: () => groupValid,
+      getActiveError: () => (groupValid ? '' : 'This field is required'),
+    };
+    const radios = ['Yes', 'No'].map((label, idx) => {
+      const id = `f_c${'A'.repeat(32)}2F6_1_1_${idx}`;
+      const input = makeInput({ id, name: 'hazmat', type: 'radio', value: label, attrs: { fieldref: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard' } });
+      const cmp = {
+        id,
+        boxLabel: label,
+        el: { dom: input },
+        up: (t) => (t === 'radiogroup' ? rg : null),
+        getValue: () => input.checked,
+        setValue: (v) => { input.checked = !!v; },
+      };
+      input.onclick = () => {
+        if (transientInvalidMs > 0) {
+          groupValid = false;
+          setTimeout(() => { groupValid = true; }, transientInvalidMs);
+        }
+        if (resetAfterMs > 0 && dobAt > 0) {
+          const once = resetAfterMs;
+          resetAfterMs = 0;
+          setTimeout(() => { input.checked = false; }, once);
+        }
+      };
+      h.context.Ext._components.set(id, cmp);
+      return input;
+    });
+    h.document.body.append(radioGroup(rg.dctCaption, ...radios));
+    return { h, radios };
+  }
+
+  // Case 1: Transient invalidation (e.g., validation clears at 600 ms while radio already holds "No").
+  const transient = makeHazmatPage({ transientInvalidMs: 600 });
+  const r1 = await transient.h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+  assert.equal(r1.failed.length, 0, `transient invalidation must settle cleanly: ${JSON.stringify(r1.failed)}`);
+  assert.equal(transient.radios[1].checked, true, 'No stays selected');
+  assert.ok(r1.filled.some((x) => x.key === 'ref:BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard' && x.shown === 'No'));
+
+  // Case 2: Post-DOB postback resets radio 50 ms after click, then accepts on retry.
+  const reset = makeHazmatPage({ resetAfterMs: 50 });
+  const r2 = await reset.h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+  assert.equal(r2.failed.length, 0, `post-DOB reset retries cleanly: ${JSON.stringify(r2.failed)}`);
+  assert.equal(reset.radios[1].checked, true);
+
+  // Counterexample: genuine permanent invalid hazmat answer MUST still fail (never hidden).
+  const invalid = makeHazmatPage({ permanentInvalid: true });
+  const r3 = await invalid.h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+  assert.ok(r3.failed.some((x) => x.key === 'ref:BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard'), `real invalid hazmat must fail: ${JSON.stringify(r3.failed)}`);
+});
+
+// W49-15: Progressive USDOT-prefill BusinessOwnerInfo & BECAPopup DBA fields (DBAPrefillOptions & DBADup).
+test('Progressive BusinessOwnerInfo & BECAPopup: USDOT DBA prefill fields are recognized without renamed/pageChanged or leftRequired (W49-15)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC', dot: '1234567' }, garaging: { state: 'OH' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(record, progressive, {});
+  for (const pageName of ['BusinessOwnerInfo', 'BECAPopup']) {
+    const h = harness({ ext: true, search: `?pageName=${pageName}` });
+    const prefillRadios = ['Synthetic DBA', 'Enter a different DBA Name'].map((v) =>
+      makeInput({ name: 'dbaPrefill', type: 'radio', value: v, required: true, attrs: { fieldref: 'AccountInputNonShredded.DBAPrefillOptions' } }));
+    h.document.body.append(radioGroup('DBA Name', ...prefillRadios));
+    const dup = addExtText(h, 'c', '234', { caption: '', ref: 'AccountInputNonShredded.DBADup', required: true });
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+    assert.equal(report.renamed.length, 0, `${pageName}: no false renamed`);
+    assert.equal(report.pageChanged, false, `${pageName}: no false pageChanged`);
+    assert.equal(report.unknown.length, 0, `${pageName}: neither DBA field unfamiliar`);
+    assert.equal(report.leftRequired.length, 0, `${pageName}: DBADup handled as fact, not leftRequired`);
+    assert.equal(dup.input.value, '', `${pageName}: never invents a DBA`);
+    assert.ok(prefillRadios.every((r) => !r.checked), `${pageName}: never auto-picks a DBA`);
+    assert.ok(report.noData.some((x) => x.key === 'ref:AccountInputNonShredded.DBAPrefillOptions' && x.manualOnly), `${pageName}: DBAPrefillOptions in noData`);
+    assert.ok(report.noData.some((x) => x.key === 'ref:AccountInputNonShredded.DBADup' && x.manualOnly), `${pageName}: DBADup in noData`);
+  }
+  // Counterexample: non-USDOT quote with AccountInput.DBA keeps it ignored and empty.
+  const nonDot = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const dba = addExtText(nonDot, 'c', '233', { caption: 'DBA Name', ref: 'AccountInput.DBA' });
+  const rNonDot = await nonDot.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual([rNonDot.renamed.length, rNonDot.unknown.length, rNonDot.noData.length], [0, 0, 0]);
+  assert.equal(dba.input.value, '');
+});
+
+// W49-17 (TNI, 2026-11-25): GA CoveragesRates LineInput.UMPDAddedOnReducedLimit fills "Not selected"
+// when offered, and leaves to agent with a note (never fails / never invents a deductible) otherwise.
+test('Progressive CoveragesRates: LineInput.UMPDAddedOnReducedLimit picks Not selected when offered, else leaves to agent with note (W49-17)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'GA' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1M CSL', cargo: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+
+  // Offered: picks "Not selected".
+  const h1 = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const offered = addExtText(h1, 'c', '1FDE', { caption: 'Uninsured Motorist Property Damage', ref: 'LineInput.UMPDAddedOnReducedLimit' });
+  Object.assign(offered.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Not selected', 'Included in UMBI CSL limit w/ $250 Deductible', 'Included in UMBI CSL limit w/ $500 Deductible'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r1 = await h1.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+  assert.deepEqual([r1.failed.length, r1.unknown.length, r1.noData.length], [0, 0, 0]);
+  assert.equal(offered.input.value, 'Not selected');
+  assert.ok(r1.filled.some((x) => x.key === 'ref:LineInput.UMPDAddedOnReducedLimit' && x.standard));
+
+  // Not offered (GA deductibles only): leaves to agent cleanly with manualOnly note, never fails or picks a deductible.
+  const h2 = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const unoffered = addExtText(h2, 'c', '1FDE', { caption: 'Uninsured Motorist Property Damage', ref: 'LineInput.UMPDAddedOnReducedLimit', required: true });
+  Object.assign(unoffered.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Included in UMBI CSL limit w/ $250 Deductible', 'Included in UMBI CSL limit w/ $500 Deductible', 'Included in UMBI CSL limit w/ $1k Deductible'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r2 = await h2.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+  assert.deepEqual([r2.failed.length, r2.unknown.length, r2.leftRequired.length], [0, 0, 0]);
+  assert.equal(unoffered.input.value, '', 'never invents a deductible');
+  assert.ok(r2.noData.some((x) => x.key === 'ref:LineInput.UMPDAddedOnReducedLimit' && x.manualOnly && /Not selected/i.test(x.note)), JSON.stringify(r2.noData));
+});
+
+// W49-22: TellUsWhatHappened DisputeAccidentDriverAtFault & AdditionalDetails LoanLeaseCompany
+// are mapped as agent facts, never auto-filled, never unfamiliar.
+test('Progressive TellUsWhatHappened & AdditionalDetails: post-MVR dispute and loan company stay agent facts (W49-22)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(record, progressive, {});
+
+  const h1 = harness({ ext: true, search: '?pageName=TellUsWhatHappened' });
+  const dispute = addExtText(h1, 'c', '501', { caption: 'Was this driver at fault?', ref: 'IntegrationAccidentsViolationsInput.DisputeAccidentDriverAtFault', required: true });
+  Object.assign(dispute.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Yes - Driver was at fault', 'No - Driver was NOT at fault'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r1 = await h1.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual([r1.filled.length, r1.failed.length, r1.unknown.length, r1.leftRequired.length], [0, 0, 0, 0]);
+  assert.equal(dispute.input.value, '');
+  assert.ok(r1.noData.some((x) => x.key === 'ref:IntegrationAccidentsViolationsInput.DisputeAccidentDriverAtFault' && x.manualOnly));
+
+  const h2 = harness({ ext: true, search: '?pageName=AdditionalDetails' });
+  const loan = addExtText(h2, 'c', '471', { caption: 'Loan Company', ref: 'AdditionalOtherInterestInput.LoanLeaseCompany', required: true });
+  Object.assign(loan.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Other', '1ST SECURITY BANK'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r2 = await h2.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual([r2.filled.length, r2.failed.length, r2.unknown.length, r2.leftRequired.length], [0, 0, 0, 0]);
+  assert.equal(loan.input.value, '');
+  assert.ok(r2.noData.some((x) => x.key === 'ref:AdditionalOtherInterestInput.LoanLeaseCompany' && x.manualOnly));
+});
+
+// W49-01 (2026-11-25): GEICO Quote & Coverages (and Vehicles) runs live server lookups and
+// React/GDS redraws after coverage changes, select2 picks and add-on toggles that take 3.1–4.9 s
+// (21 store quotes / 38 page.unsettled failures and 4 round-wait halts when capped at 3–4 s).
+// GEICO's adapter raises settle()'s ceiling for answer/round/list waits to 15 s while fast pages
+// still return after quietMs (zero extra delay), genuinely wedged pages still time out cleanly,
+// and non-GEICO plain pages keep their 3 s ceiling.
+test('GEICO Quote & Coverages: slow recalculation redraws (>3.5 s) settle without page.unsettled while fast pages pay no extra delay (W49-01)', async () => {
+  const makeObserver = () => {
+    const active = new Set();
+    class LiveMutationObserver {
+      constructor(cb) { this.cb = cb; this.live = false; }
+      observe() { this.live = true; active.add(this); }
+      disconnect() { this.live = false; active.delete(this); }
+      takeRecords() { return []; }
+      fire() { if (this.live) this.cb(); }
+    }
+    const mutateFor = (ms, every = 100) => {
+      if (ms <= 0) return;
+      const end = clock.Date.now() + ms;
+      const tick = () => {
+        for (const o of active) o.fire();
+        if (clock.Date.now() + every <= end) setTimeout(tick, every);
+      };
+      setTimeout(tick, every);
+    };
+    return { MutationObserver: LiveMutationObserver, mutateFor };
+  };
+
+  const runCoverage = async ({ mutateMs, adapter = 'geico' }) => {
+    const obs = makeObserver();
+    const h = harness({ adapter, pathname: adapter === 'geico' ? '/quote' : '/rater', globals: { MutationObserver: obs.MutationObserver } });
+    if (adapter === 'geico') geicoBar(h, 'Quote & Coverages');
+    const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_24001_COMP`, value: 'Not Included' });
+    comp.addEventListener('change', () => obs.mutateFor(mutateMs));
+    h.document.body.append(comp);
+    h.document.body.innerText = STALE;
+    let recalcs = 0;
+    const recalc = addButton(h, 'Recalculate');
+    recalc.onclick = () => { recalcs++; rate(h); };
+    const rules = [{ q: 'COMP', selector: '[id$="_COMP"]', ...(adapter === 'geico' ? { steps: ['Quote & Coverages'] } : {}), name: 'Comprehensive', kind: 'choice', source: 'standard', value: () => '$1,000 deductible' }];
+    const actions = adapter === 'geico' ? geico.actions.filter((a) => a.id === 'recalculate') : [];
+    const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions });
+    const report = await h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+    return { report, comp, recalcs, h, obs };
+  };
+
+  // Slow GEICO coverage redraw (4.2 s): settles cleanly, keeps the answer, and does not hold Recalculate.
+  const slow = await runCoverage({ mutateMs: 4200 });
+  assert.equal(slow.comp.value, '$1,000 deductible');
+  assert.deepEqual(plain(slow.report.failed), [], 'no false page.unsettled on 4.2 s GEICO redraw');
+  assert.equal(slow.report.filled.length, 1);
+  assert.ok(slow.report.filled[0].timing.settleMs >= 4200, `waited through redraw (${slow.report.filled[0].timing.settleMs} ms)`);
+  assert.equal(slow.recalcs, 1, 'Recalculate is not held');
+
+  // Counterexample 1: fast GEICO page pays zero extra delay (settles right after quietMs = 150 ms).
+  const fast = await runCoverage({ mutateMs: 0 });
+  assert.deepEqual(plain(fast.report.failed), []);
+  assert.equal(fast.recalcs, 1);
+  assert.ok(fast.report.filled[0].timing.settleMs < 500, `fast page paid no extra wait (${fast.report.filled[0].timing.settleMs} ms)`);
+
+  // Counterexample 2: genuinely wedged GEICO page (mutations past 15 s) still fails with page.unsettled and holds Recalculate.
+  const stuck = await runCoverage({ mutateMs: 20000 });
+  assert.deepEqual(plain(stuck.report.failed.map((x) => [x.key, x.code])), [['cov:COMP#1', 'page.unsettled']]);
+  assert.equal(stuck.recalcs, 0, 'Recalculate stays held when page never settles');
+
+  // Counterexample 3: non-GEICO plain HTML page keeps its 3 s answer settle ceiling.
+  const plainSlow = await runCoverage({ mutateMs: 3500, adapter: null });
+  assert.deepEqual(plain(plainSlow.report.failed.map((x) => x.code)), ['page.unsettled']);
+
+  // Slow GEICO panel/AI answer() (>3.5 s redraw): settles cleanly instead of returning page.unsettled.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const sel = new SelectNode(['Not Included', '$1,000 deductible'], { id: `Id_${randomUUID()}_24002_COMP`, value: 'Not Included' });
+    sel.addEventListener('change', () => obs.mutateFor(4200));
+    h.document.body.append(sel);
+    const [res] = await h.kit.answer([{ key: 'cov:COMP#1', label: sel.label ?? 'cov:COMP#1', value: '$1,000 deductible' }]);
+    assert.equal(res.ok, true, `panel/AI answer settled on GEICO: ${JSON.stringify(res)}`);
+    assert.equal(sel.value, '$1,000 deductible');
+  }
+
+  // Slow GEICO add-on chevron toggle (why: 'round' > 3.5 s redraw): settles without halting the fill.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const card = new FakeNode('li', { id: 'Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_33590', className: 'expandable-form' });
+    const icon = new FakeNode('span', { className: 'expandable-form-control', attrs: { 'data-testid': 'editIcon', tabindex: '0' } });
+    card.append(new FakeNode('p', { className: 'h4', textContent: 'Motor Truck General Liability' }), icon);
+    h.document.body.append(card);
+    icon.onclick = () => {
+      card.className = 'expandable-form expanded';
+      const r = gdsRadios('GiveMotorTruckGeneralLiabilityCoverageRequired', 57395, 'Does the customer need Motor Truck General Liability?', [['Yes', 'Yes'], ['No', 'No']]);
+      card.append(r.group);
+      obs.mutateFor(4200);
+    };
+    const record = { ...geicoRecord(), operations: { businessClass: 'Freight Hauler' }, coverage: { gl: true, glLimit: '$1M/$2M' } };
+    const plan = buildPlan(record, geico, {}).filter((s) => (s.kind === 'action' ? s.action === 'openGl' : s.field === 'GiveMotorTruckGeneralLiabilityCoverageRequired'));
+    const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+    assert.equal(report.halted, false, `round wait settled cleanly: ${report.reason}`);
+    assert.deepEqual(plain(report.actions.map((x) => x.id)), ['openGl']);
+    assert.equal(report.filled.length, 1);
+  }
+
+  // Slow GEICO select2 commodity pick (why: 'list' > 4.5 s redraw): settles without spilling into page.unsettled.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const wrap = new FakeNode('div');
+    const select = new SelectNode(['Consumer Goods - Other Consumer Goods', 'General Freight'], {
+      id: 'Id_GiveMtcHaulingCommoditiesCollect_51234',
+      name: 'Id_GiveMtcHaulingCommoditiesCollect_51234',
+      className: 'select2-hidden-accessible',
+      ariaLabel: 'Select up to four commodities the customer hauls the most',
+    });
+    select.multiple = true;
+    const box = new FakeNode('span', { className: 'select2 select2-container' });
+    const selSpan = new FakeNode('span', { className: 'select2-selection select2-selection--multiple' });
+    const search = makeInput({ className: 'select2-search__field' });
+    selSpan.append(search);
+    box.append(selSpan);
+    wrap.append(select, box);
+    h.document.body.append(wrap);
+    const results = new FakeNode('ul', { id: `select2-${select.id}-results` });
+    const item = new FakeNode('li', { className: 'select2-results__option', textContent: 'Consumer Goods - Other Consumer Goods' });
+    item.addEventListener('click', () => {
+      select.options[0].selected = true;
+      select.dispatchEvent({ type: 'change', bubbles: true });
+      obs.mutateFor(4600);
+    });
+    results.append(item);
+    search.addEventListener('input', () => { if (!results.isConnected) h.document.body.append(results); });
+    const plan = [{
+      id: 'commodities', path: 'geico.commodities', field: 'GiveMtcHaulingCommoditiesCollect',
+      steps: ['Quote & Coverages'], name: 'Commodities', kind: 'choice', source: 'derived',
+      value: 'Consumer Goods - Other Consumer Goods',
+    }];
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+    assert.deepEqual(plain(report.failed), [], 'slow select2 list redraw settles without page.unsettled');
+    assert.equal(report.filled.length, 1);
+    assert.equal(select.options[0].selected, true);
+  }
+});
+
+test('openDownloadInPanel returns same-origin target=_blank link URLs instead of clicking in MAIN world, and falls back otherwise', async () => {
+  const printStep = {
+    id: 'action:printProposal', kind: 'action', action: 'printProposal', baseAction: 'printProposal',
+    path: 'action:printProposal', name: 'Print Quote Proposal', pages: [], steps: null,
+    text: '^print quote proposal$', token: null, near: null, within: null, moveOn: false, loads: false,
+    unique: false, label: 'Print Quote Proposal', missing: null, markable: false, heldBy: [],
+    resolvedBy: null, settledByPages: [], opener: null, nudge: null, immediate: false, inFrame: false,
+    skipIfProtected: false, after: [], afterAny: [], unless: [], unlessSelector: null, doneWhen: [],
+    waitRequired: false, whenClear: false, quietMs: null, once: true, keepAnswers: false, reopen: null,
+    kitClick: true, onBlankPage: false, unfinished: null, unlessActions: [], afterActions: [],
+    afterPages: [], afterValue: null, needsPremium: false, needsRecalculation: false, verify: 'download',
+    ratedBy: null, shownBy: null, scope: null, scopeIndex: null, value: null,
+  };
+
+  // 1. Shadow <a href="/PrintQuote?quote=1" target="_blank"> inside <gds-button>: with openDownloadInPanel,
+  //    returns openDocumentUrl and does not call click() in page world.
+  {
+    const h = harness({ pathname: '/quote' });
+    const host = new FakeNode('gds-button', { attrs: { target: '_blank', href: '/PrintQuote?quote=1' } });
+    const sr = host.attachShadow({ mode: 'open' });
+    const link = new FakeNode('a', { attrs: { href: '/PrintQuote?quote=1', target: '_blank' }, textContent: 'Print Quote Proposal' });
+    let clicked = 0;
+    link.onclick = () => { clicked++; };
+    sr.append(link);
+    h.document.body.append(host);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: true });
+    assert.equal(report.openDocumentUrl, 'https://synthetic.example/PrintQuote?quote=1');
+    assert.equal(report.documentPending, true);
+    assert.equal(clicked, 0, 'must not click link in MAIN world when handing URL to side panel');
+    assert.equal(report.actions.some((a) => a.id === 'printProposal'), true);
+  }
+
+  // 2. Without openDownloadInPanel, clicks the link in-page and leaves openDocumentUrl unset.
+  {
+    const h = harness({ pathname: '/quote' });
+    const link = new FakeNode('a', { attrs: { href: '/PrintQuote?quote=2', target: '_blank' }, textContent: 'Print Quote Proposal' });
+    let clicked = 0;
+    link.onclick = () => { clicked++; };
+    h.document.body.append(link);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: false });
+    assert.equal(report.openDocumentUrl, undefined);
+    assert.equal(report.documentPending, true);
+    assert.equal(clicked, 1);
+  }
+
+  // 3. Cross-origin, javascript:, non-_blank, or plain <button> without href fall back to pressButton.
+  for (const [label, makeEl] of [
+    ['cross-origin', () => new FakeNode('a', { attrs: { href: 'https://evil.example/PrintQuote', target: '_blank' }, textContent: 'Print Quote Proposal' })],
+    ['javascript', () => new FakeNode('a', { attrs: { href: 'javascript:void(0)', target: '_blank' }, textContent: 'Print Quote Proposal' })],
+    ['same-tab', () => new FakeNode('a', { attrs: { href: '/PrintQuote?quote=3' }, textContent: 'Print Quote Proposal' })],
+    ['plain-button', () => new FakeNode('button', { textContent: 'Print Quote Proposal' })],
+  ]) {
+    const h = harness({ pathname: '/quote' });
+    const el = makeEl();
+    let clicked = 0;
+    el.onclick = () => { clicked++; };
+    h.document.body.append(el);
+    const report = await h.kit.fill([printStep], { openDownloadInPanel: true });
+    assert.equal(report.openDocumentUrl, undefined, `${label}: must not set openDocumentUrl`);
+    assert.equal(clicked, 1, `${label}: must fall back to pressButton`);
+  }
 });

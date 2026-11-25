@@ -7,6 +7,7 @@ import { readIntakeFields } from '../src/intake.js';
 import { detectIntakeForm, readIntake } from '../src/intake-forms.js';
 import { formVersion, FIELDS, OLD_FIELDS } from '../src/products/personal-auto/form.js';
 import { splitLicense, splitNameAndBirth } from '../src/products/personal-auto/read.js';
+import { parseNonEmployedCategory } from '../src/products/personal-auto/answers.js';
 import { fieldInfo, partsOf, rederive, sectionsOf } from '../src/product-parts.js';
 import { SECTIONS as COMMERCIAL_SECTIONS } from '../src/schema.js';
 import { carrierForUrl } from '../src/carriers.js';
@@ -227,14 +228,23 @@ test('the panel draws and edits a personal-auto record with its own sections, ne
   assert.equal(JSON.stringify(record), before);
 });
 
-test('a personal-auto intake picks the personal-auto carriers (progressive-pa active, geico-pa stub)', () => {
+test('a personal-auto intake picks the active personal-auto carriers (geico-pa and progressive-pa)', () => {
   assert.equal(carrierForUrl('https://sales.geico.com/quote', { product: 'personal-auto' })?.id, 'geico-pa');
   assert.equal(carrierForUrl('https://www.foragentsonly.com/home/', { product: 'personal-auto' })?.id, 'progressive-pa');
   assert.equal(carrierForUrl('https://quoting.foragentsonly.com/Quote/Index/', { product: 'personal-auto' })?.id, 'progressive-pa');
   assert.equal(carrierForUrl('https://sales.geico.com/quote', { product: 'commercial-auto' })?.id, 'geico');
   assert.equal(carrierForUrl('https://sales.geico.com/quote')?.id, 'geico', 'with no intake, the first carrier on the host, as before');
   const g = carrierForUrl('https://sales.geico.com/quote', { product: 'personal-auto' });
-  assert.deepEqual([g?.rules.length, g?.useGenericRules, 'autoFillUrl' in (g ?? {}), 'display' in (g ?? {})], [0, false, false, false], 'geico-pa');
+  assert.ok((g?.rules.length ?? 0) > 50, 'geico-pa has filling rules');
+  assert.equal(g?.useGenericRules, false);
+  assert.equal(g?.autoFillUrl?.test('https://sales.geico.com/quote'), true);
+  assert.equal(g?.autoFillUrl?.test('https://gateway2.geico.com/'), true);
+  assert.equal(g?.autoFillUrl?.test('https://gateway2.geico.com/search-results'), true);
+  assert.equal(g?.autoFillUrl?.test('https://sales.geico.com/PrintQuote'), false);
+  assert.equal(g?.autoFillUrl?.test('https://www.geico.com/'), false);
+  assert.equal(g?.fillOnDraw?.test('https://gateway2.geico.com/search-results'), true);
+  assert.equal(g?.fillOnDraw?.test('https://sales.geico.com/quote'), false);
+  assert.ok(g?.display && g?.premiumPages?.length);
   const p = carrierForUrl('https://quoting.foragentsonly.com/Quote/Index/', { product: 'personal-auto' });
   assert.ok((p?.rules.length ?? 0) > 50, 'progressive-pa has filling rules');
   assert.equal(p?.useGenericRules, false);
@@ -259,4 +269,16 @@ test('the usage log reads a personal-auto intake without client details, as a co
   }
   assert.deepEqual(summary.counts, { drivers: 2, vehicles: 2, trailers: 0 });
   assert.equal(summary.businessClass, null);
+});
+
+test('parseNonEmployedCategory maps unambiguous homemaker and non-employed synonyms without catching employed jobs', () => {
+  for (const s of ['Homemaker', 'home maker', 'Home-Maker', 'homemaking', 'Housewife', 'house wife', 'Househusband', 'Stay at home mom', 'stay-at-home dad', 'Household Manager']) {
+    assert.equal(parseNonEmployedCategory(s), 'homemaker', s);
+  }
+  assert.equal(parseNonEmployedCategory('College student'), 'student');
+  assert.equal(parseNonEmployedCategory('Retired nurse'), 'retired');
+  assert.equal(parseNonEmployedCategory('Disabled'), 'disabled');
+  assert.equal(parseNonEmployedCategory('Not currently employed'), 'unemployed');
+  assert.equal(parseNonEmployedCategory('Home builder'), null);
+  assert.equal(parseNonEmployedCategory('Teacher'), null);
 });
