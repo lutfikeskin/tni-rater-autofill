@@ -358,8 +358,9 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       // carrier and in every quote), for the usage log, where the step's id and its path for a rule
       // without a path or q are its place in the plan.
       concept: rule.concept ?? null,
-      // the field's data-model name (Duck Creek fieldref),
+      // the field's data-model name (Duck Creek fieldref), and any swap aliases,
       field: rule.field ?? null,
+      fieldAliases: rule.fieldAliases?.length ? [...rule.fieldAliases] : null,
       // else its question on the page: exact text(s), or `label` (re) on these pages,
       ask: rule.ask ? [].concat(rule.ask) : null,
       pages: rule.page ? [].concat(rule.page) : null,

@@ -11489,3 +11489,258 @@ test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswer
   assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
   assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
 });
+
+// W49-05: Progressive AddDriver swaps DriverInputNonShredded.YearCDLIssuedUI into
+// DriverInput.YearCDLIssued upon fill; verification follows the swap cleanly without field.vanished
+// or unfamiliar, while non-CDL drivers stay untouched.
+test('Progressive AddDriver: CDL year field swap (YearCDLIssuedUI -> DriverInput.YearCDLIssued) verifies cleanly (W49-05)', async () => {
+  const cdlRecord = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [{ first: 'Amina', last: 'Kone', dob: '01/02/1980', licenseState: 'FL', licenseNumber: 'F1234567', cdl: true, cdlYear: 2016 }],
+    vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(cdlRecord, progressive, { drivers: 0 });
+  const h = harness({ ext: true, search: '?pageName=AddDriver' });
+  let swappedInput = null;
+  const ui = addExtText(h, 'c', '295E', {
+    caption: 'Year CDL Issued',
+    ref: 'DriverInputNonShredded.YearCDLIssuedUI',
+    onSet(cmp, val) {
+      // Simulate Progressive's server swap removing YearCDLIssuedUI and drawing DriverInput.YearCDLIssued.
+      setTimeout(() => {
+        ui.input.remove();
+        h.context.Ext._components.delete(ui.cmp.id);
+        swappedInput = addExtText(h, 'c', '295F', {
+          caption: "What year was the Commercial Driver's License (CDL) originally issued?",
+          ref: 'DriverInput.YearCDLIssued',
+          value: val,
+          required: true,
+        });
+      }, 20);
+    },
+  });
+  const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+  assert.equal(report.failed.length, 0, `no field.vanished failure: ${JSON.stringify(report.failed)}`);
+  assert.equal(report.unknown.length, 0, `no unfamiliar stop: ${JSON.stringify(report.unknown)}`);
+  assert.equal(report.reworded.length, 0, `no false reworded check: ${JSON.stringify(report.reworded)}`);
+  assert.equal(swappedInput?.input.value, '2016');
+  assert.ok(report.filled.some((x) => x.path === 'drivers[0].cdlYear' && x.shown === '2016'), JSON.stringify(report.filled));
+
+  // If Progressive clears the swapped box on arrival, the fill retries into DriverInput.YearCDLIssued cleanly.
+  const h2 = harness({ ext: true, search: '?pageName=AddDriver' });
+  let swappedEmpty = null;
+  const ui2 = addExtText(h2, 'c', '295E', {
+    caption: 'Year CDL Issued',
+    ref: 'DriverInputNonShredded.YearCDLIssuedUI',
+    onSet() {
+      setTimeout(() => {
+        ui2.input.remove();
+        h2.context.Ext._components.delete(ui2.cmp.id);
+        swappedEmpty = addExtText(h2, 'c', '295F', {
+          caption: "What year was the Commercial Driver's License (CDL) originally issued?",
+          ref: 'DriverInput.YearCDLIssued',
+          value: '',
+          required: true,
+        });
+      }, 20);
+    },
+  });
+  const report2 = await h2.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+  assert.equal(report2.failed.length, 0, `re-filled into swapped field cleanly: ${JSON.stringify(report2.failed)}`);
+  assert.equal(report2.unknown.length, 0, JSON.stringify(report2.unknown));
+  assert.equal(swappedEmpty?.input.value, '2016');
+
+  // Counterexample: non-CDL driver with no CDL year leaves HasCDL=No and never touches CDL year.
+  const nonCdlRecord = structuredClone(cdlRecord);
+  nonCdlRecord.drivers[0] = { ...nonCdlRecord.drivers[0], cdl: false, cdlYear: null };
+  const h3 = harness({ ext: true, search: '?pageName=AddDriver' });
+  const hasCdlGroup = radioGroup("Does this driver have a Commercial Driver's License (CDL)?",
+    ...['Yes', 'No'].map((v) => makeInput({ name: 'hasCdl', type: 'radio', value: v, attrs: { fieldref: 'DriverInput.HasCDL' } })));
+  h3.document.body.append(hasCdlGroup);
+  const report3 = await h3.kit.fill(buildPlan(nonCdlRecord, progressive, { drivers: 0 }), { maxRounds: 6, replaceChoices: true });
+  assert.equal(report3.failed.length, 0);
+  assert.equal(report3.unknown.length, 0);
+  assert.ok(report3.filled.some((x) => x.key === 'ref:DriverInput.HasCDL' && x.shown === 'No'));
+  assert.ok(!report3.filled.some((x) => x.path === 'drivers[0].cdlYear'));
+});
+
+// W49-14: On Progressive BusinessOwnerInfo, B53AnyVehicleRequiresHazardousPlacard can be
+// transiently invalid (or reset) during a post-DOB postback; keepWait must wait for quiet without
+// double-burning retryOnce, while still failing genuinely invalid hazmat answers.
+test('Progressive BusinessOwnerInfo: hazmat placard survives post-DOB transient invalidation and reset, but flags genuine invalid answers (W49-14)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC', owner1: 'Amina Kone', ownerDrives: true },
+    garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler', hazPlacard: false },
+    drivers: [{ first: 'Amina', last: 'Kone', dob: '01/02/1980' }],
+    vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(record, progressive, {});
+
+  // Helper to build an ExtJS radio group for B53AnyVehicleRequiresHazardousPlacard.
+  function makeHazmatPage({ transientInvalidMs = 0, resetAfterMs = 0, permanentInvalid = false } = {}) {
+    const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+    let dobAt = 0;
+    addExtText(h, 'c', '2BB', {
+      caption: 'Date of Birth',
+      ref: 'AccountInput.BusinessOwnerDOB',
+      onSet() { dobAt = clock.Date.now(); },
+    });
+    const groupId = 'rg_hazmat';
+    let groupValid = !permanentInvalid;
+    const rg = {
+      id: groupId,
+      dctCaption: 'Do any listed vehicles or the load require a hazardous material placard?',
+      dctRequired: true,
+      isValid: () => groupValid,
+      getActiveError: () => (groupValid ? '' : 'This field is required'),
+    };
+    const radios = ['Yes', 'No'].map((label, idx) => {
+      const id = `f_c${'A'.repeat(32)}2F6_1_1_${idx}`;
+      const input = makeInput({ id, name: 'hazmat', type: 'radio', value: label, attrs: { fieldref: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard' } });
+      const cmp = {
+        id,
+        boxLabel: label,
+        el: { dom: input },
+        up: (t) => (t === 'radiogroup' ? rg : null),
+        getValue: () => input.checked,
+        setValue: (v) => { input.checked = !!v; },
+      };
+      input.onclick = () => {
+        if (transientInvalidMs > 0) {
+          groupValid = false;
+          setTimeout(() => { groupValid = true; }, transientInvalidMs);
+        }
+        if (resetAfterMs > 0 && dobAt > 0) {
+          const once = resetAfterMs;
+          resetAfterMs = 0;
+          setTimeout(() => { input.checked = false; }, once);
+        }
+      };
+      h.context.Ext._components.set(id, cmp);
+      return input;
+    });
+    h.document.body.append(radioGroup(rg.dctCaption, ...radios));
+    return { h, radios };
+  }
+
+  // Case 1: Transient invalidation (e.g., validation clears at 600 ms while radio already holds "No").
+  const transient = makeHazmatPage({ transientInvalidMs: 600 });
+  const r1 = await transient.h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+  assert.equal(r1.failed.length, 0, `transient invalidation must settle cleanly: ${JSON.stringify(r1.failed)}`);
+  assert.equal(transient.radios[1].checked, true, 'No stays selected');
+  assert.ok(r1.filled.some((x) => x.key === 'ref:BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard' && x.shown === 'No'));
+
+  // Case 2: Post-DOB postback resets radio 50 ms after click, then accepts on retry.
+  const reset = makeHazmatPage({ resetAfterMs: 50 });
+  const r2 = await reset.h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+  assert.equal(r2.failed.length, 0, `post-DOB reset retries cleanly: ${JSON.stringify(r2.failed)}`);
+  assert.equal(reset.radios[1].checked, true);
+
+  // Counterexample: genuine permanent invalid hazmat answer MUST still fail (never hidden).
+  const invalid = makeHazmatPage({ permanentInvalid: true });
+  const r3 = await invalid.h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+  assert.ok(r3.failed.some((x) => x.key === 'ref:BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard'), `real invalid hazmat must fail: ${JSON.stringify(r3.failed)}`);
+});
+
+// W49-15: Progressive USDOT-prefill BusinessOwnerInfo & BECAPopup DBA fields (DBAPrefillOptions & DBADup).
+test('Progressive BusinessOwnerInfo & BECAPopup: USDOT DBA prefill fields are recognized without renamed/pageChanged or leftRequired (W49-15)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC', dot: '1234567' }, garaging: { state: 'OH' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(record, progressive, {});
+  for (const pageName of ['BusinessOwnerInfo', 'BECAPopup']) {
+    const h = harness({ ext: true, search: `?pageName=${pageName}` });
+    const prefillRadios = ['Synthetic DBA', 'Enter a different DBA Name'].map((v) =>
+      makeInput({ name: 'dbaPrefill', type: 'radio', value: v, required: true, attrs: { fieldref: 'AccountInputNonShredded.DBAPrefillOptions' } }));
+    h.document.body.append(radioGroup('DBA Name', ...prefillRadios));
+    const dup = addExtText(h, 'c', '234', { caption: '', ref: 'AccountInputNonShredded.DBADup', required: true });
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+    assert.equal(report.renamed.length, 0, `${pageName}: no false renamed`);
+    assert.equal(report.pageChanged, false, `${pageName}: no false pageChanged`);
+    assert.equal(report.unknown.length, 0, `${pageName}: neither DBA field unfamiliar`);
+    assert.equal(report.leftRequired.length, 0, `${pageName}: DBADup handled as fact, not leftRequired`);
+    assert.equal(dup.input.value, '', `${pageName}: never invents a DBA`);
+    assert.ok(prefillRadios.every((r) => !r.checked), `${pageName}: never auto-picks a DBA`);
+    assert.ok(report.noData.some((x) => x.key === 'ref:AccountInputNonShredded.DBAPrefillOptions' && x.manualOnly), `${pageName}: DBAPrefillOptions in noData`);
+    assert.ok(report.noData.some((x) => x.key === 'ref:AccountInputNonShredded.DBADup' && x.manualOnly), `${pageName}: DBADup in noData`);
+  }
+  // Counterexample: non-USDOT quote with AccountInput.DBA keeps it ignored and empty.
+  const nonDot = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const dba = addExtText(nonDot, 'c', '233', { caption: 'DBA Name', ref: 'AccountInput.DBA' });
+  const rNonDot = await nonDot.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual([rNonDot.renamed.length, rNonDot.unknown.length, rNonDot.noData.length], [0, 0, 0]);
+  assert.equal(dba.input.value, '');
+});
+
+// W49-17 (TNI, 2026-11-25): GA CoveragesRates LineInput.UMPDAddedOnReducedLimit fills "Not selected"
+// when offered, and leaves to agent with a note (never fails / never invents a deductible) otherwise.
+test('Progressive CoveragesRates: LineInput.UMPDAddedOnReducedLimit picks Not selected when offered, else leaves to agent with note (W49-17)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'GA' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1M CSL', cargo: false },
+  };
+  const plan = buildPlan(record, progressive, {});
+
+  // Offered: picks "Not selected".
+  const h1 = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const offered = addExtText(h1, 'c', '1FDE', { caption: 'Uninsured Motorist Property Damage', ref: 'LineInput.UMPDAddedOnReducedLimit' });
+  Object.assign(offered.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Not selected', 'Included in UMBI CSL limit w/ $250 Deductible', 'Included in UMBI CSL limit w/ $500 Deductible'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r1 = await h1.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+  assert.deepEqual([r1.failed.length, r1.unknown.length, r1.noData.length], [0, 0, 0]);
+  assert.equal(offered.input.value, 'Not selected');
+  assert.ok(r1.filled.some((x) => x.key === 'ref:LineInput.UMPDAddedOnReducedLimit' && x.standard));
+
+  // Not offered (GA deductibles only): leaves to agent cleanly with manualOnly note, never fails or picks a deductible.
+  const h2 = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const unoffered = addExtText(h2, 'c', '1FDE', { caption: 'Uninsured Motorist Property Damage', ref: 'LineInput.UMPDAddedOnReducedLimit', required: true });
+  Object.assign(unoffered.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Included in UMBI CSL limit w/ $250 Deductible', 'Included in UMBI CSL limit w/ $500 Deductible', 'Included in UMBI CSL limit w/ $1k Deductible'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r2 = await h2.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+  assert.deepEqual([r2.failed.length, r2.unknown.length, r2.leftRequired.length], [0, 0, 0]);
+  assert.equal(unoffered.input.value, '', 'never invents a deductible');
+  assert.ok(r2.noData.some((x) => x.key === 'ref:LineInput.UMPDAddedOnReducedLimit' && x.manualOnly && /Not selected/i.test(x.note)), JSON.stringify(r2.noData));
+});
+
+// W49-22: TellUsWhatHappened DisputeAccidentDriverAtFault & AdditionalDetails LoanLeaseCompany
+// are mapped as agent facts, never auto-filled, never unfamiliar.
+test('Progressive TellUsWhatHappened & AdditionalDetails: post-MVR dispute and loan company stay agent facts (W49-22)', async () => {
+  const record = {
+    applicant: { name: 'Synthetic Freight LLC' }, garaging: { state: 'FL' },
+    operations: { businessClass: 'Freight Hauler' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [], claims: { hasClaims: false }, coverage: {},
+  };
+  const plan = buildPlan(record, progressive, {});
+
+  const h1 = harness({ ext: true, search: '?pageName=TellUsWhatHappened' });
+  const dispute = addExtText(h1, 'c', '501', { caption: 'Was this driver at fault?', ref: 'IntegrationAccidentsViolationsInput.DisputeAccidentDriverAtFault', required: true });
+  Object.assign(dispute.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Yes - Driver was at fault', 'No - Driver was NOT at fault'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r1 = await h1.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual([r1.filled.length, r1.failed.length, r1.unknown.length, r1.leftRequired.length], [0, 0, 0, 0]);
+  assert.equal(dispute.input.value, '');
+  assert.ok(r1.noData.some((x) => x.key === 'ref:IntegrationAccidentsViolationsInput.DisputeAccidentDriverAtFault' && x.manualOnly));
+
+  const h2 = harness({ ext: true, search: '?pageName=AdditionalDetails' });
+  const loan = addExtText(h2, 'c', '471', { caption: 'Loan Company', ref: 'AdditionalOtherInterestInput.LoanLeaseCompany', required: true });
+  Object.assign(loan.cmp, {
+    displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Other', '1ST SECURITY BANK'].map((t) => ({ get: () => t })), isLoading: () => false },
+  });
+  const r2 = await h2.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual([r2.filled.length, r2.failed.length, r2.unknown.length, r2.leftRequired.length], [0, 0, 0, 0]);
+  assert.equal(loan.input.value, '');
+  assert.ok(r2.noData.some((x) => x.key === 'ref:AdditionalOtherInterestInput.LoanLeaseCompany' && x.manualOnly));
+});

@@ -66,7 +66,7 @@ function anchored(rule, f, fields) {
 
 function claims(rule, f, page, named, fields) {
   if (rule.field) {
-    if (f.ref) return f.ref === rule.field && nameHere(rule, page) && kindFits(rule, f);
+    if (f.ref) return (f.ref === rule.field || !!rule.fieldAliases?.includes(f.ref)) && nameHere(rule, page) && kindFits(rule, f);
     const byText = (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f) && anchored(rule, f, fields) && kindFits(rule, f);
     // On a page recorded with names too, this field may have lost its name on the live page,
     // where the rule (looked for by name) leaves it unfamiliar: can't tell (Codex on PR #43).
@@ -104,7 +104,7 @@ export function claimingRule(f, carrier, page = null, fields = null) {
   const known = (r) => !!(r.field || ((r.ask || r.label) && r.page) || r.selector || r.withOption);
   const rules = [...all.filter(known), ...all.filter((r) => !known(r))];
   // Names known on this page (a trailer's names fenced off Add Vehicle claim nothing there).
-  const named = new Set(rules.filter((r) => r.field && nameHere(r, page)).map((r) => r.field));
+  const named = new Set(rules.filter((r) => r.field && nameHere(r, page)).flatMap((r) => [r.field, ...(r.fieldAliases ?? [])]));
   let unsure = null;
   for (const rule of rules) {
     const hit = claims(rule, f, page, named, fields);

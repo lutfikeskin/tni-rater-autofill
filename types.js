@@ -174,6 +174,7 @@
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
  * @property {string} [field]  the field's data-model name
+ * @property {string[]} [fieldAliases]  alternate data-model names for the same field (e.g. a server swap after fill)
  * @property {string | string[]} [ask]  the question's exact text(s)
  * @property {string} [askAfter]  the first such question after this one, when its text repeats
  * @property {string} [selector]  a CSS selector
@@ -456,6 +457,7 @@
  * @property {string} [defaultInfo]  why the agent's default didn't apply here (a state's own exception); shown in
  *   the report only, never a note (a step with a note is left to the agent)
  * @property {string | null} field
+ * @property {string[] | null} [fieldAliases]
  * @property {string[] | null} ask
  * @property {string[] | null} pages
  * @property {string[] | null} steps
