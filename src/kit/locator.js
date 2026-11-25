@@ -100,8 +100,9 @@ export function createLocator(kit) {
     const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
     // Data-model names some rule knows here: those fields are that rule's, never a text rule's. A
     // name fenced off this page (a trailer's RiskInput.PAValue on Add Vehicle) claims nothing here.
-    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).map((s) => s.field));
-    const isIt = (s, x) => (s.field ? x.ref === s.field && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
+    const stepFields = (s) => (s.field ? [s.field, ...(s.fieldAliases ?? [])] : []);
+    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).flatMap(stepFields));
+    const isIt = (s, x) => (s.field ? stepFields(s).includes(x.ref) && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
     // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
     // text step only gives way to a box when its text names a box and a choice.
     const definite = (s, x) => !(CHOICE_STEPS.has(s.kind) && x.kind === 'text') && !(TYPED_STEPS.has(s.kind) && x.kind !== 'text');
@@ -198,7 +199,7 @@ export function createLocator(kit) {
     for (const x of held) used.add(x);
     // A data-model name not on the page, while its expected wording is: the field was probably renamed.
     pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
-      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && y.ref !== s.field && !claimed.has(y.ref) && textIs(s, y) && (s.row == null || String(y.row ?? '') === String(s.row))); return x ? [{ step: s, control: x }] : []; });
+      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && !stepFields(s).includes(y.ref) && !claimed.has(y.ref) && textIs(s, y) && (s.row == null || String(y.row ?? '') === String(s.row))); return x ? [{ step: s, control: x }] : []; });
     // A label rule kept out of a carrier's row sections (`notWithin`): its rows are answered by
     // their own rules, or stay the agent's.
     const fenced = (s, x) => !!s.notWithin?.some((sel) => { try { return !!x.el?.closest(sel); } catch { return false; } });

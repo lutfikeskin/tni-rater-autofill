@@ -2509,3 +2509,71 @@ test('non-owned trailer physical damage: matching the interchange limit in full 
   const offCount = buildPlan(off, progressive, {}).find((s) => s.field === 'NonOwnedTrailerPhysicalDamageInput.NumberOfNonOwnedTrailers');
   assert.deepEqual([offCount.value, offCount.manualOnly], [null, true]);
 });
+
+// W49-05: Progressive AddDriver swaps DriverInputNonShredded.YearCDLIssuedUI into
+// DriverInput.YearCDLIssued after filling; both map to drivers[].cdlYear.
+test('AddDriver CDL year maps both YearCDLIssuedUI and swapped DriverInput.YearCDLIssued; non-CDL untouched (W49-05)', () => {
+  const cdl = baseRecord();
+  cdl.drivers[0] = { ...cdl.drivers[0], cdl: true, cdlYear: 2016 };
+  const step = byQ(buildPlan(cdl, progressive, { drivers: 0 }), '295E');
+  assert.equal(step.field, 'DriverInputNonShredded.YearCDLIssuedUI');
+  assert.deepEqual(step.fieldAliases, ['DriverInput.YearCDLIssued']);
+  assert.deepEqual(step.ask, ['Year CDL Issued', "What year was the Commercial Driver's License (CDL) originally issued?"]);
+  assert.equal(step.path, 'drivers[0].cdlYear');
+  assert.equal(step.value, 2016);
+  // Counterexample: non-CDL driver with no CDL year leaves the step null (never invents a year).
+  const nonCdl = baseRecord();
+  nonCdl.drivers[0] = { ...nonCdl.drivers[0], cdl: false, cdlYear: null };
+  const nonCdlStep = byQ(buildPlan(nonCdl, progressive, { drivers: 0 }), '295E');
+  assert.equal(nonCdlStep.value, null);
+});
+
+// W49-15: Progressive USDOT-prefill replaces AccountInput.DBA with DBAPrefillOptions & DBADup.
+test('BusinessOwnerInfo & BECAPopup handle DBAPrefillOptions and DBADup as agent facts while preserving AccountInput.DBA (W49-15)', () => {
+  const plan = buildPlan(baseRecord(), progressive, {});
+  const oldDba = byQ(plan, '233');
+  assert.deepEqual([oldDba.field, oldDba.ignore, oldDba.optional], ['AccountInput.DBA', true, true]);
+  const prefill = plan.find((s) => s.field === 'AccountInputNonShredded.DBAPrefillOptions');
+  const dup = plan.find((s) => s.field === 'AccountInputNonShredded.DBADup');
+  assert.ok(prefill && dup, 'both USDOT DBA fields are mapped');
+  assert.deepEqual(prefill.pages, ['BusinessOwnerInfo', 'BECAPopup']);
+  assert.deepEqual(dup.pages, ['BusinessOwnerInfo', 'BECAPopup']);
+  assert.deepEqual([prefill.source, prefill.manualOnly, prefill.value, prefill.ignore], ['fact', true, null, false]);
+  assert.deepEqual([dup.source, dup.manualOnly, dup.value, dup.ignore], ['fact', true, null, false]);
+  assert.match(prefill.note, /DBA/i);
+  assert.match(dup.note, /DBA/i);
+});
+
+// W49-17 (TNI, 2026-11-25): GA CoveragesRates LineInput.UMPDAddedOnReducedLimit extends
+// progressive.umpd: Not selected when offered, else leave to agent with unofferedNote.
+test('CoveragesRates policy-level UMPD (LineInput.UMPDAddedOnReducedLimit) extends progressive.umpd with unofferedNote (W49-17)', () => {
+  const plan = buildPlan(baseRecord(), progressive, {});
+  const policyUmpd = plan.find((s) => s.field === 'LineInput.UMPDAddedOnReducedLimit');
+  assert.ok(policyUmpd, 'policy-level UMPD rule exists');
+  assert.deepEqual([policyUmpd.tni, policyUmpd.source, policyUmpd.standard, policyUmpd.value, policyUmpd.scope],
+    ['progressive.umpd', 'standard', true, 'Not selected', 'policy']);
+  assert.deepEqual(policyUmpd.pages, ['CoveragesRates']);
+  assert.deepEqual(policyUmpd.ask, ['Uninsured Motorist Property Damage']);
+  assert.match(policyUmpd.unofferedNote, /Not selected.*deductible/i);
+  // Existing per-vehicle UMPDInput.Limit stays intact.
+  const vehUmpd = byQ(plan, '1FDD');
+  assert.deepEqual([vehUmpd.field, vehUmpd.tni, vehUmpd.value, vehUmpd.scope], ['UMPDInput.Limit', 'progressive.umpd', 'Not selected', 'vehicle']);
+});
+
+// W49-22: TellUsWhatHappened accident-fault dispute & AdditionalDetails loan company are agent facts.
+test('TellUsWhatHappened DisputeAccidentDriverAtFault and AdditionalDetails LoanLeaseCompany are agent facts, never auto-filled (W49-22)', () => {
+  const plan = buildPlan(baseRecord(), progressive, {});
+  const dispute = plan.find((s) => s.field === 'IntegrationAccidentsViolationsInput.DisputeAccidentDriverAtFault');
+  const loan = plan.find((s) => s.field === 'AdditionalOtherInterestInput.LoanLeaseCompany');
+  assert.ok(dispute && loan, 'both post-MVR / post-quote fields are mapped');
+  assert.deepEqual(dispute.pages, ['TellUsWhatHappened']);
+  assert.deepEqual(dispute.ask, ['Was this driver at fault?']);
+  assert.deepEqual([dispute.source, dispute.manualOnly, dispute.value, dispute.ignore], ['fact', true, null, false]);
+  assert.match(dispute.note, /at fault|dispute/i);
+  assert.deepEqual(loan.pages, ['AdditionalDetails']);
+  assert.deepEqual(loan.ask, ['Loan Company']);
+  assert.deepEqual([loan.source, loan.manualOnly, loan.value, loan.ignore], ['fact', true, null, false]);
+  assert.match(loan.note, /loan company|lienholder/i);
+  assert.ok(!progressive.advance.pages.includes('TellUsWhatHappened'), 'TellUsWhatHappened never auto-advances');
+  assert.ok(!progressive.advance.pages.includes('AdditionalDetails'), 'AdditionalDetails never auto-advances');
+});

@@ -741,6 +741,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
     for (const c of controls) {
       if (!mapped.has(c) || skippedField(c) || !hasValue(c) || !invalidControl(c)) continue;
       const own = allPairs.find((p) => p.control === c)?.step;
+      // Already queued for refill by answerPasses (e.g. awaiting keepWait after a transient
+      // post-DOB invalidation): let that retry run without double-burning retryOnce or adding
+      // a duplicate answer.invalid failure.
+      if (own && state.refill.has(own.id) && !state.handled.has(own.id)) continue;
       const ours = !!own && state.handled.get(own.id)?.note !== IDENTITY_NOTE
         && (!(own.keepChoice || own.keepPreset) || state.refill.has(own.id) || state.report.filled.some((x) => x.stepId === own.id));
       if (ours && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
@@ -1123,9 +1127,10 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         }
         // An answer still to give, in the second pass: the next round's.
         if (thisRound.judgeOnly) { thisRound.retry = true; continue; }
-        // An answer the page didn't keep is given again once the page and its own requests have been
-        // quiet (`keepWait`), each time, and read again first.
-        if (state.keepWait.has(step.id) && !state.keepSettled.has(step.id) && !agreesWith(step, c)) {
+        // An answer the page didn't keep (cleared, changed, or transiently marked invalid while a
+        // postback settles) is given again once the page and its own requests have been quiet
+        // (`keepWait`), each time, and read again first.
+        if (state.keepWait.has(step.id) && !state.keepSettled.has(step.id) && (!agreesWith(step, c) || invalidControl(c))) {
           cursor();
           state.keepSettled.add(step.id);
           phase('waiting');
@@ -1179,7 +1184,13 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
             changed: [...before.keys()].filter((k) => k !== mine && after.has(k) && after.get(k) !== before.get(k)).length,
           };
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
-          if (fresh) judged = fresh;
+          if (fresh) {
+            judged = fresh;
+            // If the carrier swapped the control to an aliased field after filling (e.g. Progressive
+            // YearCDLIssuedUI -> YearCDLIssued), follow the live control's key and label.
+            const freshKey = fieldKey(fresh);
+            if (freshKey !== item.key) Object.assign(item, { key: freshKey, label: fresh.label, q: fresh.q ?? null });
+          }
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || state.report.halted) {
@@ -2020,6 +2031,8 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
       }
       delete x.gone;
       delete x.offPage;
+      const key = fieldKey(c);
+      if (key !== x.key) Object.assign(x, { key, label: c.label, q: c.q ?? null });
       if (!sure) return;
       x.now = shownNow(c);
       // Not the fill's answer any more: neither what it put in nor the answer as the fill judges it
