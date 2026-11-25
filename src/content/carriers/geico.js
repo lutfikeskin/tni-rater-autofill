@@ -88,6 +88,13 @@
     // Its own components' tag prefix: a fill waits for those the page hasn't defined yet (they
     // draw no control while GEICO's script loads).
     components: 'gds-',
+    // GEICO's React/GDS redraws after coverage picks, select2 choices, and add-on toggles run
+    // server lookups (CommercialAuto*Coverage*ChangeService, SearchVin, CommercialVehicleTypes)
+    // that regularly take 3–5 s on Quote & Coverages and occasionally Vehicles (W49-01: 38
+    // page.unsettled failures and 4 round-wait halts when capped at 3–4 s). Raising the ceiling
+    // to 15 s matches server-backed carriers and GEICO's own start/keep/reset waits while fast
+    // pages still return as soon as quietMs elapses (zero extra delay).
+    settleMaxMs: (why) => (why === 'answer' || why === 'round' || why === 'list' ? 15000 : null),
     keys: {
       // A field by its data-model name (ref:GiveYear), never the render number it is drawn with.
       ref: dataName,

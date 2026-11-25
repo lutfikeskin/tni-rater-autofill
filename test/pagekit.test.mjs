@@ -11489,3 +11489,149 @@ test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswer
   assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
   assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
 });
+
+// W49-01 (2026-11-25): GEICO Quote & Coverages (and Vehicles) runs live server lookups and
+// React/GDS redraws after coverage changes, select2 picks and add-on toggles that take 3.1–4.9 s
+// (21 store quotes / 38 page.unsettled failures and 4 round-wait halts when capped at 3–4 s).
+// GEICO's adapter raises settle()'s ceiling for answer/round/list waits to 15 s while fast pages
+// still return after quietMs (zero extra delay), genuinely wedged pages still time out cleanly,
+// and non-GEICO plain pages keep their 3 s ceiling.
+test('GEICO Quote & Coverages: slow recalculation redraws (>3.5 s) settle without page.unsettled while fast pages pay no extra delay (W49-01)', async () => {
+  const makeObserver = () => {
+    const active = new Set();
+    class LiveMutationObserver {
+      constructor(cb) { this.cb = cb; this.live = false; }
+      observe() { this.live = true; active.add(this); }
+      disconnect() { this.live = false; active.delete(this); }
+      takeRecords() { return []; }
+      fire() { if (this.live) this.cb(); }
+    }
+    const mutateFor = (ms, every = 100) => {
+      if (ms <= 0) return;
+      const end = clock.Date.now() + ms;
+      const tick = () => {
+        for (const o of active) o.fire();
+        if (clock.Date.now() + every <= end) setTimeout(tick, every);
+      };
+      setTimeout(tick, every);
+    };
+    return { MutationObserver: LiveMutationObserver, mutateFor };
+  };
+
+  const runCoverage = async ({ mutateMs, adapter = 'geico' }) => {
+    const obs = makeObserver();
+    const h = harness({ adapter, pathname: adapter === 'geico' ? '/quote' : '/rater', globals: { MutationObserver: obs.MutationObserver } });
+    if (adapter === 'geico') geicoBar(h, 'Quote & Coverages');
+    const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_24001_COMP`, value: 'Not Included' });
+    comp.addEventListener('change', () => obs.mutateFor(mutateMs));
+    h.document.body.append(comp);
+    h.document.body.innerText = STALE;
+    let recalcs = 0;
+    const recalc = addButton(h, 'Recalculate');
+    recalc.onclick = () => { recalcs++; rate(h); };
+    const rules = [{ q: 'COMP', selector: '[id$="_COMP"]', ...(adapter === 'geico' ? { steps: ['Quote & Coverages'] } : {}), name: 'Comprehensive', kind: 'choice', source: 'standard', value: () => '$1,000 deductible' }];
+    const actions = adapter === 'geico' ? geico.actions.filter((a) => a.id === 'recalculate') : [];
+    const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions });
+    const report = await h.kit.fill(plan, { maxRounds: 10, replaceChoices: true });
+    return { report, comp, recalcs, h, obs };
+  };
+
+  // Slow GEICO coverage redraw (4.2 s): settles cleanly, keeps the answer, and does not hold Recalculate.
+  const slow = await runCoverage({ mutateMs: 4200 });
+  assert.equal(slow.comp.value, '$1,000 deductible');
+  assert.deepEqual(plain(slow.report.failed), [], 'no false page.unsettled on 4.2 s GEICO redraw');
+  assert.equal(slow.report.filled.length, 1);
+  assert.ok(slow.report.filled[0].timing.settleMs >= 4200, `waited through redraw (${slow.report.filled[0].timing.settleMs} ms)`);
+  assert.equal(slow.recalcs, 1, 'Recalculate is not held');
+
+  // Counterexample 1: fast GEICO page pays zero extra delay (settles right after quietMs = 150 ms).
+  const fast = await runCoverage({ mutateMs: 0 });
+  assert.deepEqual(plain(fast.report.failed), []);
+  assert.equal(fast.recalcs, 1);
+  assert.ok(fast.report.filled[0].timing.settleMs < 500, `fast page paid no extra wait (${fast.report.filled[0].timing.settleMs} ms)`);
+
+  // Counterexample 2: genuinely wedged GEICO page (mutations past 15 s) still fails with page.unsettled and holds Recalculate.
+  const stuck = await runCoverage({ mutateMs: 20000 });
+  assert.deepEqual(plain(stuck.report.failed.map((x) => [x.key, x.code])), [['cov:COMP#1', 'page.unsettled']]);
+  assert.equal(stuck.recalcs, 0, 'Recalculate stays held when page never settles');
+
+  // Counterexample 3: non-GEICO plain HTML page keeps its 3 s answer settle ceiling.
+  const plainSlow = await runCoverage({ mutateMs: 3500, adapter: null });
+  assert.deepEqual(plain(plainSlow.report.failed.map((x) => x.code)), ['page.unsettled']);
+
+  // Slow GEICO panel/AI answer() (>3.5 s redraw): settles cleanly instead of returning page.unsettled.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const sel = new SelectNode(['Not Included', '$1,000 deductible'], { id: `Id_${randomUUID()}_24002_COMP`, value: 'Not Included' });
+    sel.addEventListener('change', () => obs.mutateFor(4200));
+    h.document.body.append(sel);
+    const [res] = await h.kit.answer([{ key: 'cov:COMP#1', label: sel.label ?? 'cov:COMP#1', value: '$1,000 deductible' }]);
+    assert.equal(res.ok, true, `panel/AI answer settled on GEICO: ${JSON.stringify(res)}`);
+    assert.equal(sel.value, '$1,000 deductible');
+  }
+
+  // Slow GEICO add-on chevron toggle (why: 'round' > 3.5 s redraw): settles without halting the fill.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const card = new FakeNode('li', { id: 'Id_MotorTruckGeneralLiabilityEligibilityComboActivityData_33590', className: 'expandable-form' });
+    const icon = new FakeNode('span', { className: 'expandable-form-control', attrs: { 'data-testid': 'editIcon', tabindex: '0' } });
+    card.append(new FakeNode('p', { className: 'h4', textContent: 'Motor Truck General Liability' }), icon);
+    h.document.body.append(card);
+    icon.onclick = () => {
+      card.className = 'expandable-form expanded';
+      const r = gdsRadios('GiveMotorTruckGeneralLiabilityCoverageRequired', 57395, 'Does the customer need Motor Truck General Liability?', [['Yes', 'Yes'], ['No', 'No']]);
+      card.append(r.group);
+      obs.mutateFor(4200);
+    };
+    const record = { ...geicoRecord(), operations: { businessClass: 'Freight Hauler' }, coverage: { gl: true, glLimit: '$1M/$2M' } };
+    const plan = buildPlan(record, geico, {}).filter((s) => (s.kind === 'action' ? s.action === 'openGl' : s.field === 'GiveMotorTruckGeneralLiabilityCoverageRequired'));
+    const report = await h.kit.fill(plan, { maxRounds: 8, replaceChoices: true });
+    assert.equal(report.halted, false, `round wait settled cleanly: ${report.reason}`);
+    assert.deepEqual(plain(report.actions.map((x) => x.id)), ['openGl']);
+    assert.equal(report.filled.length, 1);
+  }
+
+  // Slow GEICO select2 commodity pick (why: 'list' > 4.5 s redraw): settles without spilling into page.unsettled.
+  {
+    const obs = makeObserver();
+    const h = harness({ adapter: 'geico', pathname: '/quote', globals: { MutationObserver: obs.MutationObserver } });
+    geicoBar(h, 'Quote & Coverages');
+    const wrap = new FakeNode('div');
+    const select = new SelectNode(['Consumer Goods - Other Consumer Goods', 'General Freight'], {
+      id: 'Id_GiveMtcHaulingCommoditiesCollect_51234',
+      name: 'Id_GiveMtcHaulingCommoditiesCollect_51234',
+      className: 'select2-hidden-accessible',
+      ariaLabel: 'Select up to four commodities the customer hauls the most',
+    });
+    select.multiple = true;
+    const box = new FakeNode('span', { className: 'select2 select2-container' });
+    const selSpan = new FakeNode('span', { className: 'select2-selection select2-selection--multiple' });
+    const search = makeInput({ className: 'select2-search__field' });
+    selSpan.append(search);
+    box.append(selSpan);
+    wrap.append(select, box);
+    h.document.body.append(wrap);
+    const results = new FakeNode('ul', { id: `select2-${select.id}-results` });
+    const item = new FakeNode('li', { className: 'select2-results__option', textContent: 'Consumer Goods - Other Consumer Goods' });
+    item.addEventListener('click', () => {
+      select.options[0].selected = true;
+      select.dispatchEvent({ type: 'change', bubbles: true });
+      obs.mutateFor(4600);
+    });
+    results.append(item);
+    search.addEventListener('input', () => { if (!results.isConnected) h.document.body.append(results); });
+    const plan = [{
+      id: 'commodities', path: 'geico.commodities', field: 'GiveMtcHaulingCommoditiesCollect',
+      steps: ['Quote & Coverages'], name: 'Commodities', kind: 'choice', source: 'derived',
+      value: 'Consumer Goods - Other Consumer Goods',
+    }];
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true });
+    assert.deepEqual(plain(report.failed), [], 'slow select2 list redraw settles without page.unsettled');
+    assert.equal(report.filled.length, 1);
+    assert.equal(select.options[0].selected, true);
+  }
+});
