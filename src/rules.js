@@ -4,10 +4,12 @@
 // becomes "drivers license"). The first rule that matches a field claims it, so order matters:
 // specific rules come before general ones.
 
-import { noPriorInsurance } from './util.js';
+import { noPriorInsurance, noProofOfPrior } from './util.js';
 
 const noPriorNote = (r) => (noPriorInsurance(r.priorInsurance?.[0])
-  ? `The intake's current insurance says "${r.priorInsurance[0].carrier}": no prior insurance. Answer it yourself.` : null);
+  ? `The intake's current insurance says "${r.priorInsurance[0].carrier}": no prior insurance. Answer it yourself.`
+  : noProofOfPrior(r.priorInsurance?.[0])
+    ? `The intake's current insurance says "${r.priorInsurance[0].carrier}" (no proof of prior): answer it yourself.` : null);
 
 export const GENERIC_RULES = [
   // Drivers

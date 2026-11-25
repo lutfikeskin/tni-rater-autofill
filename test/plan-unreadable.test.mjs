@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { parseEdit } from '../src/normalize.js';
 import { progressive } from '../src/carriers/progressive.js';
+import { progressivePa } from '../src/carriers/progressive-pa.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 
@@ -180,4 +181,95 @@ test('AmWINS: an invalid VIN is left out of the VIN list and the trailer line, a
   const ok = planFor(units([VALID, '1FTBR3X88MKA12399']), amwins, {}).find((s) => s.path === 'amwins.vinList');
   assert.equal(ok.value, `${VALID}\n1FTBR3X88MKA12399`);
   assert.equal(ok.warn, null);
+});
+
+// W49-20: an unreadable owner or driver DOB (flagged dob.invalid) must be held through UNREADABLE
+// quoting the raw text across all carriers (including derived owner DOB steps like Progressive
+// BusinessOwnerDOB / NoHitCredit.DOB, AmWINS #ownerDob, GEICO owner GiveDateOfBirth, and
+// Progressive PA Named Insured & Driver DOB), while valid MM/DD/YYYY DOBs fill unchanged.
+test('W49-20: unreadable owner and driver DOB (dob.invalid) is held quoting raw text across all carriers', () => {
+  const withOwnerDob = (dob) => {
+    const r = record();
+    r.drivers[0].dob = dob;
+    return r;
+  };
+  for (const badDob of ['13/45/1980', '02/30/1980', 'not-a-date']) {
+    const r = withOwnerDob(badDob);
+    const progPlan = planFor(r, progressive, { drivers: 0 });
+    for (const q of ['2BB', '1B8B', '28A7']) {
+      const s = progPlan.find((x) => x.q === q);
+      assert.equal(s.value, null, `progressive ${q} (${badDob}): not typed`);
+      assert.equal(s.manualOnly, true, `progressive ${q} (${badDob}): manualOnly`);
+      assert.equal(s.resolution.status, 'agent', `progressive ${q} (${badDob}): agent`);
+      assert.ok(s.note.includes(`"${badDob}"`), `progressive ${q}: quotes raw text (${s.note})`);
+    }
+    const amwinsPlan = planFor(r, amwins, { drivers: 0 });
+    for (const sel of ['#ownerDob', '#driversPanel > .app-rp-section[data-id="0"] [data-id="dateOfBirth"]']) {
+      const s = amwinsPlan.find((x) => x.selector === sel);
+      assert.equal(s.value, null, `amwins ${sel} (${badDob}): not typed`);
+      assert.equal(s.manualOnly, true, `amwins ${sel} (${badDob}): manualOnly`);
+      assert.equal(s.resolution.status, 'agent', `amwins ${sel} (${badDob}): agent`);
+      assert.ok(s.note.includes(`"${badDob}"`), `amwins ${sel}: quotes raw text (${s.note})`);
+    }
+    // AmWINS licenseYear (birth year + 17) must not compute a year from an impossible calendar date.
+    const licYr = amwinsPlan.find((x) => x.selector === '#driversPanel > .app-rp-section[data-id="0"] [data-id="licenseYear"]');
+    assert.equal(licYr.value, null, `amwins licenseYear (${badDob}): not computed`);
+    assert.equal(licYr.source, 'fact', `amwins licenseYear (${badDob}): fact`);
+    const geicoOwner = planFor(r, geico, { drivers: 0 }).find((x) => x.concept === 'owner.dob');
+    assert.equal(geicoOwner.value, null, `geico owner.dob (${badDob}): not typed`);
+    assert.equal(geicoOwner.manualOnly, true, `geico owner.dob (${badDob}): manualOnly`);
+    assert.equal(geicoOwner.resolution.status, 'agent', `geico owner.dob (${badDob}): agent`);
+    assert.ok(geicoOwner.note.includes(`"${badDob}"`), `geico owner.dob: quotes raw text (${geicoOwner.note})`);
+    const paPlan = planFor({
+      ...r,
+      product: 'personal-auto',
+      drivers: [{ first: 'Zed', last: 'Other', relation: 'Insured', dob: badDob }],
+    }, progressivePa, {});
+    for (const concept of ['owner.dob', 'driver.dob']) {
+      const s = paPlan.find((x) => x.concept === concept && !x.ignore);
+      assert.equal(s.value, null, `progressive-pa ${concept} (${badDob}): not typed`);
+      assert.equal(s.manualOnly, true, `progressive-pa ${concept} (${badDob}): manualOnly`);
+      assert.equal(s.resolution.status, 'agent', `progressive-pa ${concept} (${badDob}): agent`);
+      assert.ok(s.note.includes(`"${badDob}"`), `progressive-pa ${concept}: quotes raw text (${s.note})`);
+    }
+  }
+  // Counterexample: valid MM/DD/YYYY DOBs fill unchanged across every carrier.
+  const valid = withOwnerDob('05/06/1970');
+  assert.equal(planFor(valid, progressive, { drivers: 0 }).find((x) => x.q === '2BB').value, '05/06/1970');
+  assert.equal(planFor(valid, progressive, { drivers: 0 }).find((x) => x.q === '1B8B').value, '05/06/1970');
+  assert.equal(planFor(valid, amwins, { drivers: 0 }).find((x) => x.selector === '#ownerDob').value, '05/06/1970');
+  assert.equal(planFor(valid, amwins, { drivers: 0 }).find((x) => x.selector === '#driversPanel > .app-rp-section[data-id="0"] [data-id="licenseYear"]').value, '1987');
+  assert.equal(planFor(valid, geico, { drivers: 0 }).find((x) => x.concept === 'owner.dob').value, '05/06/1970');
+  const validPa = planFor({
+    ...valid,
+    product: 'personal-auto',
+    drivers: [{ first: 'Zed', last: 'Other', relation: 'Insured', dob: '05/06/1970' }],
+  }, progressivePa, {});
+  assert.equal(validPa.find((x) => x.concept === 'owner.dob').value, '05/06/1970');
+  assert.equal(validPa.find((x) => x.concept === 'driver.dob' && !x.ignore).value, '05/06/1970');
+});
+
+// W49-19: bare "Other" in coverage.autoLiabLimit is held as Needs you quoting the raw text if
+// present on a record (e.g., chosen in the panel), while real limits fill unchanged.
+test('W49-19: bare "Other" in coverage.autoLiabLimit is held across carriers, real limits fill', () => {
+  const other = { ...record(), coverage: { autoLiability: 'Yes', autoLiabLimit: 'Other', cargo: false } };
+  /** @type {Array<{ carrier: any, find: (p: any[]) => any }>} */
+  const cases = [
+    { carrier: amwins, find: (p) => p.find((x) => x.path === 'coverage.autoLiabLimit') },
+    { carrier: progressive, find: (p) => p.find((x) => x.q === '1D97') },
+    { carrier: geico, find: (p) => p.find((x) => x.path === 'coverage.autoLiabLimit' && !x.ignore) },
+  ];
+  for (const { carrier, find } of cases) {
+    const step = find(planFor(other, carrier, {}));
+    assert.equal(step.value, null, `${carrier.id}: not filled with "Other"`);
+    assert.equal(step.manualOnly, true, `${carrier.id}: manualOnly`);
+    assert.equal(step.resolution.status, 'agent', `${carrier.id}: agent`);
+    assert.match(step.note, /"Other"/, `${carrier.id}: quotes raw text`);
+  }
+  for (const limit of ['$1,000,000', '$1M CSL', 'State Minimum']) {
+    const good = { ...record(), coverage: { autoLiability: 'Yes', autoLiabLimit: limit, cargo: false } };
+    assert.equal(planFor(good, amwins, {}).find((x) => x.path === 'coverage.autoLiabLimit').value, limit);
+    assert.equal(planFor(good, progressive, {}).find((x) => x.q === '1D97').value, limit);
+    assert.equal(planFor(good, geico, {}).find((x) => x.path === 'coverage.autoLiabLimit' && !x.ignore).value, limit);
+  }
 });

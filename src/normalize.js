@@ -6,7 +6,7 @@
 // client wrote it and gets a warning instead.
 
 import { stateCode } from './quote-state.js';
-import { otherNotes, noPriorInsurance, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
+import { otherNotes, noPriorInsurance, noProofOfPrior, companyName, quotedCarriersOf, priorInsuranceAssumed, priorPolicyExpired, priorPolicyExpiredBy, priorPolicyNotAuto } from './util.js';
 import { set } from './shared/record-paths.js';
 import { ownerRow, ownerRowNameDiffers } from './answers/owner.js';
 import { clean, cleanMultiline, parseLicense, plainLicense, splitName, toDate, toInt, toMoney, toPhone, vinProblem, yesNo } from './shared/parse.js';
@@ -826,6 +826,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // the form fields it was read from, so the panel shows it there (intake-source.js sourcePlace).
   /** @type {Record<string, string[]>} */
   const readFrom = {};
+  // Bare "Other" in auto_liab_limit names no dollar limit (W49-19, matching W45-06 on
+  // priorInsurance[0].limit): treat as unset (null) with a check quoting the raw text.
+  const rawAutoLiabLimit = txt('auto_liab_limit');
+  const autoLiabLimitOther = rawAutoLiabLimit != null && OTHER_LIMIT.test(rawAutoLiabLimit);
   const record = {
     product: 'commercial-auto',
     applicant: {
@@ -886,7 +890,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     priorInsurance: [],
     coverage: {
       autoLiability: txt('auto_liability'),
-      autoLiabLimit: txt('auto_liab_limit'),
+      autoLiabLimit: autoLiabLimitOther ? null : rawAutoLiabLimit,
       cargo: yesNo(raw.cargo_cov),
       cargoLimit: null,
       cargoDeductible: null,
@@ -1126,16 +1130,21 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
   };
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
-  // "No", "NO POP", "None" as the carrier without an expiration date is no prior insurance (TNI,
-  // 2026-10-09: "Personal Auto", "no POP", "State Minimum" is no prior). It stays on the record,
-  // as written, so the panel's Current insurance shows it; carriers fill and disclose nothing
-  // from it (noPriorInsurance).
+  // "No", "None", "No prior", "No insurance", "N/A" as the carrier without an expiration date is
+  // no prior insurance (TNI, 2026-10-09; W48-08). "NO POP" (no proof of prior) without an
+  // expiration date does not rule out personal or commercial auto insurance, so it is unknown and
+  // left to the agent (TNI, 2026-11-25, W49-04). Both stay on the record as written so the panel's
+  // Current insurance shows them; carriers disclose nothing from either.
   // As written: "None" and "N/A" read as blank otherwise, and a blank carrier is no answer.
   const carrierAsWritten = String(raw.ins_carrier_1 ?? '').replace(/\s+/g, ' ').trim();
   const noPrior = noPriorInsurance({ carrier: carrierAsWritten, expiration: prior.expiration });
+  const noPop = noProofOfPrior({ carrier: carrierAsWritten, expiration: prior.expiration });
   if (noPrior) {
     record.priorInsurance.push({ ...prior, carrier: carrierAsWritten });
     info('prior.none', 'priorInsurance', `Current insurance says "${carrierAsWritten}": treated as not currently insured.`);
+  } else if (noPop) {
+    record.priorInsurance.push({ ...prior, carrier: carrierAsWritten });
+    info('prior.no-pop', 'priorInsurance', `Current insurance says "${carrierAsWritten}" (no proof of prior): doesn't say whether the client has personal or commercial auto insurance, so current-insurance questions are left to you.`);
   } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     // The current commercial auto policy is with a carrier the panel quotes (TNI, 2026-10-26: answer
@@ -1157,7 +1166,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   record.coverage.cargoAsWritten = txt('cargo_limit_ded');
   for (const [code, path, msg] of cargoChecks(record.coverage)) check(code, path, msg);
   // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
-  if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
+  // Bare "Other" names no amount (W49-19): unset above, flagged here quoting the raw text.
+  if (autoLiabLimitOther) check('auto-limit.other', 'coverage.autoLiabLimit', `Auto liability limit says "${rawAutoLiabLimit}", with no amount: enter the limit yourself.`);
+  else if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.');
 
   // --- Claims box -----------------------------------------------------------------------------
@@ -1249,6 +1260,7 @@ export function parseEdit(kind, text) {
 // unusual age, a name that differs, a note; the garaging address's checks, about how the whole
 // address was split, not one box), and for an invalid value the agent emptied: those stay as the
 // agent left them. `year`: this year.
+const OTHER_LIMIT = /^other$/i;
 const MISSING_CHECKS = new Set(['dob.missing', 'license.missing', 'license-state.missing', 'vin.missing', 'vehicle-type.missing', 'cdl-year.missing',
   'eld-brand.missing', 'filings-which.missing', 'auto-limit.missing', 'gl-limit.missing']);
 export function checkHolds(code, value, year) {
@@ -1259,6 +1271,7 @@ export function checkHolds(code, value, year) {
   if (blank) return undefined;
   const n = toInt(s);
   switch (code) {
+    case 'auto-limit.other': return OTHER_LIMIT.test(s);
     case 'dob.invalid': return !toDate(s);
     case 'vehicle-year.invalid': return !n || n < 1950 || n > year + 1;
     case 'vehicle-value.invalid': return toMoney(s) == null;
@@ -1501,8 +1514,12 @@ const BOX_CHECKS = [
   { match: /^coverage\.(cargo|cargoLimit|cargoDeductible)$/, codes: ['cargo-limit.missing', 'cargo-limit.implausible', 'cargo-deductible.missing'],
     // The agent's own amounts: the box as written no longer says them, so it isn't quoted.
     run: (r) => cargoChecks({ ...r.coverage, cargoAsWritten: null }).map(([code, path, msg]) => chk(code, path, msg)) },
-  { match: /^coverage\.(autoLiability|autoLiabLimit)$/, codes: ['auto-limit.missing'], run: (r) => ((r.coverage?.autoLiability === 'Yes' || nonTruckingAnswer(r.coverage?.autoLiability)) && !r.coverage.autoLiabLimit
-    ? [chk('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.')] : []) },
+  { match: /^coverage\.(autoLiability|autoLiabLimit)$/, codes: ['auto-limit.missing', 'auto-limit.other'], run: (r) => {
+    const v = String(r.coverage?.autoLiabLimit ?? '').trim();
+    if (OTHER_LIMIT.test(v)) return [chk('auto-limit.other', 'coverage.autoLiabLimit', `Auto liability limit says "${v}", with no amount: enter the limit yourself.`)];
+    return (r.coverage?.autoLiability === 'Yes' || nonTruckingAnswer(r.coverage?.autoLiability)) && !v
+      ? [chk('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.')] : [];
+  } },
   { match: /^coverage\.(gl|glLimit)$/, codes: ['gl-limit.missing'], run: (r) => (r.coverage?.gl && !r.coverage.glLimit
     ? [chk('gl-limit.missing', 'coverage.glLimit', 'No GL limit. TNI default is $1M/$2M: confirm with the client.')] : []) },
   // The current policy's expiration: a date, and whether it has expired (priorExpiredChecks).
@@ -1510,25 +1527,25 @@ const BOX_CHECKS = [
     const prior = r.priorInsurance?.[0];
     if (!prior || prior.expiration == null) return [];
     if (!toDate(prior.expiration)) return [chk('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`)];
-    return noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
+    return noPriorInsurance(prior) || noProofOfPrior(prior) ? [] : priorExpiredChecks(r, prior);
   } },
   // The current policy's boxes together (and the application date, which says whether it has
   // expired): the boxes left blank, and whether proof of prior insurance is still assumed (review
-  // of PR #367, CodeRabbit). A policy no box of which is filled any more, or "no prior", has none.
+  // of PR #367, CodeRabbit). A policy no box of which is filled any more, or "no prior" / "NO POP", has none.
   { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.incomplete'], at: () => 'priorInsurance[0]', run: (r) => {
     const prior = r.priorInsurance?.[0];
-    if (!prior || noPriorInsurance(prior) || !(prior.type || prior.carrier || prior.limit || prior.expiration)) return [];
+    if (!prior || noPriorInsurance(prior) || noProofOfPrior(prior) || !(prior.type || prior.carrier || prior.limit || prior.expiration)) return [];
     return priorIncompleteChecks(r, prior);
   } },
   // With a carrier the panel quotes: a current commercial auto policy (quotedCarrierPolicy reads the
   // carrier, the type and whether it has expired).
-  { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.carrier-is-quoted'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) ? priorQuotedChecks(r.priorInsurance[0]) : []) },
-  { match: /^priorInsurance\[0\]\.type$/, codes: ['prior.personal-auto'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) ? priorPersonalAutoNotes(r.priorInsurance[0]) : []) },
+  { match: /^priorInsurance\[0\]\.(type|carrier|limit|expiration)$|^applicant\.applicationDate$/, codes: ['prior.carrier-is-quoted'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) && !noProofOfPrior(r.priorInsurance[0]) ? priorQuotedChecks(r.priorInsurance[0]) : []) },
+  { match: /^priorInsurance\[0\]\.type$/, codes: ['prior.personal-auto'], run: (r) => (r.priorInsurance?.[0] && !noPriorInsurance(r.priorInsurance[0]) && !noProofOfPrior(r.priorInsurance[0]) ? priorPersonalAutoNotes(r.priorInsurance[0]) : []) },
   // The application date: a current policy expired before it is expired too (priorExpiredChecks),
   // and the check names the date (review of PR #367, CodeRabbit).
   { match: /^applicant\.applicationDate$/, codes: ['prior-expiration.expired'], at: () => 'priorInsurance[0].expiration', run: (r) => {
     const prior = r.priorInsurance?.[0];
-    return !prior || !toDate(prior.expiration) || noPriorInsurance(prior) ? [] : priorExpiredChecks(r, prior);
+    return !prior || !toDate(prior.expiration) || noPriorInsurance(prior) || noProofOfPrior(prior) ? [] : priorExpiredChecks(r, prior);
   } },
 ];
 

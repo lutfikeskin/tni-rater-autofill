@@ -9,7 +9,7 @@ import { parseAddress } from '../src/shared/address.js';
 import { parseLicense, toDate, toMoney, vinProblem } from '../src/shared/parse.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
-import { noPriorInsurance } from '../src/util.js';
+import { noPriorInsurance, noProofOfPrior } from '../src/util.js';
 import { set } from '../src/shared/record-paths.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { owner, ownerDrivesAnswered } from '../src/answers/owner.js';
@@ -722,18 +722,22 @@ test('a blank DOT/MC section is a valid absence, not a missing-data warning', ()
   assert.equal(noDot.warnings.some((warning) => warning.code === 'dot.missing'), false);
 });
 
-test('"NO POP" as the current carrier means not currently insured, without a warning, and stays on the panel', () => {
+test('"NO POP" as the current carrier is unknown (no proof of prior), stays on the panel, and leaves current insurance to the agent (TNI, 2026-11-25, W49-04)', () => {
   const r = normalizeIntake({ ...raw, ins_type_1: 'Select*', ins_carrier_1: 'NO POP ', ins_limit_1: 'Select*', ins_exp_1: 'n/a' }, { today: new Date('2026-09-30') });
   assert.equal(r.record.priorInsurance.length, 1);
   assert.equal(r.record.priorInsurance[0].carrier, 'NO POP');
-  assert.ok(noPriorInsurance(r.record.priorInsurance[0]));
+  assert.ok(noProofOfPrior(r.record.priorInsurance[0]));
+  assert.equal(noPriorInsurance(r.record.priorInsurance[0]), false);
+  assert.ok(r.warnings.some((w) => w.code === 'prior.no-pop'));
   assert.ok(!r.warnings.some((w) => w.code === 'prior.incomplete'));
 });
 
-// WA run 2026-10-09: "Personal Auto", "no POP", "State Minimum", no expiration. TNI: no prior.
-test('"no POP" or "No" as the carrier without an expiration date is no prior, whatever the type and limit', async () => {
+// Explicit "No", "NONE", "No insurance", "No prior" without an expiration date are no prior (W48-08).
+// "NO POP" / "no POP" without an expiration date is unknown (no proof of prior): left to the agent
+// on Progressive & GEICO and omitted from AmWINS disclosure (TNI, 2026-11-25, W49-04).
+test('"No" / "NONE" / "No insurance" without an expiration date is no prior; "no POP" is unknown (left to agent)', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
-  for (const carrier of ['no POP', 'No', 'NONE']) {
+  for (const carrier of ['No', 'NONE', 'No insurance', 'No prior']) {
     const r = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: ` ${carrier} `, ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
     assert.deepEqual(r.record.priorInsurance, [{ type: 'Personal Auto', carrier, limit: 'State Minimum', expiration: null }], `${carrier}: shown as written`);
     assert.ok(noPriorInsurance(r.record.priorInsurance[0]), carrier);
@@ -749,12 +753,48 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
     const generic = buildPlan(r.record, { name: 'generic', fields: [], useGenericRules: true }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
     assert.ok(generic.length && generic.every((s) => !s.ignore && s.value == null && /no prior insurance/.test(s.note ?? '')), `${carrier}: generic prior questions left to the agent, not filled or skipped`);
   }
+  for (const carrier of ['no POP', 'NO POP', 'No POP']) {
+    const r = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: ` ${carrier} `, ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-11-25') });
+    assert.deepEqual(r.record.priorInsurance, [{ type: 'Personal Auto', carrier, limit: 'State Minimum', expiration: null }], `${carrier}: shown as written`);
+    assert.ok(noProofOfPrior(r.record.priorInsurance[0]), carrier);
+    assert.equal(noPriorInsurance(r.record.priorInsurance[0]), false, carrier);
+    assert.ok(r.warnings.some((w) => w.code === 'prior.no-pop'), carrier);
+    assert.ok(!r.warnings.some((w) => /^prior\.(none|incomplete|personal-auto)$/.test(w.code)), carrier);
+    const disclosure = buildPlan(r.record, amwins, {}).find((s) => /^Disclosure details/.test(s.name ?? ''));
+    assert.doesNotMatch(disclosure.value ?? '', /POP|prior/i, `${carrier}: nothing about prior insurance in the disclosure`);
+    const steps = buildPlan(r.record, progressive, {});
+    const insured = steps.find((s) => s.name === 'Currently insured');
+    assert.deepEqual([insured.value, insured.source, insured.manualOnly], [null, 'fact', true], `${carrier}: left to agent`);
+    const generic = buildPlan(r.record, { name: 'generic', fields: [], useGenericRules: true }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
+    assert.ok(generic.length && generic.every((s) => !s.ignore && s.value == null && /no proof of prior/.test(s.note ?? '')), `${carrier}: generic prior questions left to the agent`);
+  }
   // An expiration date means a policy: kept, as is a named carrier without one.
   const dated = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'no POP', ins_limit_1: 'State Minimum', ins_exp_1: '12/01/2026' }, { today: new Date('2026-10-09') });
   assert.equal(dated.record.priorInsurance.length, 1);
   assert.ok(!noPriorInsurance(dated.record.priorInsurance[0]));
+  assert.ok(!noProofOfPrior(dated.record.priorInsurance[0]));
   const named = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'Nationwide', ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
   assert.equal(named.record.priorInsurance[0].carrier, 'Nationwide');
+});
+
+// W49-19: bare "Other" in auto_liab_limit is unset (null) with a check quoting the raw text,
+// while real limits normalize unchanged.
+test('bare "Other" in auto liability limit is unset with a check quoting it; real limits stay (W49-19)', () => {
+  for (const rawLimit of ['Other', ' other ', 'OTHER']) {
+    const r = normalizeIntake({ ...raw, auto_liability: 'Yes', auto_liab_limit: rawLimit }, { today: new Date('2026-11-25') });
+    assert.equal(r.record.coverage.autoLiabLimit, null, rawLimit);
+    const w = r.warnings.find((x) => x.code === 'auto-limit.other');
+    assert.ok(w, `${rawLimit}: auto-limit.other warning emitted`);
+    assert.equal(w.level, 'check');
+    assert.equal(w.path, 'coverage.autoLiabLimit');
+    assert.ok(w.msg.includes(`"${rawLimit.trim()}"`), w.msg);
+    assert.equal(r.warnings.some((x) => x.code === 'auto-limit.missing'), false, 'no duplicate missing check');
+  }
+  for (const limit of ['$1,000,000', '$1M CSL', 'State Minimum']) {
+    const r = normalizeIntake({ ...raw, auto_liability: 'Yes', auto_liab_limit: limit }, { today: new Date('2026-11-25') });
+    assert.equal(r.record.coverage.autoLiabLimit, limit, limit);
+    assert.equal(r.warnings.some((x) => x.code === 'auto-limit.other'), false, limit);
+  }
 });
 
 // TNI, 2026-10-26 (answers to PR #189's questions 9 and 18): the intake check screen, shown when the
@@ -2328,10 +2368,10 @@ test('"CLEAN" as the claims box\'s answer is no claims; "clean" in a sentence is
     assert.equal(claims(box).claims.hasClaims, null, box);
   }
   assert.equal(claims('', 'CLEAN').claims.hasClaims, null, 'only the claims box answers the claims question');
-  // Every carrier that asks it: AmWINS prior loss No (was the agent's), Progressive's driver
-  // question from the intake (was its standard No). GEICO maps no claims question.
+  // Progressive's driver question reads the intake's explicit No; AmWINS prior loss is always
+  // TNI's standard No (W48-12, 2026-11-25). GEICO maps no claims question.
   const r = claims('CLEAN');
-  const loss = buildPlan(r, amwins).find((s) => s.name === 'Any prior loss');
+  const loss = buildPlan(r, amwins).find((s) => /^Any prior loss/.test(s.name ?? ''));
   assert.equal(loss.value, false);
   assert.equal(loss.note, null);
   const driver = buildPlan(r, progressive).find((s) => s.q === '28F5');
@@ -2391,8 +2431,8 @@ test('correcting the claims box recomputes the claims answer and its notes, unle
   assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [false, null]);
   assert.ok(correct(intake, 'claims.text', 'Yes - 1 accident 2024').includes('claims.hasClaims'));
   assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [true, null]);
-  assert.equal(buildPlan(intake.record, amwins).find((s) => s.name === 'Any prior loss').value, true, 'AmWINS prior loss follows the box');
-  assert.equal(buildPlan(intake.record, progressive).find((s) => s.q === '28F5').value, true, 'so does Progressive\'s claims question');
+  assert.equal(buildPlan(intake.record, amwins).find((s) => /^Any prior loss/.test(s.name ?? '')).value, false, 'AmWINS prior loss stays TNI standard No (W48-12)');
+  assert.equal(buildPlan(intake.record, progressive).find((s) => s.q === '28F5').value, true, 'Progressive\'s claims question follows the box');
   correct(intake, 'claims.text', 'Not sure\nDec page will be provided');
   assert.deepEqual([intake.record.claims.hasClaims, intake.record.claims.notes], [null, 'Not sure\nDec page will be provided'], 'neither Yes nor No: unset, every line a note');
   // The agent's own answer stays theirs; the notes still follow the box.
@@ -2597,7 +2637,7 @@ test('the edit-time box checks say what load-time normalization says, for the sa
       [[{ cargo_cov: 'Yes', cargo_limit_ded: '' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', ''], ['coverage.cargoDeductible', '']]],
         [{ cargo_cov: 'Yes', cargo_limit_ded: '$100,000' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', '100000'], ['coverage.cargoDeductible', '']]]],
       [[{ cargo_cov: 'Yes', cargo_limit_ded: '$100,000 / $1,000' }, [['coverage.cargo', 'true'], ['coverage.cargoLimit', '100000'], ['coverage.cargoDeductible', '1000']]]]],
-    [['auto-limit.missing'], 'coverage.autoLiabLimit', [[{ auto_liability: 'Yes', auto_liab_limit: '' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '']]]], [[{ auto_liability: 'Yes', auto_liab_limit: '$1M CSL' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '$1M CSL']]]]],
+    [['auto-limit.missing', 'auto-limit.other'], 'coverage.autoLiabLimit', [[{ auto_liability: 'Yes', auto_liab_limit: '' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '']]], [{ auto_liability: 'Yes', auto_liab_limit: 'Other' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', 'Other']]]], [[{ auto_liability: 'Yes', auto_liab_limit: '$1M CSL' }, [['coverage.autoLiability', 'Yes'], ['coverage.autoLiabLimit', '$1M CSL']]]]],
     [['gl-limit.missing'], 'coverage.glLimit', [[{ gen_liability: 'Yes', gen_liab_limit: '' }, [['coverage.gl', 'true'], ['coverage.glLimit', '']]]], [[{ gen_liability: 'Yes', gen_liab_limit: '$1M/$2M' }, [['coverage.gl', 'true'], ['coverage.glLimit', '$1M/$2M']]]]],
     [['prior-expiration.invalid', 'prior-expiration.expired'], 'priorInsurance[0].expiration',
       [[{ ins_exp_1: '13/45/2026' }, [['priorInsurance[0].expiration', '13/45/2026']]], [{ ins_exp_1: '01/15/2026' }, [['priorInsurance[0].expiration', '01/15/2026']]]],
