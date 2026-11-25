@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Drivers</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">License History</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Select Drivers with Incidents</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="future" type="menu" variation="accordion">
+      <span slot="title">Discounts</span>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Groups or Organizations</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div id="Id_AboveWidgetText_Container_91563">
+        <div><gds-section-header>Incidents</gds-section-header></div>
+        <div><gds-section-header><strong>Has any driver had any of the following?</strong></gds-section-header></div>
+        <gds-list-wrapper type="bullet-list" role="list">
+          <gds-simple-list-item type="bullet-list" role="listitem">Accidents (regardless of fault) in the last 5 years?</gds-simple-list-item>
+          <gds-simple-list-item type="bullet-list" role="listitem">Traffic Tickets in the last 5 years?</gds-simple-list-item>
+          <gds-simple-list-item type="bullet-list" role="listitem">DUIs in the last 10 years?</gds-simple-list-item>
+        </gds-list-wrapper>
+      </div>
+
+      <ul id="expandable-form-Id_7d93d952e11f4acd99b352e293b237e7" class="expandable-form">
+        <li class="add-state">
+          <div class="expandable-form-headline">
+            <div class="left-side"><p>Add Incident</p></div>
+            <div class="right-side">
+              <span class="expandable-form-control expandable-form-add-icon geico-icon icon-expand" data-testid="addIcon" tabindex="0"></span>
+            </div>
+          </div>
+          <div class="expandable-form-content-container" aria-hidden="true"></div>
+        </li>
+      </ul>
+
+      <div id="Id_HaveAutoIncidentAdaptiveActionSet_Container_93643">
+        <div class="button-group-right">
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Next
+          </gds-button>
+        </div>
+      </div>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

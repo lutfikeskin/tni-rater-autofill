@@ -122,6 +122,46 @@ function agentEdited(page, key) {
   return !!keys && (keys.has(key) || keys.has(String(key ?? '').match(/^(.+)#\d+$/)?.[1]));
 }
 
+// Step/page scope for direct rater-page edits (`agentPageEdits`, which suppresses automatic
+// Continue/Next on that step/page only). Like editScope, except one-address carriers with
+// `layoutSteps` (AmWINS, GEICO PA, Progressive PA) also qualify by `|s:<step>` so an edit on one
+// step never carries over to suppress auto-advance on the next step.
+function pageEditScope(page, carrier = state.tab?.carrier, step = tabStep(carrier), { active = state.active, shown = state.unitShown } = {}) {
+  if (formScoped(carrier)) return editScope(page, carrier, step, { active, shown });
+  if (carrier?.layoutSteps && step) return `${page}|s:${step}`;
+  return editScope(page, carrier, step, { active, shown });
+}
+
+// All scopes to record in `agentPageEdits` when the agent edits directly on the rater page.
+function pageEditScopes(page, carrier = state.tab?.carrier, step = tabStep(carrier), forms = null, { active = state.active, bound = state.unitForms, shown = state.unitShown } = {}) {
+  if (!page) return [];
+  const scopes = new Set();
+  if (formScoped(carrier)) {
+    for (const s of changeScopes(page, carrier, step, forms, { active, bound })) scopes.add(s);
+    scopes.add(editScope(page, carrier, step, { active, shown }));
+  } else {
+    scopes.add(pageEditScope(page, carrier, step, { active, shown }));
+  }
+  return [...scopes].filter(Boolean);
+}
+
+// Whether the agent edited directly on the rater page for this step/page (suppressing automatic
+// Continue/Next on this step/page only).
+function hasAgentPageEdit(maps, page, carrier = state.tab?.carrier, step = tabStep(carrier), { active = maps?.active ?? state.active, shown = maps?.unitShown ?? state.unitShown, forms = null } = {}) {
+  const edits = maps?.agentPageEdits;
+  if (!edits?.size || !page) return false;
+  if (edits.has(pageEditScope(page, carrier, step, { active, shown }))) return true;
+  if (formScoped(carrier)) {
+    if (shown?.step === step && shown?.id && edits.has(`${page}|f:${shown.id}`)) return true;
+    if (Array.isArray(forms)) {
+      for (const s of changeScopes(page, carrier, step, forms, { active, bound: maps?.unitForms ?? state.unitForms })) {
+        if (edits.has(s)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
 // pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
 // its name as the panel shows it.
@@ -135,4 +175,4 @@ function unitNameFor(carrier, page, active, record) {
   return { list: spec.list, text: spec.text, names: units.map(words), active: i, label: [units[i]?.first, units[i]?.last].filter(Boolean).join(' ') || 'the selected driver' };
 }
 
-export { agentEdited, changeScopes, editScope, fillSkip, fillSkipBy, formScoped, stepScope, tabStep, unitNameFor, unitScope };
+export { agentEdited, changeScopes, editScope, fillSkip, fillSkipBy, formScoped, hasAgentPageEdit, pageEditScope, pageEditScopes, stepScope, tabStep, unitNameFor, unitScope };

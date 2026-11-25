@@ -76,13 +76,14 @@ export const CARRIERS = [
 ];
 
 // Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive,
-// test/fixtures/amwins, test/fixtures/geico).
+// test/fixtures/amwins, test/fixtures/geico, test/fixtures/progressive-pa, test/fixtures/geico-pa).
 // They get the real carrier's rules, but aren't real quotes, so usage isn't recorded for them.
 const PRACTICE = [
   { path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' },
   { path: /^\/test\/fixtures\/amwins\//, carrier: 'amwins' },
   { path: /^\/test\/fixtures\/geico\//, carrier: 'geico' },
   { path: /^\/test\/fixtures\/progressive-pa\//, carrier: 'progressive-pa' },
+  { path: /^\/test\/fixtures\/geico-pa\//, carrier: 'geico-pa' },
 ];
 
 // The raters the panel offers (each carrier with a `display`), in CARRIERS' order: the "open a

@@ -206,7 +206,7 @@ export function eventReader(eventsDir) {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const exact = (iso) => (iso ? `${String(iso).slice(0, 16).replace('T', ' ')} UTC` : '');
 const fmt = (n) => Number(n ?? 0).toLocaleString('en-US');
-const CARRIERS = { progressive: 'Progressive', geico: 'GEICO', amwins: 'AmWINS', 'progressive-pa': 'Progressive Personal Auto' };
+const CARRIERS = { progressive: 'Progressive', geico: 'GEICO', amwins: 'AmWINS', 'geico-pa': 'GEICO Personal Auto', 'progressive-pa': 'Progressive Personal Auto' };
 const carrierName = (c) => CARRIERS[c] ?? c ?? '';
 const PERIOD_NAMES = { '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days' };
 const plural = (n, one, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`;

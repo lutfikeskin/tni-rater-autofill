@@ -25,6 +25,13 @@ test('every carrier the extension quotes tells the reports each of its pages and
   // Its printed quote proposal too (W48-03), and only that page.
   assert.ok(CARRIER_REPORTS.geico.finalPage.test('/PrintQuote'));
   assert.equal(CARRIER_REPORTS.geico.finalPage.test('/PrintQuoteHistory'), false);
+  // GEICO Personal Auto ends on /PrintQuote or its Finalize/Payment stopSteps.
+  const geicoPa = CARRIERS.find((c) => c.id === 'geico-pa');
+  for (const step of Object.keys(geicoPa.stopSteps)) assert.ok(CARRIER_REPORTS['geico-pa'].finalPage.test(`/quote › ${step}`), step);
+  assert.equal(CARRIER_REPORTS['geico-pa'].finalPage.test('/quote › Quote Summary'), false);
+  assert.ok(CARRIER_REPORTS['geico-pa'].finalPage.test('/PrintQuote'));
+  assert.ok(CARRIER_REPORTS['geico-pa'].quotePage('/quote › Policyholder Information'));
+  assert.equal(CARRIER_REPORTS['geico-pa'].quotePage('/dashboard'), false);
 });
 
 // W48-03: a decline is the carrier's own stop, read from its config: a stop page, or a stop screen

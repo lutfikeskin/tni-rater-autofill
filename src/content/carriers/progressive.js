@@ -203,6 +203,23 @@
       optionText: (cmp) => words(cmp?.boxLabel),
       question: (cmp, el) => questionId(cmp?.id ?? el?.id),
       row: (cmp, el) => pageRow(cmp?.id ?? el?.id),
+      // Each vehicle/trailer row on CoveragesRates draws its VIN in a display div with
+      // fieldref="RiskInput.VIN" sharing that row's <page>_<row> suffix (f_r..._8_1-inputEl).
+      // Used to tell identical Year Make Model rows apart without guessing (W49-06).
+      rowIds: () => {
+        /** @type {Map<string, string | null>} */
+        const out = new Map();
+        for (const el of document.querySelectorAll('[fieldref="RiskInput.VIN"]')) {
+          if (/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) continue;
+          if (!el.getClientRects?.().length || getComputedStyle(el).visibility === 'hidden') continue;
+          const row = pageRow(el.id);
+          if (!row) continue;
+          const id = String(el.textContent ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (id.length < 11) continue;
+          out.set(row, out.has(row) && out.get(row) !== id ? null : id);
+        }
+        return out;
+      },
       // Only the field itself (or its radio group) says whether it's required; outer containers
       // carrying dctRequired made optional fields like Suffix and DBA look required.
       required: (cmp) => !!cmp?.dctRequired,

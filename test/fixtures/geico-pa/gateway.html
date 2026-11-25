@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 20px; background: #14171c; color: #f3f4f6; }
+    header, section { background: #1c2026; border: 1px solid #2d333d; padding: 14px; margin-bottom: 14px; }
+    .field { margin: 8px 0; }
+    label { margin-right: 12px; }
+  </style>
+</head>
+<body>
+  <header aria-label="Gateway header">
+    <div class="field">
+      <label><input type="radio" name="header-search-type" value="policy" checked> Policy</label>
+      <label><input type="radio" name="header-search-type" value="quote"> Quote</label>
+      <input id="search-input-id" type="text" aria-label="Search policies or quotes" placeholder="Policy or quote number">
+      <label><input id="alerts-pref-email" type="checkbox" value="email"> Email Alerts</label>
+    </div>
+  </header>
+
+  <main>
+    <section role="dialog" aria-label="Start New Quote">
+      <h1>Start New Quote</h1>
+      <div class="field">
+        <label for="start-quote-zip">Zip Code</label>
+        <input id="start-quote-zip" name="zip" type="text" maxlength="5" value="30301" aria-label="Zip Code">
+      </div>
+      <div class="field">
+        <button id="btn-search-products" type="button">Search Products</button>
+      </div>
+      <div id="lob-results"></div>
+    </section>
+  </main>
+
+  <script>
+    (() => {
+      window.__searchProductsClicks = 0;
+      window.__startQuoteClicks = 0;
+
+      const results = document.getElementById('lob-results');
+      document.getElementById('btn-search-products').addEventListener('click', () => {
+        window.__searchProductsClicks++;
+        if (document.getElementById('auto')) return;
+        results.innerHTML = `
+          <fieldset aria-label="Available Products">
+            <legend>Available Products</legend>
+            <div class="field"><label><input type="checkbox" name="lob-selection" id="auto" value="auto"> Auto</label></div>
+            <div class="field"><label><input type="checkbox" name="lob-selection" id="commercial" value="commercial"> Commercial Auto/Trucking</label></div>
+            <div class="field"><label><input type="checkbox" name="lob-selection" id="motorcycle" value="motorcycle"> Motorcycle</label></div>
+            <div class="field"><label><input type="checkbox" name="lob-selection" id="umbrella" value="umbrella"> Umbrella</label></div>
+          </fieldset>
+          <div class="field">
+            <button id="btn-start-quote" type="button">Start Quote</button>
+          </div>
+        `;
+        document.getElementById('btn-start-quote').addEventListener('click', () => {
+          window.__startQuoteClicks++;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

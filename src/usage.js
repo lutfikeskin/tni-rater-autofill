@@ -11,9 +11,13 @@
 import { toDate, toMoney } from './shared/parse.js';
 import { noPriorInsurance } from './util.js';
 import { isStandard, resolutionOf } from './resolution.js';
-import { redactionPattern } from './redaction.js';
+import { hasPrivateOptions, redactionPattern, sanitizeFieldLabel, scrubPatterns } from './redaction.js';
 import { ID_LIKE, LIMIT, PROFILE_UNITS } from './usage-schema.js';
 import { CARRIERS } from './carriers.js';
+
+// Max dropdown options kept on a fill_field event (matches page_layout's CAPTURE_OPTIONS so
+// 1,600-option controls such as GEICO GivePrimaryBusinessDescription stay well under MAX_EVENT_BYTES).
+export const FILL_FIELD_OPTIONS = 250;
 
 
 // A fill's waits by what they were for, summed over its frames (each frame's report's `waits`):
@@ -126,7 +130,7 @@ export function intakeProfile(record, { redact = (s) => s, today = new Date() } 
     .filter((v) => /^[a-z\d]{11,17}$/i.test(v)).map(looseVin);
   const words = (v, max) => {
     if (v == null || typeof v === 'object') return null;
-    const s = vins.reduce((acc, re) => acc.replace(re, '#'), redact(String(v))).replace(ID_PARTS, '#').replace(/\s+/g, ' ').trim().slice(0, max).trim();
+    const s = redact(vins.reduce((acc, re) => acc.replace(re, '#'), String(v))).replace(ID_PARTS, '#').replace(/\s+/g, ' ').trim().slice(0, max).trim();
     return /[a-z\d]/i.test(s.replace(/#/g, '')) && !ID_LIKE.test(s) ? s : null;
   };
   // A limit as written ($1M CSL, 25/50/25), else words like any other text.
@@ -224,7 +228,7 @@ export function matchIntake(record, typed) {
 export function redactor(terms) {
   const valid = terms.filter((t) => t && t.length >= 3);
   const patterns = valid.map((term) => redactionPattern(term));
-  return (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), String(s)));
+  return (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), scrubPatterns(String(s))));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -252,7 +256,7 @@ export function platformOf(nav = globalThis.navigator) {
  * @returns {CheckDismissedEvent}
  */
 export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
-  return { type: 'check_dismissed', q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label || x.name || ''), mark: x.mark ?? null };
+  return { type: 'check_dismissed', q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(sanitizeFieldLabel(tidyLabel(x.label || x.name || ''), x.key)), mark: x.mark ?? null };
 }
 
 // The agent's settings, all of them each time (`values`), so the one in force at any moment is the
@@ -332,7 +336,7 @@ export function loggedTimeline(timeline, redact, keySalt) {
   return timeline.slice(-40).map((e) => ({
     ...e,
     ...(e.key !== undefined ? { key: fieldKeyOf(e.key, redact, keySalt) } : {}),
-    ...(e.label !== undefined ? { label: redact(String(e.label)).slice(0, 120) } : {}),
+    ...(e.label !== undefined ? { label: redact(sanitizeFieldLabel(tidyLabel(String(e.label)), e.key)).slice(0, 120) } : {}),
     ...(e.button !== undefined ? { button: redact(String(e.button)).slice(0, 60) } : {}),
   }));
 }
@@ -375,7 +379,8 @@ function isComboPick(change, choices) {
  */
 export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt, step }) {
   const ours = filled.get(change.key) ?? null;
-  const typed = (change.combo && !isComboPick(change, choices))
+  const typed = hasPrivateOptions(change.key)
+    || (change.combo && !isComboPick(change, choices))
     || LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''));
   const kind = change.kind !== 'text' && typed ? 'text' : change.kind;
   /** @type {FieldChangeEvent} */
@@ -383,7 +388,7 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
     type: 'field_change',
     q: change.q ?? null,
     key: fieldKeyOf(change.key, redact, keySalt),
-    label: redact(tidyLabel(labels?.get(change.key) ?? change.label)),
+    label: redact(sanitizeFieldLabel(tidyLabel(labels?.get(change.key) ?? change.label), change.key)),
     kind,
     by: change.agent ? 'agent' : 'page',
     autofilled: ours ? ours.path : null,
@@ -432,7 +437,7 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js', 'src/shared/parse.js', 'src/shared/address.js', 'src/shared/record-paths.js', 'src/carriers/geico-pa.js', 'src/carriers/progressive-pa.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/standards.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js', 'src/resolution.js', 'src/answers/classes.js', 'src/answers/state.js', 'src/answers/vehicles.js', 'src/answers/insurance.js', 'src/answers/owner.js', 'src/answers/filings.js', 'src/answers/claims.js', 'src/answers/contact.js', 'src/quote-state.js', 'src/states.js', 'src/shared/parse.js', 'src/shared/address.js', 'src/shared/record-paths.js', 'src/carriers/geico-pa.js', 'src/carriers/progressive-pa.js', 'src/products/personal-auto/answers.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }
@@ -536,22 +541,25 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     ...(timeline ? { timeline } : {}),
   }];
   /** @type {(result: FillFieldEvent['result'], list?: string) => (x: FillItem) => FillFieldEvent} */
-  const item = (result, list = result) => (x) => ({
-    type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(tidyLabel(x.label)), path: x.path ?? null, controlKind: x.controlKind ?? null,
-    how: x.how ?? undefined,
-    ...(x.stepId != null ? meaning.get(x.stepId) : undefined),
-    // Why this answer, from its resolution (resolution.js): where it comes from (its method: intake,
-    // derived, standard, fact, attestation), a TNI standard, the agent's only (never the AI's); and
-    // a review-mode answer the agent confirms, which an item's resolution doesn't say outside the
-    // check items (never logged), so it is the item's own `review`.
-    ...fieldWhy(x, list),
-    shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
-    ...(x.code ? { code: x.code } : {}),
-    reason: x.reason ? redact(x.reason) : undefined,
-    options: x.options?.map(redact),
-    // Per-answer timing and side effects (filled answers only): see scripts/review.mjs, Speed.
-    ...(x.timing ? { timing: x.timing } : {}),
-  });
+  const item = (result, list = result) => (x) => {
+    const privateOptions = hasPrivateOptions(x.key);
+    return {
+      type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(sanitizeFieldLabel(tidyLabel(x.label), x.key)), path: x.path ?? null, controlKind: x.controlKind ?? null,
+      how: x.how ?? undefined,
+      ...(x.stepId != null ? meaning.get(x.stepId) : undefined),
+      // Why this answer, from its resolution (resolution.js): where it comes from (its method: intake,
+      // derived, standard, fact, attestation), a TNI standard, the agent's only (never the AI's); and
+      // a review-mode answer the agent confirms, which an item's resolution doesn't say outside the
+      // check items (never logged), so it is the item's own `review`.
+      ...fieldWhy(x, list),
+      shown: result === 'filled' && isChoice(x) && !privateOptions ? redact(x.shown) : undefined,
+      ...(x.code ? { code: x.code } : {}),
+      reason: x.reason ? redact(x.reason) : undefined,
+      options: privateOptions ? undefined : x.options?.slice(0, FILL_FIELD_OPTIONS).map(redact),
+      // Per-answer timing and side effects (filled answers only): see scripts/review.mjs, Speed.
+      ...(x.timing ? { timing: x.timing } : {}),
+    };
+  };
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
     ...all('kept').filter((x) => {
       if (!keptLogged || x.differs) return true;
@@ -570,10 +578,13 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     events.push({
       type: 'page_layout', carrier, page, view, ...stepField, reason: 'recalculate',
       context: { action: t.action ?? null, ms: t.ms ?? null, press: ['page', 'late', 'kit'].includes(t.press) ? t.press : null, premiumMs: t.premiumMs ?? null, requests: (t.requests ?? []).slice(0, 40) },
-      fields: (t.answers ?? []).slice(0, 60).map((x) => ({
-        label: redact(x.label ?? ''), key: fieldKeyOf(x.key, redact, keySalt), selected: redact(x.shown ?? ''), agents: !!x.agents,
-        seen: (x.seen ?? []).slice(0, 10).map(([ms, value]) => [ms, redact(value ?? '')]), putBack: !!x.putBack,
-      })),
+      fields: (t.answers ?? []).slice(0, 60).map((x) => {
+        const privateOptions = hasPrivateOptions(x.key);
+        return {
+          label: redact(sanitizeFieldLabel(tidyLabel(x.label ?? ''), x.key)), key: fieldKeyOf(x.key, redact, keySalt), selected: privateOptions ? '' : redact(x.shown ?? ''), agents: !!x.agents,
+          seen: privateOptions ? [] : (x.seen ?? []).slice(0, 10).map(([ms, value]) => [ms, redact(value ?? '')]), putBack: !!x.putBack,
+        };
+      }),
     });
   }
   return events;

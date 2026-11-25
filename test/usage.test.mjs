@@ -612,3 +612,168 @@ test('a fill run sums its frames\' waits by kind, counts and ms only', () => {
   assert.deepEqual(run.waits, { answer: { n: 4, ms: 1100, limit: 1, slack: 300 }, continue: { n: 1, ms: 800, limit: 0, slack: 500 } });
   assert.equal('waits' in fillEvents([{}], { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact: (s) => s })[0], false, 'a fill that waited for nothing says nothing');
 });
+
+// W49-03: redactor scrubs non-intake 17-char VINs and street addresses while preserving generic
+// coverage limits, vehicle descriptions, and insurance options.
+test('redactor scrubs non-intake VINs and street addresses without over-redacting generic text (W49-03)', () => {
+  const r = redactor([]);
+  // Non-intake 17-char VINs (uppercase, lowercase, inside GEICO vehicle labels).
+  assert.equal(r('2022 FORD TRANSIT (1HGCM82633A004352) Comprehensive'), '2022 FORD TRANSIT ([client]) Comprehensive');
+  assert.equal(r('VIN 1ftfw1e84mfa12345 collision'), 'VIN [client] collision');
+  // Non-intake street addresses, PO boxes, and carrier-tagged addresses.
+  for (const [input, leaked] of [
+    ['4521 Ocean Blvd, Ste 2, Miami Beach, FL 33139', ['4521', 'Ocean', 'Miami', '33139']],
+    ['742 Evergreen Terrace', ['742', 'Evergreen']],
+    ['PO Box 1234, Dallas, TX 75201', ['1234', 'Dallas', '75201']],
+    ['4521 Ocean Blvd Miami Beach FL 33139 (USDOT Address)', ['4521', 'Ocean', 'Miami', '33139']],
+    ['Miami Beach, FL 33139', ['Miami', '33139']],
+    ['100 W 5th Ave Apt 3B', ['100', '5th', '3B']],
+  ]) {
+    const out = r(input);
+    assert.ok(out.includes('[client]'), `expected redaction for: ${input} -> ${out}`);
+    for (const token of leaked) assert.ok(!out.includes(token), `"${input}" leaked "${token}" in "${out}"`);
+  }
+  assert.equal(r('4521 Ocean Blvd Miami Beach FL 33139 (USDOT Address)'), '[client] (USDOT Address)');
+  // Non-over-redaction: generic options, coverage limits, mileage, vehicle names, and 17-letter words stay readable.
+  for (const keep of [
+    'Yes', 'No', '$1,000,000', '$1,000,000 Combined Single Limit', '$100k with a $1,000 Deductible',
+    '$40 per day, $1,200 max', '25/50/25', 'State Minimum', 'I decline', 'Not Included',
+    'More than 500 miles', '0-50 miles', '2022 RAM ProMaster 2500', '2020 Load Trail',
+    '4 Wheel Drive', '24 Hour Road Service', 'misrepresentation', 'Annual mileage', '5-Digit ZIP Code',
+  ]) {
+    assert.equal(r(keep), keep, `must not over-redact "${keep}"`);
+  }
+});
+
+// W49-03: dynamic client labels/options/values on GEICO USDOT verify, driver license number,
+// registered owner, and AmWINS product-copy are suppressed while generic controls stay intact.
+test('dynamic client controls suppress client labels, options and values while keeping generic choices (W49-03)', () => {
+  const r = redactor(redactionTerms(record));
+  const ctx = { carrier: 'geico', page: '/quote', view: 't1', overwrite: false, ms: 1, redact: r };
+
+  // 1. GEICO GiveExtendUsDotVerifyBusinessAddress: scrub USDOT business name/address in label, keep Yes/No options.
+  const [, usdotFill] = fillEvents([{
+    filled: [{
+      key: 'ref:GiveExtendUsDotVerifyBusinessAddress',
+      label: 'USDOT Information APEX FREIGHT LLC 4521 OCEAN BLVD, STE 2 MIAMI BEACH, FL, 33139 Is this the customer\'s business?',
+      controlKind: 'radio',
+      shown: 'Yes',
+      options: ['Yes', 'No'],
+    }],
+  }], ctx);
+  assert.equal(usdotFill.shown, 'Yes');
+  assert.deepEqual(usdotFill.options, ['Yes', 'No']);
+  for (const leak of ['APEX', 'FREIGHT', '4521', 'OCEAN', 'MIAMI', '33139']) {
+    assert.ok(!JSON.stringify(usdotFill).includes(leak), `USDOT fill_field leaked ${leak}: ${JSON.stringify(usdotFill)}`);
+  }
+  const usdotChange = fieldChangeEvent({
+    key: 'ref:GiveExtendUsDotVerifyBusinessAddress',
+    label: 'APEX FREIGHT LLC 4521 OCEAN BLVD, MIAMI BEACH, FL 33139 Is this the customer\'s business?',
+    kind: 'radio', before: '', after: 'Yes', agent: true,
+  }, { record, filled: new Map(), redact: r });
+  assert.equal(usdotChange.to, 'Yes');
+  assert.ok(!JSON.stringify(usdotChange).includes('APEX'));
+  assert.ok(!JSON.stringify(usdotChange).includes('4521'));
+
+  // 2. GEICO GiveDriverLicenseNumber: scrub non-intake driver name in label.
+  const [, dlFill] = fillEvents([{
+    failed: [{
+      key: 'ref:GiveDriverLicenseNumber',
+      label: "<span data-qm-encrypt='true'>Robert Taylor</span>'s Driver's License Number",
+      controlKind: 'text',
+      code: 'answer.invalid',
+      reason: 'invalid format',
+    }],
+  }], ctx);
+  assert.ok(!JSON.stringify(dlFill).includes('Robert'));
+  assert.ok(!JSON.stringify(dlFill).includes('Taylor'));
+  assert.match(dlFill.label, /License Number/i);
+  const dlChange = fieldChangeEvent({
+    key: 'ref:GiveDriverLicenseNumber',
+    label: 'Driver License Number - Robert Taylor',
+    kind: 'text', before: '', after: 'X9999999', agent: true,
+  }, { record, filled: new Map(), redact: r });
+  assert.ok(!JSON.stringify(dlChange).includes('Robert'));
+  assert.ok(!JSON.stringify(dlChange).includes('Taylor'));
+
+  // 3. GEICO GiveRegisteredOwner: suppress dynamic client options/shown and field_change from/to.
+  const [, ownerFill] = fillEvents([{
+    noData: [{
+      key: 'ref:GiveRegisteredOwner',
+      label: 'Registered Owner',
+      controlKind: 'select',
+      shown: 'Robert Taylor',
+      options: ['Robert Taylor', 'Apex Freight LLC', 'Other'],
+    }],
+  }], ctx);
+  assert.equal(ownerFill.options, undefined);
+  assert.equal(ownerFill.shown, undefined);
+  assert.ok(!JSON.stringify(ownerFill).includes('Robert'));
+  assert.ok(!JSON.stringify(ownerFill).includes('Apex'));
+  const ownerChange = fieldChangeEvent({
+    key: 'ref:GiveRegisteredOwner',
+    label: 'Registered Owner',
+    kind: 'select', before: 'Robert Taylor', after: 'Apex Freight LLC', agent: true,
+  }, { record, filled: new Map([['ref:GiveRegisteredOwner', { path: 'geico.owner', shown: 'Robert Taylor' }]]), redact: r });
+  assert.equal(ownerChange.kind, 'text');
+  assert.equal('from' in ownerChange || 'to' in ownerChange, false);
+  assert.equal(ownerChange.vsAutofill, 'different');
+  assert.ok(!JSON.stringify(ownerChange).includes('Robert'));
+  assert.ok(!JSON.stringify(ownerChange).includes('Apex'));
+
+  // 4. AmWINS product-copy: suppress other agency clients' names/addresses in options, label and change values.
+  const [, prodFill] = fillEvents([{
+    unknown: [{
+      key: 'product-copy',
+      label: 'APEX FREIGHT LLC 742 Evergreen Terrace, Springfield, IL 62704 Product',
+      controlKind: 'select',
+      options: ['BOP/Package - Apex Freight LLC 742 Evergreen Terrace', 'GL - Harbor Transport 900 Pine St'],
+    }],
+  }], { ...ctx, carrier: 'amwins', page: '/application/businessauto' });
+  assert.equal(prodFill.options, undefined);
+  assert.equal(prodFill.label, 'Product');
+  assert.ok(!JSON.stringify(prodFill).includes('Apex'));
+  assert.ok(!JSON.stringify(prodFill).includes('Evergreen'));
+  assert.ok(!JSON.stringify(prodFill).includes('Harbor'));
+  const prodChange = fieldChangeEvent({
+    key: 'product-copy',
+    label: 'APEX FREIGHT LLC 742 Evergreen Terrace Product',
+    kind: 'select', before: 'Apex Freight LLC', after: 'Harbor Transport', agent: true,
+  }, { record, filled: new Map(), redact: r });
+  assert.equal(prodChange.kind, 'text');
+  assert.equal(prodChange.label, 'Product');
+  assert.equal('from' in prodChange || 'to' in prodChange, false);
+  assert.ok(!JSON.stringify(prodChange).includes('Apex'));
+  assert.ok(!JSON.stringify(prodChange).includes('Harbor'));
+
+  // Counterexample: normal coverage select keeps label, options, shown, and field_change from/to.
+  const [, covFill] = fillEvents([{
+    filled: [{ key: 'ref:GiveLiabilityLimit', label: 'Combined Single Limit', controlKind: 'select', shown: '$1,000,000', options: ['$500,000', '$1,000,000'] }],
+  }], ctx);
+  assert.equal(covFill.shown, '$1,000,000');
+  assert.deepEqual(covFill.options, ['$500,000', '$1,000,000']);
+  const covChange = fieldChangeEvent({
+    key: 'ref:GiveLiabilityLimit', label: 'Combined Single Limit', kind: 'select', before: '$500,000', after: '$1,000,000', agent: true,
+  }, { record, filled: new Map(), redact: r });
+  assert.deepEqual([covChange.kind, covChange.from, covChange.to], ['select', '$500,000', '$1,000,000']);
+});
+
+// W49-10: fill_field.options is capped at 250 items so 1,600-option controls stay well under
+// MAX_EVENT_BYTES (32 KB) while shorter lists stay untouched.
+test('fill_field caps options at 250 so 1,600-option controls stay well under 32 KB (W49-10)', () => {
+  const many = Array.from({ length: 1600 }, (_, i) => `Commercial Business Description Category Option ${String(i + 1).padStart(4, '0')}`);
+  const short = ['For Hire Trucking', 'Expediter', 'Auto Hauler'];
+  const [, bigNoData, bigFailed, small] = fillEvents([{
+    noData: [{ key: 'ref:GivePrimaryBusinessDescription', label: 'Please choose what best describes the customer\'s business.', controlKind: 'select', options: many }],
+    failed: [{ key: 'ref:GivePrimaryBusinessDescription', label: 'Please choose what best describes the customer\'s business.', controlKind: 'select', code: 'option.no-match', reason: 'no match', options: many }],
+    unknown: [{ key: 'ref:GiveSecondaryBusinessDescription', label: 'Secondary business', controlKind: 'select', options: short }],
+  }], { carrier: 'geico', page: '/quote', view: 't1', step: 'Business Class & USDOT', overwrite: false, ms: 1, redact });
+  for (const ev of [bigNoData, bigFailed]) {
+    assert.equal(ev.options.length, 250);
+    assert.equal(ev.options[0], many[0]);
+    assert.equal(ev.options[249], many[249]);
+    const bytes = Buffer.byteLength(JSON.stringify(ev), 'utf8');
+    assert.ok(bytes < 20 * 1024, `expected serialized fill_field well under 32 KB, got ${bytes} bytes`);
+  }
+  assert.deepEqual(small.options, short, 'shorter option lists are preserved untouched');
+});

@@ -332,6 +332,9 @@ const state = storeState({
   lookingAt: null,
   quoteMove: null,
   agentKeys: new Map(),
+  // Steps/pages where the agent edited directly on the rater page: automatic mode never clicks
+  // Continue/Next there (the agent continues manually). Scoped per tab and step/page (pageEditScope).
+  agentPageEdits: new Set(),
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,
   // Whose `filling` is: the id of what took it (a fill's run, an AI apply's or a row pick's token),
@@ -1071,7 +1074,7 @@ function journalOf(tabId) {
   const maps = state.tab?.id === tabId ? state : state.tabSessions.get(tabId);
   const pick = state.quoteStates.get(tabId);
   return { scope: usage.currentSession()?.intakeId ?? null, doneSteps: [...(maps?.doneSteps ?? [])], autoPages: [...(maps?.autoPages ?? [])],
-    autoPaused: !!maps?.autoPaused, advanceRetried: [...(maps?.advanceRetried ?? [])], quoteState: pick ? { ...pick } : null };
+    autoPaused: !!maps?.autoPaused, advanceRetried: [...(maps?.advanceRetried ?? [])], agentPageEdits: [...(maps?.agentPageEdits ?? [])], quoteState: pick ? { ...pick } : null };
 }
 // A tab's journal not yet read back for this intake (restoreJournal) adds to the stored one rather
 // than replacing it: a recorder message or a fill ending before the panel came to the tab would
@@ -1083,7 +1086,7 @@ function journalMerged(was, journal, dropped = new Set()) {
   const union = (key, prefix = '') => (same ? [...new Set([...journalIds(was[key]).filter((x) => !dropped.has(`${prefix}${x}`)), ...journal[key]])] : journal[key]);
   const pick = !dropped.has('quoteState') && was.quoteState && typeof was.quoteState.carrier === 'string' && typeof was.quoteState.code === 'string' && was.quoteState.code ? was.quoteState : null;
   return { ...journal, doneSteps: union('doneSteps', 'step:'), autoPages: union('autoPages'), autoPaused: journal.autoPaused || (same && was.autoPaused === true && !dropped.has('autoPaused')),
-    advanceRetried: union('advanceRetried'), quoteState: journal.quoteState ?? pick };
+    advanceRetried: union('advanceRetried'), agentPageEdits: union('agentPageEdits'), quoteState: journal.quoteState ?? pick };
 }
 // Called where a tab's fill ends and where its quote state changes; written only when it changed.
 // `dropped`: what the caller just took out (a quote state forgotten, a pause lifted, a step to
@@ -1142,6 +1145,7 @@ async function restoreJournal(tabId) {
     for (const key of journalIds(was.doneSteps)) if (!dropped.has(`step:${key}`)) state.doneSteps.add(key);
     for (const page of journalIds(was.autoPages)) state.autoPages.add(page);
     for (const key of journalIds(was.advanceRetried)) state.advanceRetried.add(key);
+    for (const key of journalIds(was.agentPageEdits)) (state.agentPageEdits ??= new Set()).add(key);
     if (was.autoPaused === true && !dropped.has('autoPaused')) state.autoPaused = true;
   }
   // What this copy learned before reading it, stored with it; nothing written when they agree.

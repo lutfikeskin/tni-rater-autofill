@@ -42,7 +42,7 @@ test('the header: client name in the top-bar disclosure, context-line meta hidde
   // The tools, in this order, each asking for its own thing.
   const tools = [...container.querySelectorAll('.client-tools .btn-group > button')];
   expect(tools.map((b) => b.id)).toEqual(['open-pdf', 'quote-summary', 'replace', 'new-quote', 'clear-client']);
-  expect(tools.map((b) => b.getAttribute('aria-label'))).toEqual([null, 'Quote summary', 'Change file', 'New quote with this intake', 'Clear this client']);
+  expect(tools.map((b) => b.getAttribute('aria-label'))).toEqual(['Intake PDF', 'Quote summary', 'Change file', 'New quote with this intake', 'Clear this client']);
   for (const b of tools) fireEvent.click(b);
   expect(calls.slice(1)).toEqual(['pdf', 'summary', 'replace', 'newQuote', 'clear']);
 });
