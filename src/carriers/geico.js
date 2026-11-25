@@ -417,6 +417,8 @@ const OWNER_IDENTITY = [
   // with a check naming the intake's (`keepUnlisted`; TNI, 2026-10-21, W43-35: GA listed one city and
   // OTHER, and the agent kept GEICO's).
   { concept: 'business.address', field: 'GiveCity', ask: 'City', path: 'garaging.city', name: 'Business city', kind: 'choice', keepUnlisted: true },
+  // W49-18: when GEICO's City list falls back to OTHER and reveals "If other, please enter the city name", fill it from the intake.
+  { concept: 'business.address', field: 'GiveOtherCity', ask: 'If other, please enter the city name', path: 'garaging.city', name: 'Business city (other)' },
 ];
 
 // --- Vehicles and trailers ---------------------------------------------------------------------
@@ -458,6 +460,15 @@ const vehicleTypeAliases = (r, a) => (vehicleType(r, a) === 'Box Truck' ? ['Box/
 const valueNote = (unit, of) => (r, a) => {
   const v = of(r, a)?.value;
   return v != null && typeof v !== 'number' ? `The intake's ${unit} value ${quote(v)} isn't a dollar amount: enter it yourself.` : null;
+};
+// GEICO's custom trailer make box allows at most 25 characters (W49-21): hold longer values with a
+// note quoting the intake text instead of failing answer.too-long; never truncate.
+const MAX_MAKE = 25;
+const customMakeNote = (r, a) => {
+  const raw = String(trailerOf(r, a)?.make ?? '');
+  return raw.length > MAX_MAKE
+    ? `The intake's trailer make ${quote(raw)} is longer than GEICO's ${MAX_MAKE} characters: enter it yourself.`
+    : null;
 };
 
 // Customizations (GEICO's tooltip: parts and equipment attached to the vehicle) are the intake's
@@ -563,6 +574,8 @@ const parking = (unit) => [
   { concept: `${unit}.garaging`, field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: `Where the ${unit} is parked: ZIP`, source: 'derived', value: zip5, note: zipNote },
   // A city GEICO doesn't list for the ZIP: GEICO's kept, with a check (W43-35, as on Business & Owner Info).
   { concept: `${unit}.garaging`, field: 'GiveCity', ask: 'City', path: 'garaging.city', name: `Where the ${unit} is parked: city`, kind: 'choice', keepUnlisted: true },
+  // W49-18: when City is OTHER and GEICO reveals "If other, please enter the city name", fill it from the intake.
+  { concept: `${unit}.garaging`, field: 'GiveOtherCity', ask: 'If other, please enter the city name', path: 'garaging.city', name: `Where the ${unit} is parked: city (other)` },
 ];
 
 // --- Drivers -----------------------------------------------------------------------------------
@@ -789,8 +802,9 @@ const liabilityNote = (r) => ntlNote(r) ?? (liabilityType(r) ? null
 const MED_PAY = usd(STANDARDS.medPay);
 const MED_PATH = 'geico.qMedicalPayments';
 const florida = (r) => garagingIs(r, 'FL');
-const pipKept = (name) => ({ ignore: florida, source: (r) => (florida(r) ? null : 'fact'),
-  emptyNote: `GEICO left ${name} empty: pick it yourself.` });
+const pipKept = (name, always = false) => (always
+  ? { ignore: true, emptyNote: `GEICO left ${name} empty: pick it yourself.` }
+  : { ignore: florida, source: (r) => (florida(r) ? null : 'fact'), emptyNote: `GEICO left ${name} empty: pick it yourself.` });
 
 // Refrigeration breakdown: the intake's Yes or No. Left blank, TNI's standard (2026-10-21): Yes when
 // the intake lists a reefer (a refrigerated vehicle or trailer), else No. An intake No with a reefer
@@ -931,9 +945,10 @@ const DOWNTIME = 'Not Included';
 const downtimeMention = notesLine(/\bdown[\s-]*time\b|\brental\b/i);
 const downtimeNote = (r) => (downtimeMention(r) ? `The intake's notes say ${quote(downtimeMention(r), 80)}: answer rental reimbursement with downtime yourself.` : null);
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
-  ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
+  ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service'],
+  ['UMPD', 'Uninsured motorist property damage (vehicle)']];
 // Each row's concept (src/concepts.js).
-const ROW_CONCEPTS = { COMP: 'coverage.comp-coll', COLL: 'coverage.comp-coll', FT: 'coverage.fire-theft', Rental: 'coverage.rental', RRWDT: 'coverage.rental-downtime', ERS: 'coverage.roadside', HVRS: 'coverage.roadside' };
+const ROW_CONCEPTS = { COMP: 'coverage.comp-coll', COLL: 'coverage.comp-coll', FT: 'coverage.fire-theft', Rental: 'coverage.rental', RRWDT: 'coverage.rental-downtime', ERS: 'coverage.roadside', HVRS: 'coverage.roadside', UMPD: 'coverage.umpd' };
 // What a vehicle's row needs on that vehicle before GEICO offers its answers (`needs`): collision
 // lists only Not Included until comprehensive (or fire and theft) is chosen, and rental and road
 // service say "Comprehensive or fire & theft, and collision coverage are required before adding this
@@ -1347,6 +1362,11 @@ export const geico = {
       { concept: 'operations.personal-use', field: 'GiveCommercialVehicleForPersonalUse', waitFor: afterDecode, ask: 'Is this vehicle ever used for personal use?', path: 'operations.personalUse', name: 'Personal use',
         kind: 'bool', source: 'derived', value: personalUse, note: personalUseNote },
       fact('vehicle.registered-state', 'GiveRegisteredStateYesNo', 'Registered in the garaging state'),
+      // TNI, 2026-11-25 (W49-11): keep GEICO's pre-selected anti-theft answer when filled
+      // automatically; when empty, leave to the agent as a client fact.
+      { concept: 'vehicle.anti-theft', field: 'GiveAnyAntiTheftDeviceInstalledYesNo', ask: 'Are there any anti-theft devices installed on this vehicle?',
+        name: 'Anti-theft devices installed (as GEICO has it, else the agent\'s)', kind: 'bool', source: 'fact', keepPreset: true,
+        note: 'Anti-theft devices installed isn\'t on the intake: answer it yourself.' },
       // Shown for other uses (hidden on the captured quotes): a commercial quote doesn't make them Yes.
       fact('operations.delivery', 'GiveVehicleUsedForPackageDelivery', 'Used for package delivery'),
       fact('operations.delivery', 'GiveVehicleIsUsedForFoodDelivery', 'Used for food delivery'),
@@ -1357,8 +1377,9 @@ export const geico = {
     // The trailer form (NE): the active trailer's answers, never a vehicle's.
     ...on(VEHICLES, { whenShown: TRAILER_FORM }, [
       { concept: 'trailer.year', field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
-      // The trailer form's make is a text box (the vehicle form's a list, GiveMake): the intake's (W48-05).
-      { concept: 'trailer.make', field: 'GiveCustomMake', ask: 'Make', path: 'trailers[].make', name: 'Trailer make' },
+      // The trailer form's make is a text box (the vehicle form's a list, GiveMake): the intake's (W48-05);
+      // values over 25 characters are held with a note quoting the intake text (W49-21).
+      { concept: 'trailer.make', field: 'GiveCustomMake', ask: 'Make', path: 'trailers[].make', name: 'Trailer make', note: customMakeNote },
       // 19 kinds of trailer: a gooseneck hitch isn't a Gooseneck Trailer.
       { concept: 'trailer.type', field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (Dry Van is Dry Freight Trailer, Flatbed Flatbed Trailer, Reefer Refrigerated Dry Freight Trailer, Lowboy Lowboy Trailer, Tanker Tank Trailer; else the agent\'s pick)',
         kind: 'choice', source: (r, a) => (trailerType(r, a) ? 'derived' : null), value: trailerType, note: (r, a) => (trailerType(r, a) ? null : typeNote('trailer', trailerOf)(r, a)) },
@@ -1382,6 +1403,11 @@ export const geico = {
       // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
       { concept: 'driver.cdl', field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', tni: 'general.cdl-blank', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
         source: (r) => (cdlStandard(ownerDetails(r)) ? 'standard' : 'derived'), value: (r) => cdlAnswer(ownerDetails(r)), note: ownerRowNote('CDL answer') },
+      // W49-16: GEICO also asks "Is the owner a driver on the policy?" on the owner's row of
+      // Drivers & Incidents (where GiveDriverRelationshipToBusiness is absent), preserving W46-02.
+      { concept: 'owner.drives', tni: 'general.owner-drives', field: 'GiveOwnerActiveDriverStatusYesNo', q: 'GiveOwnerActiveDriverStatusYesNo.owner', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives',
+        name: 'Owner is a driver (owner\'s form; TNI: Yes when the intake leaves it blank, unless excluded)', kind: 'bool',
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
     ]),
     // Add Driver: the panel's active driver.
     ...on(DRIVERS, { whenShown: ADD_DRIVER_FORM }, [
@@ -1509,6 +1535,10 @@ export const geico = {
         emptyNote: (r) => (florida(r) ? 'GEICO left basic personal injury protection empty: pick it yourself.' : null) },
       { concept: 'coverage.pip', q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
       { concept: 'coverage.pip', q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
+      // TNI, 2026-11-25 (W49-12): Stacked PIP (MN, and any state showing it) and Extended PIP (FL)
+      // keep GEICO's page preset via pipKept, matching Is Stacked, PIP Options and Excluded Work Loss.
+      { concept: 'coverage.pip', q: 'StackedPip', ask: 'Stacked PIP', control: 'select', name: 'Stacked PIP', ...pipKept('stacked PIP', true) },
+      { concept: 'coverage.pip', q: 'ExtendedPip', ask: 'Extended PIP', control: 'select', name: 'Extended PIP', ...pipKept('extended PIP') },
       // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'), and each
       // step takes the row naming its unit, never the row at its position. Comprehensive, collision
       // and fire and theft list the trailers among the vehicles (`trailers`: a 4-vehicle FL quote

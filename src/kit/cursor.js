@@ -969,6 +969,17 @@ export async function fill(plan, { overwrite = false, maxRounds = 60, skip = [],
         }
         if (step.note || step.value == null) {
           if (notYet()) continue;
+          const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
+          // `keepPreset` on a client fact (TNI, 2026-11-25, W49-11): a choice the carrier already
+          // made is kept as it is; only an empty one is left to the agent as `noData`.
+          if (step.keepPreset && isChoice && hasValue(c)) {
+            state.report.kept.push(item);
+            if (reworded && step.warn) {
+              state.report.checks.push({ ...item, note: step.warn, ...describe(c) });
+              state.handled.set(step.id, { status: 'needs', note: step.warn });
+            } else state.handled.set(step.id, { status: null });
+            continue;
+          }
           if (step.optional) { state.handled.set(step.id, { status: null }); continue; }
           state.report.noData.push({ ...item, note: step.note, ...describe(c) });
           state.handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
