@@ -166,6 +166,8 @@ const commercialAuto = (p) => /commercial\s+auto/i.test(p?.type ?? '');
 const currentGeico = (r) => {
   const p = prior(r);
   if (!p) return null;
+  // "NO POP" (no proof of prior) does not rule out personal or commercial auto insurance (TNI, 2026-11-25, W49-04).
+  if (noProofOfPrior(p)) return null;
   if (noPriorInsurance(p) || /personal\s+auto/i.test(p.type ?? '')) return false;
   if (!p.carrier) return null;
   if (!sameCarrier(p.carrier, 'geico')) return commercialAuto(p) ? false : null;
@@ -173,13 +175,14 @@ const currentGeico = (r) => {
 };
 const untypedGeico = (r) => untypedCarrierPolicy(prior(r), 'geico');
 // Derived from a dated policy; TNI's standard when the Yes is the answer to question 9 (undated); a
-// fact, the agent's, for a GEICO policy of no type (R9).
-const currentGeicoSource = (r) => (untypedGeico(r) ? 'fact'
+// fact, the agent's, for a GEICO policy of no type (R9) or "NO POP" (W49-04).
+const currentGeicoSource = (r) => (untypedGeico(r) || noProofOfPrior(prior(r)) ? 'fact'
   : currentGeico(r) === true && !DATE.test(prior(r)?.expiration ?? '') ? 'standard' : 'derived');
 const currentGeicoNote = (r) => (untypedGeico(r) ? 'The intake\'s current policy is with GEICO, but its policy type isn\'t on the intake: answer it yourself.'
-  : currentGeico(r) != null ? null
-    : !prior(r) ? 'The intake\'s current insurance section is blank: answer it yourself.'
-      : 'The intake\'s current insurance doesn\'t show whether there is a current GEICO commercial auto policy: answer it yourself.');
+  : noProofOfPrior(prior(r)) ? `The intake's current insurance says ${quote(prior(r).carrier, 30)} (no proof of prior): answer whether there is a current GEICO commercial auto policy yourself.`
+    : currentGeico(r) != null ? null
+      : !prior(r) ? 'The intake\'s current insurance section is blank: answer it yourself.'
+        : 'The intake\'s current insurance doesn\'t show whether there is a current GEICO commercial auto policy: answer it yourself.');
 
 const HAULED = (r) => [r.operations.businessClass && `the business class is ${quote(r.operations.businessClass)}`,
   r.operations.whatHaul && `they haul ${quote(r.operations.whatHaul)}`].filter(Boolean).join(' and ');

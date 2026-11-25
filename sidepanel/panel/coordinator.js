@@ -1168,7 +1168,10 @@ function showReport() {
   const key = currentReportKey();
   const shown = state.reportFor;
   if ((shown?.key ?? null) === key) return shown;
-  if (shown) shown.nodes = [...$('report').childNodes];
+  if (shown) {
+    for (const row of $('report').querySelectorAll?.('.row[data-search-hide]') ?? []) row.removeAttribute('data-search-hide');
+    shown.nodes = [...$('report').childNodes];
+  }
   const next = key ? state.reports.get(key) ?? null : null;
   // Kept while another page was in front: said in the page view (renderSteps).
   if (next?.nodes) next.restored = true;

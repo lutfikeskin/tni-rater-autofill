@@ -128,12 +128,24 @@ test('W49-04: "NO POP" is unknown (fact / left to agent) on GEICO & Progressive;
     assert.ok(warnings.some((w) => w.code === 'prior.no-pop'), `${carrier}: prior.no-pop info`);
     assert.equal(warnings.some((w) => w.code === 'prior.none'), false, `${carrier}: not prior.none`);
     assert.equal(warnings.some((w) => w.code === 'prior.incomplete'), false, `${carrier}: not prior.incomplete`);
-    // GEICO: left to agent as fact / null with note quoting the intake text.
+    // GEICO: left to agent as fact / null with note quoting the intake text (both currentAuto and currentGeico).
     const gAuto = geicoStep(record, GEICO.auto);
     agents(gAuto);
     assert.deepEqual([gAuto.source, gAuto.manualOnly], ['fact', true], `GEICO ${carrier}`);
     assert.match(gAuto.note, /no proof of prior/i, `GEICO ${carrier}`);
     agents(geicoStep(record, GEICO.years));
+    const gCurrentGeico = buildPlan(record, geico, {}).find((s) => s.field === 'GiveCurrentGeicoCommercialAutoPolicyYesNo');
+    agents(gCurrentGeico);
+    assert.deepEqual([gCurrentGeico.source, gCurrentGeico.manualOnly], ['fact', true], `GEICO currentGeico ${carrier}`);
+    assert.match(gCurrentGeico.note, /no proof of prior/i, `GEICO currentGeico ${carrier}`);
+    // Typed Commercial Auto or Personal Auto with "NO POP" must also leave GiveCurrentGeicoCommercialAutoPolicyYesNo to the agent.
+    for (const type of ['Commercial Auto', 'Personal Auto']) {
+      const typed = intake({ ins_type_1: type, ins_carrier_1: carrier }).record;
+      const typedGeico = buildPlan(typed, geico, {}).find((s) => s.field === 'GiveCurrentGeicoCommercialAutoPolicyYesNo');
+      agents(typedGeico);
+      assert.deepEqual([typedGeico.source, typedGeico.manualOnly], ['fact', true], `GEICO currentGeico ${type} + ${carrier}`);
+      assert.match(typedGeico.note, /no proof of prior/i, `GEICO currentGeico ${type} + ${carrier}`);
+    }
     // Progressive: q81 left to agent as fact / null, q83 attestation, q95/q9D left to agent if revealed.
     const pAuto = byQ(record, '81');
     agents(pAuto);

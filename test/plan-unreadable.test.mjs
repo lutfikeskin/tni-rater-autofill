@@ -9,6 +9,7 @@ import { progressive } from '../src/carriers/progressive.js';
 import { progressivePa } from '../src/carriers/progressive-pa.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
+import { geicoPa } from '../src/carriers/geico-pa.js';
 
 // A value as normalizeIntake keeps it: a number when it parses, else the text as written.
 /** @param {{ dob?: string, year?: number | string, value?: number | string }} [values] */
@@ -272,4 +273,40 @@ test('W49-19: bare "Other" in coverage.autoLiabLimit is held across carriers, re
     assert.equal(planFor(good, progressive, {}).find((x) => x.q === '1D97').value, limit);
     assert.equal(planFor(good, geico, {}).find((x) => x.path === 'coverage.autoLiabLimit' && !x.ignore).value, limit);
   }
+});
+
+// Regression: rule.kind: 'choice' must not shadow schema info.kind: 'int' in unreadable().
+test('intake year rules with rule.kind: choice still hold unreadable years across all carriers', () => {
+  const badComm = {
+    ...record(),
+    vehicles: [{ type: 'Van', year: '20O1', make: 'FORD', model: 'Transit', vin: null, value: 45000 }],
+    trailers: [{ type: 'Dry Van', year: '20O1', make: 'Wabash', vin: null, value: 18000 }],
+  };
+  const badPa = {
+    ...badComm,
+    product: 'personal-auto',
+    drivers: [{ first: 'Zed', last: 'Other', relation: 'Insured', dob: '05/06/1970' }],
+  };
+  const cases = [
+    ['progressive trailer year', planFor(badComm, progressive, { trailers: 0 }).find((x) => x.q === '2A2A')],
+    ['geico vehicle year', planFor(badComm, geico, { vehicles: 0 }).find((x) => x.field === 'GiveYear' && x.path === 'vehicles[0].year')],
+    ['geico trailer year', planFor(badComm, geico, { trailers: 0 }).find((x) => x.field === 'GiveYear' && x.path === 'trailers[0].year')],
+    ['geico-pa vehicle year', planFor(badPa, geicoPa, {}).find((x) => x.field === 'GiveYear' && x.path === 'vehicles[0].year')],
+    ['progressive-pa vehicle year', planFor(badPa, progressivePa, {}).find((x) => x.path === 'vehicles[0].year')],
+  ];
+  for (const [label, step] of cases) {
+    assert.ok(step, `${label}: step exists`);
+    assert.equal(step.value, null, `${label}: unreadable year not filled`);
+    assert.equal(step.manualOnly, true, `${label}: manualOnly`);
+    assert.equal(step.resolution.status, 'agent', `${label}: resolution agent`);
+    assert.match(step.note, /"20O1", which isn't a whole number/, `${label}: quotes unreadable year`);
+  }
+  // Valid numeric year still fills on those same choice rules.
+  const goodComm = {
+    ...badComm,
+    vehicles: [{ ...badComm.vehicles[0], year: 2021 }],
+    trailers: [{ ...badComm.trailers[0], year: 2020 }],
+  };
+  assert.equal(planFor(goodComm, progressive, { trailers: 0 }).find((x) => x.q === '2A2A').value, 2020);
+  assert.equal(planFor(goodComm, geico, { vehicles: 0 }).find((x) => x.field === 'GiveYear' && x.path === 'vehicles[0].year').value, 2021);
 });

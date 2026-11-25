@@ -178,6 +178,16 @@ test('inline live search appears on All when a page has > 6 fields, filters rows
   expect(r2.hasAttribute('data-search-hide')).toBe(false);
   act(() => { state.feed = feed({ filter: 'all', counts: { all: 12, needs: 1, worth: 4, done: 11 } }); });
   expect(/** @type {HTMLInputElement} */ ($(container, 'feed-search-input')).value).toBe('');
+
+  // Effect cleanup clears data-search-hide even if rows are detached synchronously when switching reports.
+  fireEvent.change($(container, 'feed-search-input'), { target: { value: 'license' } });
+  expect(r1.getAttribute('data-search-hide')).toBe('1');
+  const reportEl = $(container, 'report');
+  const savedNodes = [...reportEl.childNodes];
+  reportEl.replaceChildren();
+  act(() => { state.reportFor = { key: 'page-2', list: [] }; });
+  expect(r1.hasAttribute('data-search-hide')).toBe(false);
+  expect(savedNodes[0]).toBe(rowsHost);
 });
 
 const findNestedHas = (source) => {
@@ -221,6 +231,8 @@ test('unified sheet CSS avoids nested :has(), retires data-focus="need" and #rev
   expect(findNestedHas(css)).toEqual([]);
   expect(css).toContain('#feed-root { display: contents; }');
   expect(css).toContain('.report[data-filter="worth"] .row:not([data-worth="1"]) { display: none; }');
+  expect(css).toContain('#report .row[data-search-hide="1"] { display: none; }');
+  expect(css).not.toContain('.report .row[data-search-hide="1"]');
   expect(css).not.toContain('data-focus="need"');
   expect(css).not.toContain('#review-worth');
 });

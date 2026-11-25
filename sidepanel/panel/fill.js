@@ -1381,7 +1381,7 @@ function toggleRow(rec, open = !rec.open) {
 // The dock's Show the next one: the next question still needing the agent after the one open now
 // (the first when none is), opened in the Needs tab and brought into view.
 function showNextNeed() {
-  if (state.view !== 'page' || (state.filter !== 'needs' && state.filter !== 'all') || state.pastKey) {
+  if (state.view !== 'page' || state.filter !== 'needs' || state.pastKey) {
     state.view = 'page';
     state.filter = 'needs';
     state.pastKey = null;

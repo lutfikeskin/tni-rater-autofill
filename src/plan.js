@@ -337,7 +337,8 @@ function fieldSteps(rules, record, carrier, active, overlay, edited = null, onRu
       (source === 'intake' && !rule.value)
       || ((source === 'intake' || source === 'derived') && (kind === 'date' || isOtherAutoLimit(rulePath, value)))
     );
-    const unreadableAs = checkUnreadable ? unreadable(kind, value, rulePath) : null;
+    const unreadableKind = kind === 'date' ? 'date' : info.kind;
+    const unreadableAs = checkUnreadable ? unreadable(unreadableKind, value, rulePath) : null;
     const unreadableNote = !unreadableAs ? null : isVin(rulePath)
       ? `${name}: the intake's VIN "${value}" ${unreadableAs}, so it isn't typed. Correct it in client details, or type the right VIN yourself.`
       : isOtherAutoLimit(rulePath, value)
