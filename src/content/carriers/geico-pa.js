@@ -172,9 +172,9 @@
     if (!isLicensePage) return null;
     let driverIdx = 0;
     for (const child of children) {
-      if (child === node || child.contains(node)) return driverIdx > 0 ? driverIdx : null;
       const hdr = child.querySelector?.('gds-section-header');
       if (hdr && cleanText(hdr).toLowerCase() !== 'license history') driverIdx++;
+      if (child === node || child.contains(node)) return driverIdx > 0 ? driverIdx : null;
     }
     return null;
   }

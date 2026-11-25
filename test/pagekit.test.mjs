@@ -6472,6 +6472,8 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       tellRecorder: async () => {}, persistAiPending: async () => {}, resumeHeldFill: () => {}, traced: () => false,
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+    const journalCalls = [];
+    sandbox.keepJournal = (tabId) => { journalCalls.push(tabId); };
     const source = PANEL_SOURCE;
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
@@ -6488,7 +6490,11 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       assert.ok(xs.every(x => x.done === 'auto'), 'later answers use per-field validation after the first changes the snapshot');
     } else if (scenario.startsWith('transport failure')) {
       assert.deepEqual(controls.map(el => el.value), ['no', scenario.endsWith('after edit') ? 'yes' : '', '']);
-      if (scenario.endsWith('after edit')) assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+      if (scenario.endsWith('after edit')) {
+        assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+        assert.ok(state.agentPageEdits.has('/rater'), 'transport-failure cleanup also records agentPageEdits');
+        assert.ok(journalCalls.includes(ctx.tabId), 'transport-failure cleanup persists journal');
+      }
       assert.ok(xs.every(x => x.done === 'auto'), 'transport failure retains conservative approval holds');
     } else if (scenario === 'document replacement') {
       assert.deepEqual(replacementControls.map(el => el.value), ['', '', ''], 'no remaining answer is written into the replacement document');
@@ -6505,6 +6511,8 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
       assert.deepEqual(controls.map(el => el.value), scenario === 'future frame' ? ['no', 'yes', ''] : ['yes', 'no', ''],
         'the correction stays and future frame C is not answered');
       assert.deepEqual([...state.agentKeys.get('/rater')].sort(), ['choice0', 'choice1']);
+      assert.ok(state.agentPageEdits.has('/rater'), 'guarded edits during applyAi record agentPageEdits');
+      assert.ok(journalCalls.includes(ctx.tabId), 'guarded edits during applyAi persist journal');
       assert.match(xs[2].error, /agent edit interrupted/);
       assert.equal(xs[2].done, null);
       if (scenario === 'finished frame') assert.equal(xs[0].done, null, 'a correction to an earlier applied answer replaces its AI hold');

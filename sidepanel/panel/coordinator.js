@@ -1647,9 +1647,10 @@ function dockFor() {
     const ai = aiDock ? pendingAi(state.tab.id, page) : [];
     if (ai.length) {
       const waiting = ai.filter((x) => !x.rejected && !x.unconfirmed).length;
-      const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
+      const aiCanContinue = !!aiDock.canContinue && !hasAgentPageEdit(tabMaps(state.tab.id), page, carrier, step);
+      const continues = aiCanContinue && (report.left ?? 0) <= ai.length;
       return { phase: 'ai', tone: 'ai', eyebrow: DOCK.ai.eyebrow(ai.length), title: DOCK.ai.title(waiting),
-        sub: DOCK.ai.sub(waiting < ai.length, !!aiDock.canContinue), button: 'ai-approve', label: DOCK.ai.label(waiting, continues) };
+        sub: DOCK.ai.sub(waiting < ai.length, aiCanContinue), button: 'ai-approve', label: DOCK.ai.label(waiting, continues) };
     }
     const said = /** @type {*} */ (continueSaid(report, carrier));
     // A question open now with others after it: the dock moves on past it.

@@ -26,6 +26,7 @@
 
 import { STATES } from '../states.js';
 import {
+  EXCLUDED_WORD,
   INCIDENT_NOTES,
   commuteDaysValue,
   commuteMilesValue,
@@ -72,6 +73,11 @@ const STOP_NOTE = 'This step is yours: nothing is filled or clicked. The quote s
 const zip5 = (r) => String(r?.garaging?.zip ?? '').trim().match(/^(\d{5})(?:-?\d{4})?$/)?.[1] ?? null;
 /** @param {ClientRecord} r */
 const zipNote = (r) => (r?.garaging?.zip && !zip5(r) ? `The intake's ZIP "${String(r.garaging.zip).trim().slice(0, 60)}" isn't a 5-digit ZIP: enter it yourself.` : null);
+/** @param {ClientRecord} r @param {number} i */
+const hasValidLicenseNumber = (r, i) => {
+  const lic = String(driverAt(r, i)?.licenseNumber ?? '').trim();
+  return !!lic && !EXCLUDED_WORD.test(lic);
+};
 
 const NO_INS_EXCEPTION_NOTES = /\b(deploy(?:ed|ment)|military|never\s+needed|haven'?t\s+needed|no\s+car|did\s+not\s+own\s+a\s+car)\b/i;
 const MILITARY_GOV_WORDS = /\b(military|army|navy|air\s*force|marines?|marine\s*corps|coast\s*guard|national\s*guard|reserves?|veteran|active\s*duty|federal\s*(?:gov(?:ernment)?|employee)|state\s*(?:gov(?:ernment)?|employee)|local\s*(?:gov(?:ernment)?|employee)|postal\s*service|usps|post\s*office)\b/i;
@@ -114,9 +120,9 @@ const PROVIDER_ALIASES = [
   [/\besurance\b/i, 'Esurance'],
   [/\b(allstate|encompass)\b/i, 'Allstate/Encompass'],
   [/\b(liberty\s*mutual|safeco)\b/i, 'Liberty Mutual/Safeco'],
+  [/\b(tennessee\s*farmers|tn\s*farmers|farm\s*bureau.*tenn)/i, 'TENNESSEE FARMERS'],
   [/\b(farmers|21st\s*century)\b/i, 'Farmers/21st Century'],
   [/\b(national\s*general|nat\s*gen|gmac|integon)\b/i, 'National General/GMAC'],
-  [/\b(tennessee\s*farmers|tn\s*farmers|farm\s*bureau.*tenn)/i, 'TENNESSEE FARMERS'],
   [/\bsouthern\s*farm\s*bureau\b/i, 'Southern Farm Bureau'],
   [/\bfarm\s*bureau\b/i, 'Farm Bureau'],
   [/\busaa\b/i, 'USAA'],
@@ -302,9 +308,13 @@ export function hadInsuranceLast30Days(exp, today = new Date()) {
   const s = String(exp ?? '').trim();
   const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (!m) return { value: null, source: 'fact', note: 'Confirm whether the client had auto insurance within the last 30 days.' };
-  const expDate = new Date(Number(m[3]), Number(m[1]) - 1, Number(m[2]));
-  const nowDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const diffDays = Math.floor((nowDate.getTime() - expDate.getTime()) / 86_400_000);
+  const mo = Number(m[1]), da = Number(m[2]), yr = Number(m[3]);
+  const expUtc = new Date(Date.UTC(yr, mo - 1, da));
+  if (expUtc.getUTCFullYear() !== yr || expUtc.getUTCMonth() !== mo - 1 || expUtc.getUTCDate() !== da) {
+    return { value: null, source: 'fact', note: `Prior expiration "${s}" is not a valid calendar date — confirm last-30-days coverage.` };
+  }
+  const nowUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const diffDays = Math.round((nowUtc - expUtc.getTime()) / 86_400_000);
   if (diffDays < 0) return { value: null, source: 'fact', note: `Prior expiration "${s}" is in the future while currently insured is No — confirm last-30-days coverage.` };
   return { value: diffDays <= 30 ? 'Yes' : 'No', source: 'derived', note: null };
 }
@@ -336,7 +346,7 @@ export function geicoOwnershipLength(v, today = new Date()) {
   if (/^10(?:\+|\s+or\s+more)\s*years?$/i.test(s)) {
     return { value: '10 or more years', source: 'derived', note: null };
   }
-  if (/^3\+?\s*years$/i.test(s)) {
+  if (/^3\+\s*years?$/i.test(s)) {
     const under10 = Number.isFinite(v?.year) && (today.getFullYear() - Number(v.year)) < 10;
     return { value: '2 to 10 years', source: under10 ? 'derived' : 'standard', note: null };
   }
@@ -597,7 +607,12 @@ function policyholderRules() {
       source: 'derived', value: oneLineAddress, fallback: (r) => r?.garaging?.street ?? null, checkNumber: true,
     },
     { concept: 'business.address', steps: [POLICYHOLDER], field: 'GiveCity', name: 'City (populated by address lookup)', ignore: true },
-    { concept: 'business.address', steps: [POLICYHOLDER], field: 'GiveZip', name: '5-Digit ZIP Code', path: 'garaging.zip' },
+    {
+      concept: 'business.address', steps: [POLICYHOLDER], field: 'GiveZip',
+      name: '5-Digit ZIP Code', path: 'garaging.zip',
+      source: (r) => (zip5(r) ? 'derived' : 'fact'), value: zip5,
+      note: (r) => zipNote(r) ?? (zip5(r) ? null : 'Garaging ZIP is blank on the intake.'),
+    },
     { concept: 'business.address', steps: [POLICYHOLDER], field: 'GiveUnitNumber', name: 'Apt #', path: 'garaging.unit', optional: true, ignore: (r) => !r?.garaging?.unit },
     {
       concept: 'residence.ownership', steps: [POLICYHOLDER], field: 'GiveOwnOrRent',
@@ -892,9 +907,9 @@ function driverColumnRules(i) {
       concept: 'driver.license-status', steps: [DRIVERS], field: 'GiveDriversLicenseStatus', row,
       name: `Driver ${row}: license status`, kind: 'choice',
       tni: 'geico-pa.license-status', ignore: missing,
-      source: (r) => (driverAt(r, i)?.licenseNumber ? 'standard' : 'fact'),
-      value: (r) => (driverAt(r, i)?.licenseNumber ? 'Active' : null),
-      note: (r) => (driverAt(r, i)?.licenseNumber ? null : `Driver ${row}: no license number on intake — confirm license status.`),
+      source: (r) => (hasValidLicenseNumber(r, i) ? 'standard' : 'fact'),
+      value: (r) => (hasValidLicenseNumber(r, i) ? 'Active' : null),
+      note: (r) => (hasValidLicenseNumber(r, i) ? null : `Driver ${row}: no license number on intake — confirm license status.`),
     },
     ...(i > 0 ? [
       /** @type {CarrierRule} */ ({

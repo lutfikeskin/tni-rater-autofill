@@ -14099,3 +14099,87 @@ test('panel-side Put it in (agentAnswer) and Mark done do NOT add to agentPageEd
   assert.equal(state.agentPageEdits.size, 0, 'Mark done from panel does not add to agentPageEdits');
   assert.ok(state.agentKeys.get('BusinessOwnerInfo')?.has('k2'), 'Mark done still protects the field in agentKeys');
 });
+
+test('direct rater-page edit while AI picks are pending suppresses Approve & continue in dockFor and decide/confirmRejected', async () => {
+  // 1. dockFor dynamically suppresses aiDock.canContinue when agentPageEdits is updated after renderAi.
+  const pendingPick = { key: 'k1', label: 'Q1', choice: 'Yes', done: 'auto', approved: false, confirmed: false, rejected: false, unconfirmed: false };
+  const dockState = {
+    intake: { record: {}, intakeId: 'int-1', warnings: [], done: [] }, view: 'page', filling: false,
+    tab: { id: 9, url: 'https://sales.geico.com/quote', carrier: geicoPa },
+    tabSteps: new Map([[9, 'Policyholder Information']]), tabSessions: new Map(),
+    agentPageEdits: new Set(), autoPages: new Set(), stopScreens: new Map(),
+    aiDocks: new Map([['9|/quote', { canContinue: true, go: () => {} }]]),
+    active: { vehicles: 0, drivers: 0, trailers: 0 },
+  };
+  const dockCtx = {
+    state: dockState, DOCK: MESSAGES.DOCK, inExtension: true,
+    pageOf: () => '/quote',
+    pendingAi: () => [pendingPick],
+    showReport: () => ({ page: '/quote', fields: 3, filled: 2, left: 1 }),
+    onQuotePage: () => true, stopNoteFor: () => null, stateIssue: () => null,
+    defaultsHold: () => false, quoteOwnerIssue: () => null, quoteFinished: () => false,
+    switchOn: () => true,
+  };
+  vm.createContext(dockCtx);
+  vm.runInContext(['tabMaps', 'tabStep', 'formScoped', 'editScope', 'pageEditScope', 'hasAgentPageEdit', 'dockFor'].map(extractFunction).join('\n'), dockCtx);
+
+  const beforeEdit = dockCtx.dockFor();
+  assert.equal(beforeEdit.phase, 'ai');
+  assert.equal(beforeEdit.label, MESSAGES.DOCK.ai.label(1, true), 'before direct page edit, dock offers Approve and continue');
+
+  dockState.agentPageEdits.add('/quote|s:Policyholder Information');
+  const afterEdit = dockCtx.dockFor();
+  assert.equal(afterEdit.phase, 'ai');
+  assert.equal(afterEdit.label, MESSAGES.DOCK.ai.label(1, false), 'after direct page edit, dock drops "and continue" even with stale aiDock.canContinue');
+  assert.equal(afterEdit.sub, MESSAGES.DOCK.ai.sub(false, false));
+
+  // 2. renderAi decide/confirmRejected evaluate canContinueNow() dynamically and do not call fillPage() after a direct page edit.
+  const snap = [{ frameId: 0, documentId: 'd1', result: JSON.stringify(['/quote', [{ key: 'k1', label: 'Q1', section: '', kind: 'radio', current: 'Yes', options: ['Yes', 'No'] }]]) }];
+  const pick = { key: 'k1', label: 'Q1', choice: 'Yes', done: 'auto', approved: false, confirmed: false, rejected: false, unconfirmed: false, snapshots: snap, contextKey: 'ck', contextHash: 'ch' };
+  const rejPick = { key: 'k2', label: 'Q2', choice: 'No', done: 'auto', approved: false, confirmed: false, rejected: true, unconfirmed: false, snapshots: snap, contextKey: 'ck', contextHash: 'ch' };
+  let fillCalls = 0;
+  const aiState = {
+    intake: { record: {}, intakeId: 'int-1' }, filling: false,
+    tab: { id: 9, url: 'https://sales.geico.com/quote', carrier: geicoPa },
+    tabSteps: new Map([[9, 'Policyholder Information']]), tabSessions: new Map(),
+    agentKeys: new Map(), agentPageEdits: new Set(), aiDocks: new Map(),
+    active: { vehicles: 0, drivers: 0, trailers: 0 }, reportFor: { list: [] },
+  };
+  let activePending = [pick];
+  const aiCtx = {
+    state: aiState,
+    $: (id) => (id === 'auto-advance' ? { checked: true } : null),
+    switchOn: () => true,
+    aiHolder: () => ({ say() {} }),
+    pendingAi: () => activePending.filter((x) => !x.approved && !x.confirmed),
+    assistContextKey: () => 'ck', aiFingerprint: () => 'ch',
+    aiActionCurrent: () => true, aiCurrentAnswerPresent: () => true,
+    snapshotsEqual: () => true, snapshotHashMatches: () => true,
+    runKit: async () => snap, persistAiPending: async () => {}, syncAiBanner: async () => {},
+    usage: { log() {} }, aiDecisionEvent: () => ({ type: 'ai_decision' }),
+    recount() {}, renderSteps() {}, drawRow() {}, needId: (r) => `${r.key}|${r.label}`, setHead() {},
+    fillPage: () => { fillCalls++; },
+  };
+  vm.createContext(aiCtx);
+  vm.runInContext(['tabMaps', 'tabStep', 'formScoped', 'editScope', 'pageEditScope', 'hasAgentPageEdit', 'renderAi'].map(extractFunction).join('\n'), aiCtx);
+  const ctx = { tabId: 9, page: '/quote', carrier: geicoPa, snapshots: snap };
+
+  const holder = { say() {} };
+  // Render while agentPageEdits is empty (dock initially allows continue), then record a direct page edit before clicking Approve.
+  aiCtx.renderAi(holder, [pick], ctx);
+  assert.equal(aiState.aiDocks.get('9|/quote').canContinue, true);
+  aiState.agentPageEdits.add('/quote|s:Policyholder Information');
+  await aiState.aiDocks.get('9|/quote').go();
+  assert.equal(pick.approved, true);
+  assert.equal(fillCalls, 0, 'decide checks live agentPageEdits and never auto-advances via fillPage()');
+
+  // Same for confirmRejected when a direct page edit arrives after renderAi.
+  aiState.agentPageEdits.clear();
+  activePending = [rejPick];
+  aiCtx.renderAi(holder, [rejPick], ctx);
+  assert.equal(aiState.aiDocks.get('9|/quote').canContinue, true);
+  aiState.agentPageEdits.add('/quote|s:Policyholder Information');
+  await aiState.aiDocks.get('9|/quote').go();
+  assert.equal(rejPick.confirmed, true);
+  assert.equal(fillCalls, 0, 'confirmRejected checks live agentPageEdits and never auto-advances via fillPage()');
+});

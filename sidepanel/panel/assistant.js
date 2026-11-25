@@ -10,7 +10,7 @@ import * as usage from '../usage-log.js';
 import { collectItems, pseudonymizeChoices, AssistError, assistContextKey, stableJson, pageAnswers } from '../../src/ai/common.js';
 import { claimsTruncated, firstNameOf } from '../../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../../src/ai/providers.js';
-import { $, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
+import { $, traced, aiActionCurrent, aiAnswerOrigin, aiCacheSignature, aiCurrentAnswerPresent, aiDecisionBlocks, aiFingerprint, aiItemFingerprint, aiLiveFieldHash, aiOriginRecord, aiQuestionHash, aiRetiredSignatures, aiSafeText, aiSettledOnPage, aiSnapshotFieldMatches, keepJournal, persistAiPending, persistGuardedEdits, snapshotFingerprint, snapshotHashMatches, snapshotsEqual, state, switchOn } from './core.js';
 import { logSettings, save } from './intake.js';
 import { agentEdit, openKeyForm, openSettings, render, renderSections, toggleDone } from './record.js';
 import { pageOf, tellRecorder } from './usage.js';
@@ -640,6 +640,7 @@ async function applyAi(list, ctx, decision) {
       maps.agentPageEdits ??= new Set();
       const editAt = pageEditScope(ctx.page, ctx.carrier, tabStep(ctx.carrier, ctx.tabId), { active: maps.active, shown: maps.unitShown });
       if (editAt) maps.agentPageEdits.add(editAt);
+      keepJournal(ctx.tabId);
     }
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
@@ -671,6 +672,13 @@ async function applyAi(list, ctx, decision) {
         // Even a failed answer transport must preserve edits the still-live guards caught.
         const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
         await persistGuardedEdits(editOrigin, edited.map(item => item.key));
+        if (edited.length) {
+          const maps = tabMaps(ctx.tabId);
+          maps.agentPageEdits ??= new Set();
+          const editAt = pageEditScope(ctx.page, ctx.carrier, tabStep(ctx.carrier, ctx.tabId), { active: maps.active, shown: maps.unitShown });
+          if (editAt) maps.agentPageEdits.add(editAt);
+          keepJournal(ctx.tabId);
+        }
       } catch { /* a removed or navigating frame no longer has live listeners */ }
     }
     if (prepared && !dispatched) for (const x of list) x.done = null;
@@ -759,7 +767,7 @@ function renderAi(holder, suggestions, ctx) {
   const rejectedPending = pending.filter((x) => x.rejected);
   const current = assistContextKey(state.intake?.record, state.active, ctx.carrier?.id);
   const currentHash = aiFingerprint(current);
-  const canContinue = switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance
+  const canContinueNow = () => switchOn('autoAdvance', 'auto-advance') && !!ctx.carrier.advance
     && !hasAgentPageEdit(tabMaps(ctx.tabId), ctx.page, ctx.carrier, tabStep(ctx.carrier, ctx.tabId));
   // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
   // switch can keep that pick pending; replacing the intake or page invalidates the callback.
@@ -807,8 +815,9 @@ function renderAi(holder, suggestions, ctx) {
     await persistAiPending();
     await syncAiBanner(ctx);
     rerender();
-    // Approved and nothing else left: the normal fill clicks Continue (when that setting is on).
-    if (decision === 'approved' && canContinue && !pendingAi(ctx.tabId, ctx.page).length
+    // Approved and nothing else left: the normal fill clicks Continue (when that setting is on
+    // and the agent has not edited an answer directly on this page/step).
+    if (decision === 'approved' && canContinueNow() && !pendingAi(ctx.tabId, ctx.page).length
       && aiActionCurrent(ctx, list)) fillPage();
   };
   // Rejecting leaves Continue blocked until the agent either changes that field on the page
@@ -839,7 +848,7 @@ function renderAi(holder, suggestions, ctx) {
     await persistAiPending();
     await syncAiBanner(ctx);
     rerender();
-    if (canContinue && !pendingAi(ctx.tabId, ctx.page).length
+    if (canContinueNow() && !pendingAi(ctx.tabId, ctx.page).length
       && aiActionCurrent(ctx, list)) fillPage();
   };
   // What the suggestion rests on, as the agent reads it (luna.js citedSaid): each cited intake field's
@@ -916,7 +925,7 @@ function renderAi(holder, suggestions, ctx) {
   }
   holder.say({ useAll: sure.length > 1 ? { label: `Use all ${sure.length} AI answers`, put: () => act(sure, 'accepted') } : null, orphans });
   // The dock's Approve (dockFor): every pick waiting on this page, or the rejected ones confirmed.
-  if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(confirmable)) });
+  if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue: canContinueNow(), go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(confirmable)) });
   else state.aiDocks.delete(`${ctx.tabId}|${ctx.page}`);
   recount();
   renderSteps();

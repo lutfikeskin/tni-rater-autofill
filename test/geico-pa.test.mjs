@@ -1345,3 +1345,74 @@ test('Current Insurance GiveCurrentBodilyInjuryLimits picks lowest option for St
     dom.window.close();
   }
 });
+
+test('PR #603 review regressions: Tennessee Farmers alias, GiveZip ZIP+4, Excluded license status, exact "3 years", DST/invalid date in hadInsuranceLast30Days, and wrapped License History driver row', async () => {
+  // 1. Non-exact Tennessee Farmers variants must not be shadowed by generic Farmers/21st Century.
+  assert.deepEqual(geicoProviderChoice('Tennessee Farmers Mutual'), { value: 'TENNESSEE FARMERS', source: 'derived', note: null });
+  assert.deepEqual(geicoProviderChoice('Tennessee Farmers Insurance'), { value: 'TENNESSEE FARMERS', source: 'derived', note: null });
+  assert.deepEqual(geicoProviderChoice('TN Farmers'), { value: 'TENNESSEE FARMERS', source: 'derived', note: null });
+  assert.deepEqual(geicoProviderChoice('Farmers Insurance'), { value: 'Farmers/21st Century', source: 'derived', note: null });
+
+  // 2. Policyholder GiveZip normalizes ZIP+4 to 5 digits and rejects non-5-digit ZIPs with zipNote.
+  const zipRec = baseRecord();
+  zipRec.garaging.zip = '37901-1234';
+  const zipPlan = buildPlan(zipRec, geicoPa, {});
+  const phZip = byField(zipPlan, 'Policyholder Information', 'GiveZip');
+  assert.deepEqual([phZip.value, phZip.source, phZip.note], ['37901', 'derived', null]);
+  zipRec.garaging.zip = 'ABCDE';
+  const badZipPlan = buildPlan(zipRec, geicoPa, {});
+  const badPhZip = byField(badZipPlan, 'Policyholder Information', 'GiveZip');
+  assert.equal(badPhZip.value, null);
+  assert.equal(badPhZip.source, 'fact');
+  assert.match(String(badPhZip.note), /isn't a 5-digit ZIP/i);
+
+  // 3. GiveDriversLicenseStatus must NOT fill 'Active' when licenseNumber contains exclusion text.
+  const exRec = baseRecord();
+  exRec.drivers[1].licenseNumber = 'Excluded';
+  const exPlan = buildPlan(exRec, geicoPa, {});
+  const exLicStatus = byField(exPlan, 'Driver Information', 'GiveDriversLicenseStatus', '2');
+  assert.equal(exLicStatus.value, null);
+  assert.equal(exLicStatus.source, 'fact');
+  assert.match(String(exLicStatus.note), /confirm license status/i);
+
+  // 4. Exact "3 years" maps as derived even on >= 10 year old or blank-year vehicles (only "3+ years" uses standard).
+  const refToday = new Date(2026, 10, 24);
+  assert.deepEqual(geicoOwnershipLength({ year: 2012, ownedFor: '3 years' }, refToday), { value: '2 to 10 years', source: 'derived', note: null });
+  assert.deepEqual(geicoOwnershipLength({ year: null, ownedFor: '3 years' }, refToday), { value: '2 to 10 years', source: 'derived', note: null });
+  assert.deepEqual(geicoOwnershipLength({ year: 2012, ownedFor: '3+ years' }, refToday), { value: '2 to 10 years', source: 'standard', note: null });
+
+  // 5. hadInsuranceLast30Days: 31-day span across Spring-forward DST is 'No', 30-day span is 'Yes', invalid rolled-over dates return null.
+  assert.deepEqual(hadInsuranceLast30Days('02/12/2026', new Date(2026, 2, 15)), { value: 'No', source: 'derived', note: null });
+  assert.deepEqual(hadInsuranceLast30Days('03/01/2026', new Date(2026, 3, 1)), { value: 'No', source: 'derived', note: null });
+  assert.deepEqual(hadInsuranceLast30Days('03/02/2026', new Date(2026, 3, 1)), { value: 'Yes', source: 'derived', note: null });
+  for (const badDate of ['02/31/2026', '13/01/2026', '04/31/2026']) {
+    const res = hadInsuranceLast30Days(badDate, new Date(2026, 3, 1));
+    assert.equal(res.value, null, `invalid calendar date ${badDate} must not roll over`);
+    assert.equal(res.source, 'fact');
+  }
+
+  // 6. Wrapped License History driver section binds Driver 3's own calculated age (not Driver 2's).
+  const rec = baseRecord();
+  rec.drivers[1].dob = '06/15/1984';
+  rec.drivers[1].yearLicensed = 2002; // age 18
+  rec.drivers[2].dob = '06/15/2007';
+  rec.drivers[2].yearLicensed = 2023; // age 16 (distinct from Driver 2)
+  const html = `<!doctype html><html><head><title>GEICO</title></head><body>
+    <gds-vertical-stepper><gds-vertical-stepper-item state="current">License History</gds-vertical-stepper-item></gds-vertical-stepper>
+    <form id="salesForm">
+      <div><gds-section-header>License History</gds-section-header></div>
+      <div><gds-section-header>Jordan Sample</gds-section-header></div>
+      <div><gds-section-header>Alex Sample</gds-section-header></div>
+      <div id="drv3-sec">
+        <gds-section-header>Casey Sample</gds-section-header>
+        <input id="Id_GiveAgeFirstLicensed_301" name="Id_GiveAgeFirstLicensed_301" type="tel" value="">
+      </div>
+    </form>
+  </body></html>`;
+  const { dom, win } = mountGeicoPaDom(html);
+  const plan = buildPlan(rec, geicoPa, {});
+  await win.__raterKit.fill(plan, { highlight: false, stepNames: geicoPa.layoutSteps });
+  const ageInput = /** @type {HTMLInputElement} */ (dom.window.document.getElementById('Id_GiveAgeFirstLicensed_301'));
+  assert.equal(ageInput.value, '16', 'Driver 3 wrapped section receives Driver 3 age (16), not Driver 2 age (18)');
+  dom.window.close();
+});

@@ -328,6 +328,37 @@ test('stepLinks exclusion & button safety: sidebar links and Discard Changes are
   }
 });
 
+test('licenseDriverIndexOf indexes drivers correctly when <gds-section-header> and inputs share a wrapper <div>', () => {
+  const html = `<!doctype html><html><head><title>GEICO</title></head><body>
+    <gds-vertical-stepper><gds-vertical-stepper-item state="current">License History</gds-vertical-stepper-item></gds-vertical-stepper>
+    <form id="salesForm">
+      <div><gds-section-header>License History</gds-section-header></div>
+      <div id="drv1">
+        <gds-section-header>Jordan Sample</gds-section-header>
+        <input id="Id_GiveAgeFirstLicensed_101" name="Id_GiveAgeFirstLicensed_101" type="tel">
+      </div>
+      <div id="drv2">
+        <gds-section-header>Alex Sample</gds-section-header>
+      </div>
+      <div id="drv3">
+        <gds-section-header>Casey Sample</gds-section-header>
+        <input id="Id_GiveAgeFirstLicensed_301" name="Id_GiveAgeFirstLicensed_301" type="tel">
+      </div>
+    </form>
+  </body></html>`;
+  const lic = loadPage(html);
+  try {
+    const a1 = lic.document.getElementById('Id_GiveAgeFirstLicensed_101');
+    const a3 = lic.document.getElementById('Id_GiveAgeFirstLicensed_301');
+    assert.equal(lic.adapter.shared.keys.row(a1), '1', 'Driver 1 inside header wrapper gets row 1 (never null)');
+    assert.equal(lic.adapter.shared.keys.row(a3), '3', 'Driver 3 inside header wrapper gets row 3 (never Driver 2)');
+    assert.equal(lic.fieldKey(a1), 'ref:GiveAgeFirstLicensed');
+    assert.equal(lic.fieldKey(a3), 'ref:GiveAgeFirstLicensed@3');
+  } finally {
+    lic.close();
+  }
+});
+
 test('stable field keys: dataName strips render numbers, maskedField, and -shadow; .ssp-grid and License History assign 1-based entity rows', () => {
   // Policyholder Info: single-entity controls have no @row suffix.
   const ph = loadPage(readFixture('policyholder-info.html'));
