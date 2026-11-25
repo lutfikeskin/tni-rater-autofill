@@ -11253,14 +11253,14 @@ test('nothing scrolls the panel\'s body: it is clipped, and the dock shrinks bef
 
 // The intake PDF opened at 200%, and at a side panel's width the agent scrolled sideways to find
 // anything (the maintainer, 2026-10-23). It opens at the panel's width; a marked item still at 200%;
-// the page drags with the mouse and zooms with Ctrl + wheel.
-test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or zooms with the wheel', () => {
+// the page pans with left-click drag and zooms toward the cursor with the scroll wheel.
+test('the PDF opens at the panel\'s width, a marked item at 200%, and pans or zooms with the wheel', () => {
   assert.match(SIDEPANEL, /const PDF_OPEN_ZOOM = 1;/);
   assert.match(SIDEPANEL, /const PDF_FOCUS_ZOOM = 2;/);
   const pan = extractFunction('pdfPan');
   assert.match(pan, /addEventListener\('pointerdown'/);
   assert.match(pan, /scroll\.scrollLeft = drag\.left - \(e\.clientX - drag\.x\);/);
-  assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!\(e\.ctrlKey \|\| e\.metaKey\) \|\| !state\.pdf\) return;\s+e\.preventDefault\(\);/);
+  assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!state\.pdf \|\| !e\.deltaY\) return;\s+e\.preventDefault\(\);/);
   assert.match(extractFunction('wire'), /pdfPan\(\$\('pdf-scroll'\)\);/);
 });
 
@@ -11687,9 +11687,18 @@ test('client details offer the intake form\'s dropdown options, and keep a value
 test('a PDF drag ends when the button is no longer held, or the capture is lost', () => {
   const listeners = {};
   const cls = new Set();
-  const scroll = { addEventListener: (type, fn) => { listeners[type] = fn; }, setPointerCapture() {}, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) }, scrollLeft: 100, scrollTop: 100 };
+  const scroll = {
+    addEventListener: (type, fn) => { listeners[type] = fn; },
+    setPointerCapture() {},
+    getBoundingClientRect: () => ({ left: 10, top: 20 }),
+    classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) },
+    scrollLeft: 100,
+    scrollTop: 100,
+  };
   const zooms = [];
-  const context = { state: { pdf: { zoom: 1 } }, PDF_ZOOMS: [1, 1.5, 2], pdfZoom: (z) => zooms.push(z), Date };
+  let now = 1000;
+  const FakeDate = { now: () => now };
+  const context = { state: { pdf: { zoom: 1 } }, PDF_ZOOMS: [1, 1.5, 2], pdfZoom: (z, opts) => zooms.push([z, opts?.anchor ?? null]), Date: FakeDate };
   vm.runInNewContext(extractFunction('pdfPan'), context);
   context.pdfPan(scroll);
   listeners.pointerdown({ button: 0, pointerId: 1, clientX: 50, clientY: 50 });
@@ -11703,14 +11712,39 @@ test('a PDF drag ends when the button is no longer held, or the capture is lost'
   assert.equal(cls.has('panning'), true);
   listeners.lostpointercapture({ pointerId: 2 });
   assert.equal(cls.has('panning'), false);
-  // The right button, or no PDF, starts nothing; Ctrl + wheel zooms a step, once per gesture.
+  // The right button, or no PDF, starts nothing; plain scroll wheel zooms toward the cursor, once per tick window.
   listeners.pointerdown({ button: 2, pointerId: 3, clientX: 0, clientY: 0 });
   assert.equal(cls.has('panning'), false);
   const prevented = [];
-  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
-  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
-  listeners.wheel({ ctrlKey: false, deltaY: -100, preventDefault: () => prevented.push(1) });
-  assert.deepEqual([zooms, prevented.length], [[1.5], 2]);
+  listeners.wheel({ ctrlKey: false, deltaY: -100, clientX: 90, clientY: 70, preventDefault: () => prevented.push(1) });
+  // Rapid second tick within 120ms is prevented without skipping another step.
+  now += 50;
+  listeners.wheel({ ctrlKey: false, deltaY: -100, clientX: 90, clientY: 70, preventDefault: () => prevented.push(1) });
+  // After the debounce window, zooming out works too (with or without Ctrl).
+  now += 150;
+  context.state.pdf.zoom = 1.5;
+  listeners.wheel({ ctrlKey: true, deltaY: 100, clientX: 60, clientY: 50, preventDefault: () => prevented.push(1) });
+  // Horizontal-only wheel (deltaY 0) is ignored.
+  listeners.wheel({ ctrlKey: false, deltaY: 0, clientX: 60, clientY: 50, preventDefault: () => prevented.push(1) });
+  assert.deepEqual(JSON.parse(JSON.stringify(zooms)), [[1.5, { x: 80, y: 50 }], [1, { x: 50, y: 30 }]]);
+  assert.equal(prevented.length, 3);
+
+  // pdfZoom keeps the anchored cursor point fixed in the viewport after the page redraws at the new scale.
+  const zoomScroll = { scrollLeft: 0, scrollTop: 0, clientWidth: 360, clientHeight: 480, scrollWidth: 360, scrollHeight: 480 };
+  const zoomCtx = {
+    state: { pdf: { zoom: 1 } },
+    $: () => zoomScroll,
+    drawPdf: () => {
+      zoomScroll.scrollWidth = 720;
+      zoomScroll.scrollHeight = 960;
+      return Promise.resolve();
+    },
+  };
+  vm.runInNewContext(extractFunction('pdfZoom'), zoomCtx);
+  zoomCtx.pdfZoom(2, { anchor: { x: 270, y: 120 } });
+  return Promise.resolve().then(() => {
+    assert.deepEqual([zoomScroll.scrollLeft, zoomScroll.scrollTop], [270, 120]);
+  });
 });
 
 // Live recording, 2026-10-24 (Progressive, Let me look before Continue on, one vehicle): on the vehicle

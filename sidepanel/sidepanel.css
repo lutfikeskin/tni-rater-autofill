@@ -822,7 +822,7 @@ details.fold.cleanup > summary.list-row { padding: 7px 11px; }
 .pdf-hint { display: flex; align-items: center; gap: 6px; padding: 6px 12px; background: var(--warning-soft); border-bottom: 1px solid var(--warning-line); color: var(--warning-ink); font-size: 13px; }
 .pdf-hint.filled { background: var(--surface-selected); border-bottom-color: var(--border-active); color: var(--brand-dark); }
 .pdf-hint .link { flex-shrink: 0; color: inherit; }
-/* Drag to move around the page (pdfPan); Ctrl + wheel zooms. */
+/* Left-click drag pans around the page (pdfPan); scroll wheel zooms toward the cursor. */
 .pdf-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px; background: var(--surface-sunken); cursor: grab; user-select: none; overscroll-behavior: contain; }
 .pdf-scroll.panning { cursor: grabbing; }
 .pdf-sheet { position: relative; width: max-content; background: #ffffff; box-shadow: 0 1px 2px rgba(17, 24, 39, 0.12), 0 2px 8px rgba(17, 24, 39, 0.08); }

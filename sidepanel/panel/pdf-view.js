@@ -24,8 +24,8 @@ import { refreshDefaults } from './agent-defaults/store.js';
 const PDF_KEY = 'intakePdf';
 const PDF_KEEP_MAX = 4 * 1024 * 1024;
 // Zoom steps, relative to the page fitting the panel's width. The whole PDF opens at PDF_OPEN_ZOOM,
-// the page fitting the width, so the agent sees where everything is and zooms (the buttons, Ctrl +
-// wheel) or drags the page around (pdfPan); an item marked on it opens at PDF_FOCUS_ZOOM, where the
+// the page fitting the width, so the agent sees where everything is and zooms (the buttons or scroll
+// wheel) or pans with left-click drag (pdfPan); an item marked on it opens at PDF_FOCUS_ZOOM, where the
 // form's text is readable at the panel's width (it opened at 200% before, and at a side panel's
 // width the agent had to scroll sideways to find anything: the maintainer, 2026-10-23).
 const PDF_ZOOMS = [1, 1.5, 2, 3, 4];
@@ -240,21 +240,26 @@ function pdfControls(view) {
   };
 }
 
-function pdfZoom(zoom, { focus = false } = {}) {
+function pdfZoom(zoom, { focus = false, anchor = null } = {}) {
   if (!state.pdf || zoom == null) return;
-  // Zooming keeps the middle of the view in the middle.
+  // Keep the cursor's point (wheel zoom) or the middle of the view (button zoom) in place.
   const scroll = $('pdf-scroll');
-  const keep = [(scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth, (scroll.scrollTop + scroll.clientHeight / 2) / scroll.scrollHeight];
+  const ax = anchor ? anchor.x : scroll.clientWidth / 2;
+  const ay = anchor ? anchor.y : scroll.clientHeight / 2;
+  const keep = [
+    scroll.scrollWidth ? (scroll.scrollLeft + ax) / scroll.scrollWidth : 0.5,
+    scroll.scrollHeight ? (scroll.scrollTop + ay) / scroll.scrollHeight : 0.5,
+  ];
   state.pdf = { ...state.pdf, zoom };
   drawPdf({ focus }).then(() => {
     if (focus || !state.pdf) return;
-    scroll.scrollLeft = keep[0] * scroll.scrollWidth - scroll.clientWidth / 2;
-    scroll.scrollTop = keep[1] * scroll.scrollHeight - scroll.clientHeight / 2;
+    scroll.scrollLeft = keep[0] * scroll.scrollWidth - ax;
+    scroll.scrollTop = keep[1] * scroll.scrollHeight - ay;
   });
 }
 
-// Moving around the PDF: drag it with the mouse (the primary button, anywhere in the page area), and
-// zoom a step with Ctrl (or ⌘) + wheel, as PDF viewers do. A drag never selects text or clicks.
+// Moving around the PDF: pan by dragging with left-click (anywhere in the page area), and zoom in or
+// out toward the cursor with the scroll wheel (with or without Ctrl/⌘). A drag never selects text.
 function pdfPan(scroll) {
   let drag = null;
   scroll.addEventListener('pointerdown', (e) => {
@@ -281,12 +286,14 @@ function pdfPan(scroll) {
   scroll.addEventListener('lostpointercapture', end);
   let wheelAt = 0;
   scroll.addEventListener('wheel', (e) => {
-    if (!(e.ctrlKey || e.metaKey) || !state.pdf) return;
+    if (!state.pdf || !e.deltaY) return;
     e.preventDefault();
-    // One step per gesture, not per tick of a smooth-scrolling wheel or trackpad.
-    if (Date.now() - wheelAt < 250) return;
+    // One step per wheel notch/gesture, without skipping across several zoom levels at once.
+    if (Date.now() - wheelAt < 120) return;
     wheelAt = Date.now();
-    pdfZoom(e.deltaY < 0 ? PDF_ZOOMS.find((z) => z > state.pdf.zoom) : PDF_ZOOMS.findLast((z) => z < state.pdf.zoom));
+    const rect = scroll.getBoundingClientRect?.();
+    const anchor = rect ? { x: e.clientX - rect.left, y: e.clientY - rect.top } : null;
+    pdfZoom(e.deltaY < 0 ? PDF_ZOOMS.find((z) => z > state.pdf.zoom) : PDF_ZOOMS.findLast((z) => z < state.pdf.zoom), { anchor });
   }, { passive: false });
 }
 
