@@ -14220,3 +14220,50 @@ test('direct rater-page edit while AI picks are pending suppresses Approve & con
   assert.equal(rejPick.confirmed, true);
   assert.equal(fillCalls, 0, 'confirmRejected checks live agentPageEdits and never auto-advances via fillPage()');
 });
+
+test('showReport strips data-search-hide before stashing nodes, and showNextNeed switches from All to Needs', () => {
+  // 1. showReport clears data-search-hide synchronously before detaching shown.nodes (so #past never inherits hidden rows).
+  const hiddenRow = {
+    attrs: new Map([['data-search-hide', '1']]),
+    removeAttribute(name) { this.attrs.delete(name); },
+  };
+  const reportEl = {
+    childNodes: [{ id: 'rows-wrap' }],
+    querySelectorAll: (sel) => (sel === '.row[data-search-hide]' ? [hiddenRow] : []),
+    replaceChildren(...nodes) { this.childNodes = nodes; },
+  };
+  const prevEntry = { key: 'page-a', nodes: null, restored: false };
+  const nextEntry = { key: 'page-b', nodes: [{ id: 'rows-b' }], restored: false };
+  const srState = { reportFor: prevEntry, reports: new Map([['page-a', prevEntry], ['page-b', nextEntry]]) };
+  const srCtx = { state: srState, $: (id) => (id === 'report' ? reportEl : null), currentReportKey: () => 'page-b' };
+  vm.createContext(srCtx);
+  vm.runInContext(extractFunction('showReport'), srCtx);
+  srCtx.showReport();
+  assert.equal(hiddenRow.attrs.has('data-search-hide'), false, 'showReport removes data-search-hide before stashing nodes');
+  assert.equal(prevEntry.nodes.length, 1);
+
+  // 2. showNextNeed switches state.filter from 'all' to 'needs' so an active All-tab search cannot hide the opened need.
+  const needRec = { type: 'need', settled: false, gone: false, open: false };
+  let screens = 0; let steps = 0; let opened = null; let scrolled = 0; let focused = 0;
+  const fakeNode = {
+    scrollIntoView() { scrolled += 1; },
+    querySelector: (s) => (s === '.row-head' ? { focus() { focused += 1; } } : null),
+  };
+  const snState = { view: 'page', filter: 'all', pastKey: null, reportFor: { list: [needRec] } };
+  const snCtx = {
+    state: snState,
+    showScreen() { screens += 1; },
+    renderSteps() { steps += 1; },
+    flushSync: (fn) => fn(),
+    toggleRow(rec, open) { opened = [rec, open]; },
+    rowNodes: new Map([[needRec, fakeNode]]),
+    scrollBehavior: () => 'auto',
+    matchMedia: () => ({ matches: true }),
+  };
+  vm.createContext(snCtx);
+  vm.runInContext(extractFunction('showNextNeed'), snCtx);
+  snCtx.showNextNeed();
+  assert.equal(snState.filter, 'needs', 'showNextNeed switches from All to Needs');
+  assert.deepEqual([screens, steps, scrolled, focused], [1, 1, 1, 1]);
+  assert.deepEqual(opened, [needRec, true]);
+});

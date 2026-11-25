@@ -536,7 +536,7 @@ details.fold.cleanup > summary.list-row { padding: 7px 11px; }
 .report[data-filter="needs"] .row.need.resolved:not(.open) { display: none; }
 .report[data-filter="worth"] .row:not([data-worth="1"]) { display: none; }
 .report[data-filter="done"] .row.need:not(.resolved) { display: none; }
-.report .row[data-search-hide="1"] { display: none; }
+#report .row[data-search-hide="1"] { display: none; }
 .note-line { font-size: 13px; color: var(--ink-secondary); text-wrap: pretty; }
 .feed-empty { padding: 14px 10px; text-align: center; font-size: 13px; color: var(--ink-muted); }
 .feed-tools { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 10px; background: #fafcfe; border-top: 1px solid #e6eef7; }

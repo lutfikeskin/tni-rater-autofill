@@ -124,6 +124,9 @@ function Feed({ act }) {
       }
     }
     setSearchEmpty(Boolean(q) && visible === 0);
+    return () => {
+      for (const row of rows) row.removeAttribute('data-search-hide');
+    };
   }, [query, f.filter, f.pastKey, reportFor, rowsDrawn]);
 
   const past = !!f.pastKey;
