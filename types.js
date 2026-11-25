@@ -1279,6 +1279,7 @@
  * @property {() => string | null | undefined} [step]  the step on screen, where the carrier marks it itself in the page (Progressive Personal Auto's navigation bar, aria-current): its name, undefined where this document draws no step navigation (another frame, a page outside the quote), or null while it draws one with no step marked
  * @property {string[]} [changeAttributes]
  * @property {string | null} [components]
+ * @property {(why: string | null) => number | null} [settleMaxMs]  minimum settle() timeout ceiling in ms for a wait kind (`answer`, `round`, `list`), or null to keep the caller's ceiling
  * @property {PageAdapterKeys} [keys]  how its fields are named and keyed (field-key.js)
  * @property {(el: Element) => string} [caption]  a question's caption as the page draws it (Progressive's c_<id> label), for the recorder
  * @property {(el: Element) => boolean} [combo]  a dropdown drawn as a text box (an ExtJS combo), for the recorder
@@ -1335,6 +1336,7 @@
  * @property {(list: Element) => { label: string, fixed: boolean } | null} listOwner  the question an open list belongs to
  * @property {(controls: any[]) => any[]} [order]  reorders collected controls before cursor matching and answering (Progressive Personal Auto's side-by-side vehicle/driver columns: fill left-to-right column by column instead of row-first DOM order)
  * @property {string | null} components  the tag prefix of the carrier's own web components (GEICO's gds-): a fill waits for those the page hasn't defined yet
+ * @property {(why: string | null) => number | null} settleMaxMs  minimum settle() timeout ceiling in ms for a wait kind (`answer`, `round`, `list`), or null to keep the caller's ceiling
  */
 
 /**
