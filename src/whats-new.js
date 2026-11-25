@@ -8,6 +8,9 @@
 
 /** @type {Record<string, string[]>} version (x.y.z) -> its lines, in the order said */
 const WHATS_NEW = {
+  '0.9.44': [
+    'Fixes for invalid vehicle years, GEICO NO POP, and panel search.',
+  ],
   '0.9.43': [
     'Personal Auto quotes now autofill on Progressive and GEICO.',
     'One tabbed answers view after a fill, plus scroll-wheel zoom on PDFs.',
