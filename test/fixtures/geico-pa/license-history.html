@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>GEICO</title>
+</head>
+<body class="dark">
+  <div id="extendedWaiting" class="loader-container" style="display: none;"></div>
+  <div id="page-load" class="loader-container" style="display: none;"></div>
+  <gds-drawer expanded="" side="left" aria-expanded="true">
+    <gds-vertical-stepper state="completed" expanded="" type="menu" variation="accordion">
+      <span slot="title">Policyholder</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Policyholder Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Current Insurance</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+    <gds-vertical-stepper state="current" expanded="" type="menu" variation="accordion">
+      <span slot="title">Drivers</span>
+      <gds-vertical-stepper-item state="completed" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">Driver Information</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="current" type="menu" tabindex="0"><a class="action--disable-click" href="https://sales.geico.com/quote#">License History</a></gds-vertical-stepper-item>
+      <gds-vertical-stepper-item state="future" type="menu" tabindex="-1"><a class="action--disable-click" href="https://sales.geico.com/quote#">Select Drivers with Incidents</a></gds-vertical-stepper-item>
+    </gds-vertical-stepper>
+  </gds-drawer>
+
+  <main>
+    <form id="salesForm">
+      <div><gds-section-header>License History</gds-section-header></div>
+
+      <div id="Id_a96f53a425e94265906b1d43615e2466">
+        <div><gds-section-header><span>Alex</span> <span>Sample</span></gds-section-header></div>
+      </div>
+      <div id="Id_b548ea30c4fb4a6bb0ffa3d6c61df2d2">
+        <gds-radio-button-group id="Id_SubstantialLicenseHistoryYesNo_91666" active-index="0">
+          <span slot="legend"><span>Were you licensed to drive in the U.S. before turning 35?</span></span>
+          <gds-radio-button id="Id_SubstantialLicenseHistoryYesNo_916660" name="Id_SubstantialLicenseHistoryYesNo_91666" value="Yes" checked="">
+            <template shadowrootmode="open"><input id="Id_SubstantialLicenseHistoryYesNo_916660-shadow" name="Id_SubstantialLicenseHistoryYesNo_91666" type="radio" value="Yes" checked=""></template>
+            <span slot="label">Yes</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_SubstantialLicenseHistoryYesNo_916661" name="Id_SubstantialLicenseHistoryYesNo_91666" value="No">
+            <template shadowrootmode="open"><input id="Id_SubstantialLicenseHistoryYesNo_916661-shadow" name="Id_SubstantialLicenseHistoryYesNo_91666" type="radio" value="No"></template>
+            <span slot="label">No</span>
+          </gds-radio-button>
+        </gds-radio-button-group>
+      </div>
+
+      <div id="Id_1f0e877814e04f86ae1563c0c8efaf45">
+        <div><gds-section-header><span>Jordan</span> <span>Sample</span></gds-section-header></div>
+      </div>
+      <div id="Id_bb89005db2d24c8390e9cdfd321b1f2c">
+        <gds-radio-button-group id="Id_SubstantialLicenseHistoryYesNo_12013" active-index="0">
+          <span slot="legend"><span>Was this driver licensed to drive in the U.S. before turning 36?</span></span>
+          <gds-radio-button id="Id_SubstantialLicenseHistoryYesNo_120130" name="Id_SubstantialLicenseHistoryYesNo_12013" value="Yes" checked="">
+            <template shadowrootmode="open"><input id="Id_SubstantialLicenseHistoryYesNo_120130-shadow" name="Id_SubstantialLicenseHistoryYesNo_12013" type="radio" value="Yes" checked=""></template>
+            <span slot="label">Yes</span>
+          </gds-radio-button>
+          <gds-radio-button id="Id_SubstantialLicenseHistoryYesNo_120131" name="Id_SubstantialLicenseHistoryYesNo_12013" value="No">
+            <template shadowrootmode="open"><input id="Id_SubstantialLicenseHistoryYesNo_120131-shadow" name="Id_SubstantialLicenseHistoryYesNo_12013" type="radio" value="No"></template>
+            <span slot="label">No</span>
+          </gds-radio-button>
+        </gds-radio-button-group>
+      </div>
+
+      <div id="Id_4d3b3a518f164d1b8e444c7fdb2647d0">
+        <div><gds-section-header><span>Casey</span> <span>Sample</span></gds-section-header></div>
+      </div>
+      <div id="Id_d1c30bd7d48c4639b262bd4983734b15">
+        <div class="form-field">
+          <gds-label-legend><span>How old was this driver when they got their driver's license in the U.S.?</span></gds-label-legend>
+          <input id="Id_GiveAgeFirstLicensed_70440" name="Id_GiveAgeFirstLicensed_70440" type="tel" inputmode="numeric" maxlength="2" aria-labelledby="Id_GiveAgeFirstLicensed_70440-label" value="18">
+          <span id="form-message-error-Id_GiveAgeFirstLicensed_70440" class="form-message"></span>
+        </div>
+      </div>
+      <div id="Id_f8e6d91caa2e495d8ae780dab9dd5931">
+        <div class="form-field">
+          <gds-label-legend><span>When did <span>Casey</span> first obtain their license in the U.S.?</span></gds-label-legend>
+          <div id="Id_MonthYearAgeFirstLicensed_28780Div" class="select-box">
+            <select id="Id_MonthYearAgeFirstLicensed_28780" aria-label="When did &lt;span data-qm-encrypt='true'&gt;Casey&lt;/span&gt; first obtain their license in the U.S.?">
+              <option value="">Please Select</option>
+              <option value="January 2023">January 2023</option>
+              <option value="February 2023">February 2023</option>
+            </select>
+          </div>
+          <span id="form-message-error-Id_MonthYearAgeFirstLicensed_28780" class="form-message"></span>
+        </div>
+      </div>
+
+      <div id="Id_LicenseHistoryComboActivityDataAllDriversActions_95558">
+        <div class="button-group-right">
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Save and Continue
+          </gds-button>
+          <gds-button class="mobile-button" type="button">
+            <template shadowrootmode="open"><button type="button"><span><slot></slot></span></button></template>
+            Discard Changes
+          </gds-button>
+        </div>
+      </div>
+
+      <input id="tkey" type="hidden" value="synthetic-tkey">
+    </form>
+  </main>
+</body>
+</html>

@@ -110,10 +110,33 @@ function leftOf(list = []) {
   return { left: open.length, otherLeft: open.filter((r) => !r.finish).length };
 }
 
-// The filters' counts: every row, those needing the agent, and the rest.
-function listCounts(list = []) {
-  const needs = list.filter((r) => r.type === 'need' && !r.settled).length;
-  return { all: list.length, needs, done: list.length - needs };
+// Display rank inside "Worth a look" (0..3), or -1 when a row belongs only under "All".
+function worthRank(rec) {
+  if (!rec || rec.gone) return -1;
+  if (rec.kind === 'edited' || rec.kind === 'changed' || Boolean(rec.changed)) return 0;
+  if (rec.kind === 'own') return 1;
+  if (rec.type === 'need' && (rec.settled === 'answered' || rec.settled === 'picked' || rec.settled === 'ai')) return 1;
+  if (rec.type === 'need' && rec.settled === 'marked') return 2;
+  if (rec.kind === 'standard') return 3;
+  return -1;
 }
 
-export { answerRecord, leftOf, listCounts, needId, needRecord, needSay, nowSaid, optionsSaid, reopenRow, rowClass, rowHead, setHead, settleRow, showLive };
+// The filters' counts: needs (open/pending), worth a look (standards/edits/settled), all, and done.
+function listCounts(list = []) {
+  let all = 0, needs = 0, worth = 0;
+  for (const r of list) {
+    if (!r || r.gone) continue;
+    all += 1;
+    if ((r.type === 'need' && !r.settled) || Boolean(r.pending)) needs += 1;
+    else if (worthRank(r) >= 0) worth += 1;
+  }
+  return { all, needs, worth, done: all - needs };
+}
+
+// Default unified sheet tab for a report: Needs when open items exist, else Worth a look, else All.
+function defaultFilter(list = []) {
+  const { needs, worth } = listCounts(list);
+  return needs > 0 ? 'needs' : worth > 0 ? 'worth' : 'all';
+}
+
+export { answerRecord, defaultFilter, leftOf, listCounts, needId, needRecord, needSay, nowSaid, optionsSaid, reopenRow, rowClass, rowHead, setHead, settleRow, showLive, worthRank };

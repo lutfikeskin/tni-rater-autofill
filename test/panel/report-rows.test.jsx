@@ -210,8 +210,8 @@ test('an answer’s source, See in intake and Change answer: drawn from its reco
   const row = node(rec);
   expect([row.querySelector('.sr-only').textContent, row.querySelector('.row-head .tag'), row.querySelector('.src-title').textContent, row.querySelector('.src-quote').textContent])
     .toEqual(['From the intake', null, 'Intake, page 2', 'DOT number: 1234567']);
-  const see = row.querySelector('.ghost.src');
-  const change = row.querySelector('.ghost.change');
+  const see = row.querySelector('.tray-link.src');
+  const change = row.querySelector('.tray-link.change');
   expect([see.textContent, see.title, change.textContent, change.getAttribute('aria-label')]).toEqual(['See in intake', 'Show where this came from in the intake', 'Change answer', 'Change answer: DOT number']);
   see.click();
   change.click();
@@ -285,7 +285,7 @@ test('a row change draws only the list of its own report', () => {
   expect(state.rowsAll).toBe(1);
 });
 
-test('focused NeedRow shows Needs you · k of n eyebrow, visible non-"answered" Mark done note, and VinHold client-details jump', () => {
+test('NeedRow shows Option B tray with visible non-"answered" Mark done note, data-tone/data-worth, and VinHold client-details jump', () => {
   const jumped = [];
   setJumpToPath((path) => jumped.push(path));
   const vinVeh = needRecord({ key: 'vin1', label: 'VIN', path: 'vehicles[0].vin', controlKind: 'text', why: 'VIN check digit failed.' }, ctx.carrier, ctx.page, true);
@@ -294,20 +294,10 @@ test('focused NeedRow shows Needs you · k of n eyebrow, visible non-"answered" 
   const ans = answerRecord({ label: 'DOT number', value: '1234567', answer: true, key: 'dot', path: 'vehicles[0].vin' });
   const { node } = draw([ans, vinVeh, vinTrl, actionNeed]);
 
-  // Eyebrows count only non-gone need rows (1 of 3, 2 of 3, 3 of 3).
-  expect([vinVeh, vinTrl, actionNeed].map((r) => node(r).querySelector('.need-eyebrow')?.textContent)).toEqual([
-    'Needs you · 1 of 3',
-    'Needs you · 2 of 3',
-    'Needs you · 3 of 3',
-  ]);
-  vinTrl.gone = true;
-  redraw(vinTrl);
-  expect([vinVeh, actionNeed].map((r) => node(r).querySelector('.need-eyebrow')?.textContent)).toEqual([
-    'Needs you · 1 of 2',
-    'Needs you · 2 of 2',
-  ]);
-  vinTrl.gone = false;
-  redraw(vinTrl);
+  // Option B tray and tone markers: unsettled needs carry data-tone="need" and omit the retired eyebrow band.
+  expect(node(vinVeh).getAttribute('data-tone')).toBe('need');
+  expect(node(vinVeh).querySelector('.row-tray')).not.toBeNull();
+  expect(node(vinVeh).querySelector('.need-eyebrow')).toBeNull();
 
   // VinHold offers "Correct it in client details" only on vehicles[n].vin and trailers[n].vin needs.
   const vehBtn = node(vinVeh).querySelector('.vin-fix');
@@ -330,6 +320,8 @@ test('focused NeedRow shows Needs you · k of n eyebrow, visible non-"answered" 
   expect(actionMarkNote?.textContent?.toLowerCase()).not.toContain('answered');
   settleRow(vinVeh, 'marked');
   redraw(vinVeh);
-  expect(markNote?.hidden).toBe(true);
-  expect(markBtn?.hasAttribute('aria-describedby')).toBe(false);
+  expect(node(vinVeh).getAttribute('data-worth')).toBe('1');
+  expect(node(vinVeh).getAttribute('data-tone')).toBe('you');
+  expect(node(vinVeh).querySelector('.mark-done-note')?.hidden).toBe(true);
+  expect(node(vinVeh).querySelector('.mark-done')?.hasAttribute('aria-describedby')).toBe(false);
 });

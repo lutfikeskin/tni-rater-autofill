@@ -31,7 +31,7 @@ function Listed({ id, title, rows, line }) {
 function Carrier({ carrier }) {
   return (
     <section className="summary-carrier" aria-label={carrier.name}>
-      <h3 className="summary-h">{carrier.name}{carrier.practice ? ' (practice page)' : ''}</h3>
+      <h3 className="summary-h">{carrier.name}{carrier.practice && !/\(practice\)/i.test(carrier.name) ? ' (practice page)' : ''}</h3>
       {carrier.pages.map((page, n) => (
         <details key={n} className="summary-page" open>
           <summary>
@@ -90,8 +90,8 @@ function Summary({ act }) {
         </div>
         <p id="summary-saved" ref={savedLine} className="small summary-saved" hidden={!open?.saved}>{open?.saved ?? ''}</p>
         <div className="sheet-foot">
-          <button type="button" id="summary-save" className="ghost small-btn" disabled={!s} onClick={() => act.save()}>Save summary</button>
-          <button type="button" id="summary-back" className="primary small-btn" onClick={() => act.close()}>Back</button>
+          <button type="button" id="summary-save" className="primary small-btn" disabled={!s} onClick={() => act.save()}>Save summary</button>
+          <button type="button" id="summary-back" className="ghost small-btn" onClick={() => act.close()}>Back</button>
         </div>
       </section>
     </>
