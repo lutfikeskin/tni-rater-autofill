@@ -85,7 +85,7 @@ async function refreshTab() {
   if (tab?.id !== state.tab?.id || pageOf(tab?.url) !== pageOf(state.tab?.url)) flushPendingTextChanges();
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
-    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'triedAgain', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'advanceRetried', 'assistPage', 'unitNamed', 'active'];
+    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'triedAgain', 'agentKeys', 'agentPageEdits', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'advanceRetried', 'assistPage', 'unitNamed', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     // A quote tab the panel has no record for starts on vehicle 1 and driver 1, never on the tab it
@@ -95,7 +95,7 @@ async function refreshTab() {
     const restored = !previous && state.activeTab === tab?.id;
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
-      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), advanceRetried: new Set(), assistPage: null,
+      agentKeys: new Map(), agentPageEdits: new Set(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), advanceRetried: new Set(), assistPage: null,
       unitNamed: null, active: restored ? { ...(state.savedActive ?? state.active) } : firstUnits(),
     });
     if (state.intake) renderPickers();

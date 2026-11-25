@@ -36,6 +36,7 @@ export const CONCEPTS = Object.freeze({
   'quote.named-non-owner': 'Whether the policy is a named non-owner / named operator policy.',
   'quote.all-drivers': 'Whether all required household drivers are listed on the quote.',
   'quote.paperless': 'Whether the customer opts into paperless document and bill delivery.',
+  'quote.groups-affiliations': 'Membership in partner groups, alumni associations, or organizations for affinity discounts.',
 
   // Residence (personal auto)
   'residence.moved': 'Whether the insured moved in the last two months.',
@@ -68,6 +69,7 @@ export const CONCEPTS = Object.freeze({
   'owner.ssn': "The owner's Social Security number (never filled).",
   'owner.drives': 'Whether the owner is a driver on the policy.',
   'owner.daily-ops': 'Whether the owner is involved in daily operations.',
+  'owner.emancipated-minor': 'Whether a minor applicant is legally emancipated.',
 
   // Operations
   'operations.radius': 'How far the vehicles travel (radius, farthest one-way distance).',
@@ -93,6 +95,7 @@ export const CONCEPTS = Object.freeze({
   // Prior and current insurance
   'prior.currently-insured': 'Whether the customer is currently insured.',
   'prior.continuous': 'Whether coverage has been continuous.',
+  'prior.lapse-30-days': 'Whether the customer has had auto insurance within the last 30 days.',
   'prior.same-carrier': 'Whether the customer is insured with the carrier being quoted.',
   'prior.carrier': 'The prior or current carrier.',
   'prior.limit': 'The current liability limit.',
@@ -122,6 +125,9 @@ export const CONCEPTS = Object.freeze({
   'driver.license-type': "A driver's license type (personal auto, commercial, permit, etc.).",
   'driver.license-status': "A driver's license status (valid, suspended, expired, etc.).",
   'driver.employment': "A driver's employment category and occupation.",
+  'driver.education': "A driver's highest level of education.",
+  'driver.military-gov': "A driver's military or federal government affiliation and service details.",
+  'driver.license-history': 'When and at what age a driver was first licensed in the U.S.',
   'driver.student-discount': 'Good student or distant student discount eligibility.',
 
   // Vehicles
@@ -143,6 +149,7 @@ export const CONCEPTS = Object.freeze({
   'vehicle.ownership-length': 'How long the insured has had a vehicle.',
   'vehicle.garaging': 'Where a vehicle is garaged or parked.',
   'vehicle.use': "A vehicle's use in the business (business operations, primary income).",
+  'vehicle.business-use-type': 'The specific category of business use for a personal-auto vehicle.',
   'vehicle.rideshare': 'Whether a vehicle is used for rideshare / TNC (Uber, Lyft, DoorDash, etc.).',
 
   // Trailers

@@ -4,23 +4,7 @@
 // intake answers counted on the "See all N answers" link.
 // Pure decision logic: imports only report-rows.js, with no DOM and no browser globals.
 
-import { rowHead } from './report-rows.js';
-
-/**
- * Returns the display rank inside "Worth a look" (0..3), or -1 when `rec` stays out of
- * "Worth a look" (such as straight-from-intake and derived answers).
- *
- * @param {Record<string, any>} rec
- * @returns {number}
- */
-function worthRank(rec) {
-  if (rec.kind === 'edited' || rec.kind === 'changed' || Boolean(rec.changed)) return 0;
-  if (rec.kind === 'own') return 1;
-  if (rec.type === 'need' && (rec.settled === 'answered' || rec.settled === 'picked' || rec.settled === 'ai')) return 1;
-  if (rec.type === 'need' && rec.settled === 'marked') return 2;
-  if (rec.kind === 'standard') return 3;
-  return -1;
-}
+import { rowHead, worthRank } from './report-rows.js';
 
 /**
  * Computes the head summary (`{ icon, value, tag }`) for a row on the Review screen.

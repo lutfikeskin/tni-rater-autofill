@@ -90,6 +90,7 @@ test('off a rater the page view says which to open, or why the page can\'t be re
   // Personal auto intake shows personal-auto raters only.
   act(() => { state.intake = { record: { product: 'personal-auto' } }; });
   expect([...container.querySelectorAll('.rater-logos button')].map((b) => [b.dataset.carrier, b.title])).toEqual([
+    ['geico-pa', 'Open GEICO Personal Auto in a new tab'],
     ['progressive-pa', 'Open Progressive Personal Auto in a new tab'],
   ]);
   act(() => { state.intake = null; state.cards = { waiting: null }; });

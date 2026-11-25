@@ -20,6 +20,7 @@ import { generalPa } from './rulebook/general-pa.js';
 import { progressive } from './rulebook/progressive.js';
 import { amwins } from './rulebook/amwins.js';
 import { geico } from './rulebook/geico.js';
+import { geicoPa } from './rulebook/geico-pa.js';
 import { progressivePa } from './rulebook/progressive-pa.js';
 
 /** @import { RulebookEntry, RulebookPart } from '../../types.js' */
@@ -27,7 +28,7 @@ import { progressivePa } from './rulebook/progressive-pa.js';
 export const GENERAL = general;
 export const GENERAL_PA = generalPa;
 /** @type {Record<string, RulebookPart>} */
-export const CARRIER_PARTS = { progressive, amwins, geico, 'progressive-pa': progressivePa };
+export const CARRIER_PARTS = { progressive, amwins, geico, 'geico-pa': geicoPa, 'progressive-pa': progressivePa };
 const PA_CARRIERS = new Set(['progressive-pa', 'geico-pa']);
 
 /** Which general rulebook part applies to a carrier. @param {string} carrier */
