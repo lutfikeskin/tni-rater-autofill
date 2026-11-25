@@ -11489,3 +11489,212 @@ test('Progressive CoveragesRates: an already-open GL section with q21D1 unanswer
   assert.equal(glNotes.length, 1, `only the exhausted loads note, no duplicate missing note: ${JSON.stringify(glNotes)}`);
   assert.match(glNotes[0].note, /Clicked once, but the page never showed what it opens/);
 });
+
+// W49-06: Progressive CoveragesRates with duplicate identical Year Make Model vehicles.
+// Disambiguates via RiskInput.VIN display divs when present and unique; whenever a true tie
+// remains, records the tied rows in namedRows -> unmatchedRows instead of unfamiliar + pageChanged.
+test('Progressive CoveragesRates: duplicate identical vehicles disambiguate by VIN and route true ties to unmatchedRows without pageChanged (W49-06)', async () => {
+  const comboOpts = (texts) => texts.map((label) => ({ get: () => label }));
+  const addCombo = (h, prefix, q, caption, row, opts, { required = true } = {}) => {
+    const f = addExtText(h, prefix, q, { caption, row, required });
+    Object.assign(f.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => comboOpts(opts), isLoading: () => false } });
+    return f;
+  };
+  const addVinDisplay = (h, row, vin) => {
+    const group = 'A'.repeat(32);
+    const div = new FakeNode('div', {
+      id: `f_r${group}1F6A_${row}-inputEl`,
+      className: 'x-form-display-field x-form-display-field-default',
+      textContent: vin,
+      attrs: { fieldref: 'RiskInput.VIN' },
+    });
+    h.document.body.append(div);
+    return div;
+  };
+  const addVehicleSection = (h, row, caption, vin = null) => {
+    if (vin) addVinDisplay(h, row, vin);
+    const comp = addCombo(h, 'c', '1FCD', caption, row, ['Not selected', '$1,000 Deductible']);
+    const coll = addCombo(h, 'c', '1FD2', caption, row, ['Not selected', '$1,000 Deductible']);
+    const med = addCombo(h, 'c', '1FE4', caption, row, ['Not selected', '$5,000 per person']);
+    const rental = addCombo(h, 'c', '1FF2', caption, row, ['Not selected', '$40 per day, $1,200 max']);
+    const roadside = addCombo(h, 'c', '2000', caption, row, ['Not selected', 'Selected']);
+    const ft = addCombo(h, 'c', '200F', caption, row, ['Not selected', '$1,000 Deductible']);
+    const noEquip = addExtText(h, 'r', '2CE3', { row });
+    noEquip.input.type = 'checkbox';
+    const acv = addExtText(h, 'r', '2CE8', { row, required: true });
+    return { comp, coll, med, rental, roadside, ft, noEquip, acv };
+  };
+  const ratesRecord = (vehicles) => ({
+    applicant: { name: 'Synthetic Fleet LLC' },
+    garaging: { state: 'TX' },
+    operations: { businessClass: 'Expediter', radius: 'Unlimited' },
+    drivers: [],
+    trailers: [],
+    priorInsurance: [],
+    claims: { hasClaims: false },
+    coverage: { autoLiabLimit: '$1 million CSL', cargo: false, gl: false, ntl: false },
+    vehicles,
+  });
+
+  // 1) Duplicate identical Year Make Model vehicles WITH RiskInput.VIN display divs (swapped row order):
+  // each row matches its own vehicle cleanly by VIN with zero unknown, zero checks, and pageChanged=false.
+  const dupWithVin = ratesRecord([
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC0000001', value: 31000 },
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC0000002', value: 45000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: '1SYNTHETIC0000003', value: 17000 },
+  ]);
+  const planVin = buildPlan(dupWithVin, progressive, { vehicles: 0 }).filter((s) => s.kind !== 'action');
+  const hVin = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const r1 = addVehicleSection(hVin, '8_1', '2025 RAM PROMASTER 2500', '1SYNTHETIC0000002');
+  const r2 = addVehicleSection(hVin, '8_2', '2025 RAM PROMASTER 2500', '1SYNTHETIC0000001');
+  const r3 = addVehicleSection(hVin, '8_3', '2019 MERCEDES-BENZ SPRINTER', '1SYNTHETIC0000003');
+  const repVin = await hVin.kit.fill(planVin, { maxRounds: 40, replaceChoices: true, pager: progressive.unitPager });
+  assert.equal(repVin.halted, false);
+  assert.equal(r1.acv.input.value, '45000', 'row 8_1 (VIN 2) gets vehicle 2 ACV');
+  assert.equal(r2.acv.input.value, '31000', 'row 8_2 (VIN 1) gets vehicle 1 ACV');
+  assert.equal(r3.acv.input.value, '17000', 'row 8_3 (VIN 3) gets vehicle 3 ACV');
+  assert.equal(r1.comp.cmp.getValue(), '$1,000 Deductible');
+  assert.equal(r2.comp.cmp.getValue(), '$1,000 Deductible');
+  assert.equal(r3.comp.cmp.getValue(), '$1,000 Deductible');
+  assert.deepEqual(plain(repVin.unknown), [], 'no unfamiliar controls when VIN disambiguates');
+  assert.deepEqual(plain(repVin.checks), [], 'no checks when VIN disambiguates');
+  assert.deepEqual(plain(repVin.leftRequired), []);
+  assert.deepEqual(plain(repVin.noData), []);
+  assert.equal(repVin.pageChanged, false);
+
+  // 2) True tie (identical Year Make Model with NO VINs): distinct vehicle fills cleanly, while the
+  // 16 tied controls stay untouched and route to unmatchedRows checks — 0 unknown, 0 leftRequired,
+  // pageChanged=false, and no false "No row on this page reads as Vehicle ..." note.
+  const dupNoVin = ratesRecord([
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: null, value: 31000 },
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: null, value: 45000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: null, value: 17000 },
+  ]);
+  const planNoVin = buildPlan(dupNoVin, progressive, { vehicles: 0 }).filter((s) => s.kind !== 'action');
+  const hTie = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const t1 = addVehicleSection(hTie, '8_1', '2025 RAM PROMASTER 2500');
+  const t2 = addVehicleSection(hTie, '8_2', '2025 RAM PROMASTER 2500');
+  const t3 = addVehicleSection(hTie, '8_3', '2019 MERCEDES-BENZ SPRINTER');
+  const repTie = await hTie.kit.fill(planNoVin, { maxRounds: 40, replaceChoices: true, pager: progressive.unitPager });
+  assert.equal(repTie.halted, false);
+  assert.equal(t3.acv.input.value, '17000', 'distinct vehicle still fills normally');
+  assert.equal(t3.comp.cmp.getValue(), '$1,000 Deductible');
+  assert.equal(t1.acv.input.value, '', 'tied row 1 ACV is never guessed');
+  assert.equal(t2.acv.input.value, '', 'tied row 2 ACV is never guessed');
+  assert.equal(t1.comp.cmp.getValue(), '', 'tied row 1 comp is never guessed');
+  assert.equal(t2.comp.cmp.getValue(), '', 'tied row 2 comp is never guessed');
+  assert.deepEqual(plain(repTie.unknown), [], 'tied rows route to unmatchedRows, never unknown');
+  assert.deepEqual(plain(repTie.leftRequired), [], 'tied required fields are not double-flagged as leftRequired');
+  assert.deepEqual(plain(repTie.noData), [], 'tied rows present on page do not trigger false missing-unit noData');
+  assert.equal(repTie.pageChanged, false, 'tied rows never trigger false pageChanged alert');
+  assert.equal(repTie.checks.length, 16, `all 16 tied controls produce unmatchedRows checks: ${repTie.checks.length}`);
+  assert.ok(repTie.checks.every((x) => /matches none of the intake's vehicles and trailers \(or two of them alike\)/.test(x.note)));
+  assert.equal(t1.acv.input.getAttribute('data-rater-autofill'), 'needs');
+  assert.equal(t2.acv.input.getAttribute('data-rater-autofill'), 'needs');
+
+  // 3) True tie when only ONE identical row is on screen (e.g. second vehicle missing or on another
+  // page) without VINs, or when intake has duplicate VINs: never guesses which unit owns the row.
+  const hSingleTie = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const s1 = addVehicleSection(hSingleTie, '8_1', '2025 RAM PROMASTER 2500');
+  const repSingleTie = await hSingleTie.kit.fill(planNoVin, { maxRounds: 20, replaceChoices: true });
+  assert.equal(s1.acv.input.value, '', 'single identical row with 2 matching intake units is never guessed');
+  assert.equal(repSingleTie.filled.length, 0);
+  assert.deepEqual(plain(repSingleTie.unknown), []);
+  assert.equal(repSingleTie.pageChanged, false);
+  assert.equal(repSingleTie.checks.length, 8);
+
+  const dupSameVin = ratesRecord([
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC0000001', value: 31000 },
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC0000001', value: 45000 },
+  ]);
+  const hDupVin = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const d1 = addVehicleSection(hDupVin, '8_1', '2025 RAM PROMASTER 2500', '1SYNTHETIC0000001');
+  const d2 = addVehicleSection(hDupVin, '8_2', '2025 RAM PROMASTER 2500', '1SYNTHETIC0000002');
+  const repDupVin = await hDupVin.kit.fill(buildPlan(dupSameVin, progressive, { vehicles: 0 }).filter((s) => s.kind !== 'action'), { maxRounds: 20, replaceChoices: true });
+  assert.equal(d1.acv.input.value, '', 'duplicate intake VINs never guess');
+  assert.equal(d2.acv.input.value, '');
+  assert.deepEqual(plain(repDupVin.unknown), []);
+  assert.equal(repDupVin.pageChanged, false);
+
+  // 4) Counterexample: distinct-model fleet still matches and fills normally even when one vehicle's
+  // intake VIN differs from the page's decoded VIN (e.g. agent fixed a VIN typo on AddVehicle).
+  const distinctTypo = ratesRecord([
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC000TYPO', value: 31000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: '1SYNTHETIC0000003', value: 17000 },
+  ]);
+  const hDistinct = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const c1 = addVehicleSection(hDistinct, '8_1', '2025 RAM PROMASTER 2500', '1SYNTHETIC0000001');
+  const c2 = addVehicleSection(hDistinct, '8_2', '2019 MERCEDES-BENZ SPRINTER', '1SYNTHETIC0000003');
+  const repDistinct = await hDistinct.kit.fill(buildPlan(distinctTypo, progressive, { vehicles: 0 }).filter((s) => s.kind !== 'action'), { maxRounds: 30, replaceChoices: true });
+  assert.equal(c1.acv.input.value, '31000', 'distinct model still matches by Year Make Model when VIN differs');
+  assert.equal(c2.acv.input.value, '17000');
+  assert.deepEqual(plain(repDistinct.unknown), []);
+  assert.deepEqual(plain(repDistinct.checks), []);
+  assert.equal(repDistinct.pageChanged, false);
+
+  // 5) Paged groups (1-3, 4-5) with identical Year Make Model vehicles on different pages:
+  // VIN disambiguates each group's row so neither page steals the other vehicle's ACV.
+  const pagedRecord = ratesRecord([
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC0000001', value: 31000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: '1SYNTHETIC0000002', value: 17000 },
+    { type: 'Semi Truck', year: 2016, make: 'FREIGHTLINER', model: 'Cascadia', vin: '1SYNTHETIC0000003', value: 22000 },
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: '1SYNTHETIC0000004', value: 45000 },
+  ]);
+  const pagedPlan = buildPlan(pagedRecord, progressive, { vehicles: 0 }).filter((s) => ['1FCD', '2CE8'].includes(s.q ?? ''));
+  const hPaged = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const pages = [
+    { text: '1-3', units: [
+      { caption: '2025 RAM PROMASTER 2500', vin: '1SYNTHETIC0000001' },
+      { caption: '2019 MERCEDES-BENZ SPRINTER', vin: '1SYNTHETIC0000002' },
+      { caption: '2016 FREIGHTLINER CASCADIA 125', vin: '1SYNTHETIC0000003' },
+    ] },
+    { text: '4-5', units: [
+      { caption: '2025 RAM PROMASTER 2500', vin: '1SYNTHETIC0000004' },
+    ] },
+  ];
+  const saved = new Map();
+  let drawn = [];
+  const btns = pages.map((g) => {
+    const wrap = new FakeNode('div', { className: 'g-action standard-2' });
+    const a = new FakeNode('a', { textContent: g.text, attrs: { role: 'button' } });
+    wrap.append(a);
+    hPaged.document.body.append(wrap);
+    return { wrap, a };
+  });
+  const drawGroup = (idx) => {
+    for (const d of drawn) {
+      saved.set(d.vin, { comp: d.comp.cmp.getValue(), acv: d.acv.input.value });
+      d.vinDiv.remove();
+      d.comp.input.remove();
+      d.acv.input.remove();
+      hPaged.context.Ext._components.delete(d.comp.id);
+      hPaged.context.Ext._components.delete(d.acv.id);
+    }
+    drawn = pages[idx].units.map((u, n) => {
+      const row = `8_${n + 1}`;
+      const vinDiv = addVinDisplay(hPaged, row, u.vin);
+      const prev = saved.get(u.vin) ?? { comp: '', acv: '' };
+      const comp = addCombo(hPaged, 'c', '1FCD', u.caption, row, ['Not selected', '$1,000 Deductible']);
+      if (prev.comp) comp.cmp.setValue(prev.comp);
+      const acv = addExtText(hPaged, 'r', '2CE8', { row, value: prev.acv, required: true });
+      return { vin: u.vin, vinDiv, comp, acv };
+    });
+    btns.forEach((b, j) => {
+      b.wrap.className = j === idx ? 'g-action disabled-action-1' : 'g-action standard-2';
+      b.a.setAttribute('tabindex', j === idx ? '-1' : '0');
+    });
+  };
+  btns.forEach((b, j) => { b.a.onclick = () => drawGroup(j); });
+  drawGroup(0);
+  const repPaged = await hPaged.kit.fill(pagedPlan, { maxRounds: 25, replaceChoices: true, pager: progressive.unitPager });
+  for (const d of drawn) saved.set(d.vin, { comp: d.comp.cmp.getValue(), acv: d.acv.input.value });
+  assert.equal(repPaged.halted, false);
+  assert.equal(saved.get('1SYNTHETIC0000001').acv, '31000', 'page 1-3 ProMaster gets vehicle 1 ACV');
+  assert.equal(saved.get('1SYNTHETIC0000004').acv, '45000', 'page 4-5 ProMaster gets vehicle 4 ACV');
+  assert.equal(saved.get('1SYNTHETIC0000002').acv, '17000');
+  assert.equal(saved.get('1SYNTHETIC0000003').acv, '22000');
+  assert.deepEqual(plain(repPaged.unknown), []);
+  assert.deepEqual(plain(repPaged.checks), []);
+  assert.deepEqual(plain(repPaged.noData), []);
+  assert.equal(repPaged.pageChanged, false);
+});

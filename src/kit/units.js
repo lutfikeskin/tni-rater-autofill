@@ -143,8 +143,11 @@ export function makePager(plan, pager, startPage) {
   const on = !!pager?.text && (pager.pages ?? []).includes(startPage);
   const re = on ? new RegExp(pager.text, 'i') : null;
   const unitId = (s) => (s.unit ? `${s.unit.list}:${s.unit.index}` : null);
-  const units = new Map(on ? (/** @type {any[]} */ (plan)).filter((s) => s.activeVehicle != null && s.vehicleHint && s.unit && s.pages?.includes(startPage)).map((s) => [unitId(s), s.unit]) : []);
+  const unitSteps = on ? (/** @type {any[]} */ (plan)).filter((s) => s.activeVehicle != null && (s.vehicleHint || s.vehicleId) && s.unit && s.pages?.includes(startPage)) : [];
+  const units = new Map(unitSteps.map((s) => [unitId(s), s.unit]));
+  const unitHints = new Map(unitSteps.filter((s) => s.vehicleHint).map((s) => [unitId(s), s.vehicleHint]));
   const seen = new Set();
+  const ambiguous = new Set();
   let rowsShown = false;
   const keyGroups = new Map();
   const skippedRows = new Map();
@@ -182,6 +185,15 @@ export function makePager(plan, pager, startPage) {
         if (skipped(p.control)) skippedRows.set(p.step.id, { step: p.step, label: p.control.label, key: fieldKey(p.control), unit: id });
         else seen.add(id);
       }
+      // A tied/unmatched row reading as a unit (e.g. duplicate identical Year Make Model vehicles
+      // without distinguishing VINs) is already surfaced as an `unmatchedRows` check; don't also
+      // claim "No row on this page reads as Vehicle N".
+      for (const { control } of pairs.unmatchedRows ?? []) {
+        if (!control.vehicle) continue;
+        for (const [id, hint] of unitHints) {
+          if (hint.filter((h) => ` ${control.vehicle} `.includes(` ${h} `)).length >= 2) ambiguous.add(id);
+        }
+      }
       if (startGroup && group !== startGroup) for (const c of controls) elsewhere.add(fieldKey(c));
     },
     next() {
@@ -212,7 +224,7 @@ export function makePager(plan, pager, startPage) {
           note: `Not answered for ${unitLabel(unit)}${unit.name ? ` (${unit.name})` : ''}: you changed this coverage on a row of one group of vehicles, and each group's rows share their field names, so the fill can't tell whose row it was and left both. Check it, or answer it yourself.` });
       }
       for (const [id, unit] of units) {
-        if (seen.has(id) || named.has(id) || [...skippedRows.values()].some((r) => r.unit === id && !sharedKey(r.key))) continue;
+        if (seen.has(id) || named.has(id) || ambiguous.has(id) || [...skippedRows.values()].some((r) => r.unit === id && !sharedKey(r.key))) continue;
         const label = unitLabel(unit);
         const where = paged.length || buttons().length > 1 ? 'in any group of vehicles on this page' : 'on this page';
         out.push({ label, path: `${unit.list}[${unit.index}]`, name: label, unit: label, key: null, q: null, controlKind: null,

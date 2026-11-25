@@ -70,8 +70,9 @@ export function createLocator(kit) {
     // Rows showing a witness (a VIN) no intake unit has: a vehicle on the quote the intake doesn't
     // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
     const extraRows = new Map();
-    // Rows of a per-unit question found by a selector that name their unit: the rule each is for.
-    // One no step took is a check naming the row for the agent, never an unfamiliar question
+    // Rows of a per-unit question that name their unit: the rule each is for.
+    // One no step took (e.g. a row matching no intake unit, or identical-model rows tied without
+    // distinguishing VINs) is a check naming the row for the agent, never an unfamiliar question
     // (pairs.unmatchedRows).
     const namedRows = new Map();
     const page = currentPage();
@@ -130,7 +131,7 @@ export function createLocator(kit) {
     const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null).flatMap((s) => found.get(s)));
     // A page about one vehicle (Add Vehicle): no question names a vehicle and the per-vehicle
     // questions sit in one row. Rows of several vehicles without their names stay with the agent.
-    const oneVehicle = !controls.some((x) => x.vehicle) && new Set([...perVehicle].map((x) => x.row)).size <= 1;
+    const oneVehicle = !controls.some((x) => x.vehicle || x.vehicleId) && new Set([...perVehicle].map((x) => x.row)).size <= 1;
 
     // Distinct known questions may share intake data (business and home ZIP/City).
     // Match every known question; path deduplication applies only to label fallbacks.
@@ -141,9 +142,17 @@ export function createLocator(kit) {
       const same = found.get(s);
       if (known(s) && s.activeVehicle != null) {
         // One step per vehicle (several in the quote): on a page showing one vehicle at a time, the
-        // active vehicle's; otherwise the row labelled with this vehicle's year/make/model. A
-        // vehicle the intake doesn't describe can't name a row: left to the agent.
-        c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : s.vehicleHint ? vehicleRow(same, s.vehicleHint) : null;
+        // active vehicle's; otherwise the row matching this unit's VIN (when the page shows one) or
+        // labelled with its year/make/model (when unambiguous across both rows and intake units).
+        // Labelled rows left unmatched (including tied identical-model vehicles without VINs) are
+        // recorded in `namedRows` so they route to `unmatchedRows` checks instead of `unknown` +
+        // `pageChanged` (W49-06).
+        if (oneVehicle) {
+          c = s.activeVehicle && same.length === 1 ? same[0] : null;
+        } else {
+          c = matchedVehicleRow(same, s, steps, found);
+          for (const x of same) if ((x.vehicle || x.vehicleId) && !namedRows.has(x)) namedRows.set(x, s);
+        }
         if (c && used.has(c)) c = null;
       } else if (known(s)) {
         // Without a vehicle, several fields for one question are ambiguous: they stay yellow.
@@ -303,6 +312,32 @@ export function createLocator(kit) {
     const best = Math.max(0, ...rows.map(score));
     const top = rows.filter((x) => score(x) === best);
     return best >= 2 && top.length === 1 ? top[0] : null;
+  }
+
+  // Matches a per-unit step to its row on a multi-unit page (Progressive CoveragesRates).
+  // Disambiguates by exact normalized VIN (`vehicleId`, >= 11 chars) when one visible row carries
+  // it and no rival step shares that VIN; otherwise falls back to `vehicleHint` (`vehicleRow`) as
+  // long as no rival step ties or beats its caption score or uniquely claims that row by VIN.
+  function matchedVehicleRow(rows, step, steps, found) {
+    const rivalsFor = (row) => steps.filter((t) => t !== step && t.activeVehicle != null && found.get(t)?.includes(row));
+    const wantId = idText(step.vehicleId);
+    if (wantId.length >= 11) {
+      const byId = rows.filter((x) => idText(x.vehicleId) === wantId);
+      if (byId.length === 1) {
+        const row = byId[0];
+        return rivalsFor(row).some((t) => idText(t.vehicleId) === wantId) ? null : row;
+      }
+      if (byId.length > 1) return null;
+    }
+    if (!step.vehicleHint) return null;
+    const row = vehicleRow(rows, step.vehicleHint);
+    if (!row) return null;
+    const rivals = rivalsFor(row);
+    const rowId = idText(row.vehicleId);
+    if (rowId.length >= 11 && rivals.some((t) => idText(t.vehicleId) === rowId)) return null;
+    const score = (hint) => hint.filter((h) => ` ${row.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const mine = score(step.vehicleHint);
+    return rivals.some((t) => t.vehicleHint && score(t.vehicleHint) >= mine) ? null : row;
   }
 
   const unmatchedRowNote = (step) => `${step.name}: this row's vehicle matches none of the intake's vehicles and trailers (or two of them alike), so it wasn't filled. Answer it yourself.`;
