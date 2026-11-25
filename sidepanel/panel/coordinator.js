@@ -1324,7 +1324,8 @@ function renderSteps() {
   state.pastNodes = past?.nodes ?? null;
   const at = (entry) => new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   const counts = listCounts(filled ? report.list : []);
-  const emptyShown = !past && !filling && !(filled && (counts[state.filter] ?? 0) > 0);
+  const openNeedVisible = filled && state.filter === 'needs' && report.list.some((r) => r.type === 'need' && r.open && !r.gone);
+  const emptyShown = !past && !filling && !openNeedVisible && !(filled && (counts[state.filter] ?? 0) > 0);
   // What the tags and the rater page's marks mean: behind the i in the title.
   const keyHere = !filling && (filled || !!past);
   // A report kept while another page was in front may be out of date.
@@ -1332,14 +1333,15 @@ function renderSteps() {
   // The list around the answers (state.feed, drawn by feed-view.jsx).
   state.feed = {
     shown: onRater && (filling || filled || !!earlier.length),
-    title: filling ? 'Filling now' : earlier.length ? 'Answers' : 'Answers on this page',
+    title: filling ? 'Filling now' : filled && !past ? (reportTitle(report) || 'Answers on this page') : earlier.length ? 'Answers' : 'Answers on this page',
+    filledCount: filled && !past ? (report.filled ?? 0) : 0,
     pages: earlier.map((e) => ({ key: e.key, title: reportTitle(e) })),
     pastKey: past?.key ?? null,
     pastWhen: past ? `${reportTitle(past)} · filled ${at(past)} · view only` : '',
     report: filled && !past,
     filter: state.filter,
     counts: filled && counts.all && !past ? counts : null,
-    empty: !emptyShown ? null : !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.',
+    empty: !emptyShown ? null : !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : state.filter === 'worth' ? 'Nothing flagged as worth a look on this page.' : 'Nothing here.',
     keyOpen: keyHere ? !!state.keyOpen : null,
     unmark: filled && !past,
     age: age ? `From the fill at ${age}. Fill again if the page changed.` : null,

@@ -206,48 +206,9 @@ export const SETTINGS = {
   continueAuto: 'it continues by itself once nothing is left for you',
 };
 
-// Post-fill grouped Review and All answers (review-view.jsx, canvas screens 10 and 11).
-export const REVIEW = {
-  fallbackPage: 'This page',
-  unitWord: { v: 'Vehicle', tr: 'Trailer', d: 'Driver' },
-  title: (page) => `${page || 'This page'} is filled`,
-  // `clear`: the dock agrees nothing is left before Continue (not buttons left, a changed page, a
-  // look before Continue or something open over the button), so the lead may say nothing needs you.
-  lead: (filled, needs, clear = true) => {
-    if (needs > 0) {
-      return `${filled} ${plural(filled, 'answer')} ${filled === 1 ? 'is' : 'are'} in. ${needs} ${needs === 1 ? 'needs' : 'need'} you before you continue.`;
-    }
-    if (!clear) return filled > 0 ? `${filled} ${plural(filled, 'answer')} ${filled === 1 ? 'is' : 'are'} in.` : 'Check the page before you continue.';
-    if (filled > 0) {
-      return `${filled} ${plural(filled, 'answer')} ${filled === 1 ? 'is' : 'are'} in and nothing needs you.`;
-    }
-    return 'Nothing on this page needs you.';
-  },
-  needsGroup: 'Needs you',
-  worthGroup: 'Worth a look',
-  restGroup: 'Other answers',
-  answersGroup: 'Filled answers',
-  seeAll: (total, intakeCount) => (intakeCount > 0
-    ? `See all ${total} ${plural(total, 'answer')} (${intakeCount} straight from the intake)`
-    : `See all ${total} ${plural(total, 'answer')}`),
-  allTitle: (total) => `All ${total} ${plural(total, 'answer')}`,
-  allLead: (needs, clear = true) => (needs > 0
-    ? `${needs} ${plural(needs, 'answer')} on this page ${needs === 1 ? 'needs' : 'need'} you.`
-    : clear ? 'Nothing on this page needs you.' : 'Check the page before you continue.'),
-  backToReview: '\u2039 Back to summary',
-  fallbackLabel: 'Question',
-  aiPickSub: 'The AI assistant\u2019s pick, waiting for you',
-  aiUnconfirmedSub: 'AI answer sent, not confirmed: check the page',
-  aiRejectedSub: 'AI choice rejected \u2014 set or confirm on the page',
-  aiSuggestSub: 'The AI assistant has a suggestion',
-  markedValue: 'Marked done',
-  markedSub: 'Marked done without an answer',
-};
-
-// Focused NeedRow words (report-view.jsx, canvas screens 12-16): the k-of-n eyebrow, the VinHold
-// link to client details, and Mark done's visible explanation (never calling it answered).
+// NeedRow words (report-view.jsx): the VinHold link to client details, and Mark done's visible
+// explanation (never calling it answered).
 export const NEEDS = {
-  eyebrow: (at, total) => `Needs you \u00b7 ${at} of ${total}`,
   vinFix: 'Correct it in client details',
   markDoneNote: 'Mark done leaves this field as the page has it: the panel won\u2019t fill it or wait on it.',
   markActionNote: 'Mark done stops waiting on this step for this quote.',
@@ -257,16 +218,20 @@ export const NEEDS = {
 export const FEED = {
   defaultTitle: 'Answers on this page',
   filters: [
+    { filter: 'needs', label: 'Needs' },
+    { filter: 'worth', label: 'Worth a look' },
     { filter: 'all', label: 'All' },
-    { filter: 'needs', label: 'Need you' },
-    { filter: 'done', label: 'Filled' },
   ],
   pageMenuLabel: 'Show the answers of',
   thisPage: 'This page',
   keyLabel: 'What the tags and marks mean',
   filtersLabel: 'Show answers',
+  searchLabel: 'Filter answers on this page',
+  searchPlaceholder: (n) => `Filter ${n} ${plural(n, 'field')} on this page\u2026`,
+  totalFields: (n) => `${n} ${plural(n, 'field')} total`,
+  emptySearch: 'No matching fields on this page.',
   pastBack: '\u2039 This page',
-  clearMarks: 'Clear the marks on the page',
+  clearMarks: 'Clear page marks',
   tagsTitle: 'Tags:',
   tagsIntake: 'none = from the intake',
   tagDerived: 'Worked out',

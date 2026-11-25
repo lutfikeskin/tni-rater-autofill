@@ -22,7 +22,7 @@ import { editScope, fillSkip, fillSkipBy, formScoped, hasAgentPageEdit, pageEdit
 import { fillCurrent, fillErrorMessage, fillErrorText, safeDocumentUrl, staleFill } from './fill-checks.js';
 import { liveOf } from './live.js';
 import { agentPickable, answerSources, choiceSaid, choicesOf, currentReportKey, finishLeftOk, groupRows, itemsLeft, looseText, reportKey, stopNoteFor } from './report-model.js';
-import { answerRecord, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
+import { answerRecord, defaultFilter, needId, needRecord, reopenRow, setHead, settleRow, showLive } from './report-rows.js';
 import { mountRows } from './report-view.jsx';
 import { mountReportHead } from './notes-view.jsx';
 import { flushSync } from 'react-dom';
@@ -1233,7 +1233,7 @@ function renderReport(frames, ctx = {}) {
     // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
     entry.list.length ? rowsHost(entry, rctx) : null,
   ].filter((node) => node != null && /** @type {*} */ (node) !== false);
-  if (key === currentReportKey()) state.filter = 'all';
+  if (key === currentReportKey()) state.filter = defaultFilter(entry.list);
   putReport(entry, nodes);
   renderSteps();
   if (state.reportFor !== entry || ctx.restoredAt) return;
@@ -1379,11 +1379,11 @@ function toggleRow(rec, open = !rec.open) {
 }
 
 // The dock's Show the next one: the next question still needing the agent after the one open now
-// (the first when none is), opened in the whole list and brought into view.
+// (the first when none is), opened in the Needs tab and brought into view.
 function showNextNeed() {
-  if (state.view !== 'page' || state.filter !== 'all' || state.pastKey) {
+  if (state.view !== 'page' || (state.filter !== 'needs' && state.filter !== 'all') || state.pastKey) {
     state.view = 'page';
-    state.filter = 'all';
+    state.filter = 'needs';
     state.pastKey = null;
     showScreen();
     renderSteps();

@@ -88,7 +88,7 @@ test('with reduced motion, a fill shows a steady full bar and a still spinner, n
 });
 
 test('grid containers holding selects and need actions constrain columns to minmax(0, 1fr) so long <option> text never clips buttons', () => {
-  for (const sel of ['.view', '.report', '.rows', '.row-body', '.review-row-body', '.change-slot']) {
+  for (const sel of ['.view', '.report', '.rows', '.row-body', '.row-tray', '.row-tray-info', '.change-slot']) {
     assert.match(CSS, new RegExp(`\\${sel} \\{[^}]*grid-template-columns:\\s*minmax\\(0,\\s*1fr\\);`), `${sel} uses minmax(0, 1fr)`);
   }
   assert.match(CSS, /\.opt-select \{[^}]*min-width:\s*0;/);
